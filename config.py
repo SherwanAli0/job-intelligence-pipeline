@@ -296,11 +296,29 @@ GREENHOUSE_SLUGS = [
     "kayak",           # 1 job
     "lottoland",       # 1 job
     "medium",          # 1 job
-    # NOTE: aleph-alpha, deepset, n8n, langfuse, huggingface, cohere, kontist,
-    # tier-mobility, wandelbots, 1komma5grad, pigment, circula, enpal,
-    # paretos, otto, mediamarkt, klarna, statista, babbel, revolut, wise all
-    # 404 on Greenhouse — they use other ATSs (Lever, Workable, Personio,
-    # custom). See LEVER_SLUGS below for the ones found on Lever.
+    # ── Discovery sweep batch (verified live) ──
+    "tripactions",     # Navan — 194 jobs
+    "clickhouse",      # ClickHouse — 175 jobs
+    "tide",            # Tide — 121 jobs, UK neobank
+    "coinbase",        # Coinbase — 71 jobs
+    "dataiku",         # Dataiku — 59 jobs
+    "algolia",         # Algolia — 44 jobs
+    "bitpanda",        # Bitpanda — 43 jobs, Vienna crypto
+    "cognite",         # Cognite — 43 jobs, industrial AI
+    "auterion",        # Auterion — 41 jobs, drone OS
+    "feedzai",         # Feedzai — 39 jobs, fraud ML
+    "collibra",        # Collibra — 39 jobs, data governance
+    "gocardless",      # GoCardless — 36 jobs
+    "avimedical",      # Avi Medical — 34 jobs, Munich health
+    "kinexon",         # Kinexon — 25 jobs, Munich sensors/ML
+    "dkbcodefactory",  # DKB Code Factory — 21 jobs, Berlin banking tech
+    "moonfare",        # Moonfare — 13 jobs, Berlin fintech
+    "mangopay",        # Mangopay — 10 jobs
+    "truelayer",       # TrueLayer — 9 jobs
+    "bondora",         # Bondora — 8 jobs
+    "copperco",        # Copper — 7 jobs
+    "clarityai",       # Clarity AI — 6 jobs, sustainability data
+    "carbonfuture",    # Carbonfuture — 3 jobs, Freiburg climate
 ]
 
 # ── Companies with Lever JSON API (free, no scraping needed) ──────────────────
@@ -313,6 +331,13 @@ LEVER_SLUGS = [
     "moonpay",         # 24 jobs, fintech / crypto
     "neon",            # 14 jobs, Postgres-as-a-service
     "trustyou",        # 5 jobs, Munich travel tech
+    # ── Discovery sweep batch (verified live) ──
+    "agicap",          # Agicap — 49 jobs
+    "trustly",         # Trustly — 41 jobs, payments
+    "alice-bob",       # Alice and Bob — 26 jobs, quantum (Paris)
+    "doctrine",        # Doctrine — 20 jobs, legal AI
+    "anybotics",       # ANYbotics — 12 jobs, robotics (Zurich)
+    "younited",        # Younited — 8 jobs
 ]
 
 # ── Companies with Personio public XML feeds ──────────────────────────────────
@@ -341,6 +366,53 @@ PERSONIO_SLUGS = [
     "smava",           # 2, loan platform
     "personio",        # 1
     "ada",             # 1
+    # ── Discovery sweep batch (verified live) ──
+    "360t",            # 360T — 23, Frankfurt FX trading
+    "vantis",          # Vantis — 23
+    "neoshare",        # Neoshare — 18
+    "eqs-group",       # EQS Group — 18
+    "bloomwell",       # Bloomwell — 13, health
+    "centogene",       # Centogene — 12, genomics
+    "planetafoods",    # Planet A Foods — 12, Munich foodtech
+    "ottonova",        # ottonova — 11, Munich insurtech
+    "data4life",       # Data4Life — 11, health data
+    "carbmee",         # Carbmee — 11, climate
+    "idealworks",      # Idealworks — 11, BMW robotics spinout
+    "gridx",           # GridX — 10, energy
+    "vodeno",          # Vodeno — 8
+    "apheris",         # Apheris — 7, federated ML
+    "tanso",           # Tanso — 6, climate
+    "topi",            # Topi — 5, Berlin fintech
+    "finoa",           # Finoa — 5, Berlin crypto custody
+    "xempus",          # Xempus — 5
+    "bonify",          # Bonify — 5, Berlin fintech
+    "friendsurance",   # Friendsurance — 5
+    "cellumation",     # Cellumation — 5, Bremen robotics
+    "floy",            # Floy — 4, Munich medical AI
+    "clark",           # Clark — 3, insurtech
+    "finanzguru",      # Finanzguru — 3
+    "payhawk",         # Payhawk — 3
+    "tangany",         # Tangany — 3
+    "hepster",         # hepster — 3
+    "sevdesk",         # sevDesk — 3
+    "crypto-finance",  # Crypto Finance — 3
+    "finlex",          # Finlex — 3
+    "temedica",        # Temedica — 3, Munich health
+    "mediaire",        # Mediaire — 3, Berlin medical AI
+    "climedo",         # Climedo — 3, health
+    "dermanostic",     # Dermanostic — 3
+    "vivira",          # Vivira — 3, digital therapeutics
+    "infiniteroots",   # Infinite Roots — 3, Hamburg biotech
+    "project-eaden",   # Project Eaden — 3, foodtech
+    "iqm",             # IQM Quantum — 3
+    "banxware",        # Banxware — 2
+    "cashlink",        # Cashlink — 2
+    "samedi",          # Samedi — 2, health
+    "doctorly",        # Doctorly — 2, health
+    "filics",          # Filics — 2, robotics
+    "hypofriend",      # Hypofriend — 1
+    "vara",            # Vara — 1, Berlin medical AI
+    "kipu-quantum",    # Kipu Quantum — 1, Berlin quantum
 ]
 
 # ── Workday CXS tenants (modern JSON API) ─────────────────────────────────────
@@ -385,6 +457,13 @@ SMARTRECRUITERS_SLUGS = [
     "RolandBerger",    # 213 jobs, top European consultancy
     "Visa",            # 20 jobs
     "ContinentalAG",   # 2 jobs (different listing)
+    # ── Discovery sweep batch (verified live) ──
+    "wise",            # Wise — 350 jobs
+    "brainlab",        # Brainlab — 91 jobs, Munich medical tech
+    "devexperts",      # Devexperts — 36 jobs, trading tech
+    "ecovadis",        # EcoVadis — 32 jobs, sustainability ratings
+    "kaiahealth",      # Kaia Health — 2 jobs
+    "kadmos",          # Kadmos — 1 job
 ]
 
 # ── Major German companies — direct career page scraping ──────────────────────
@@ -425,15 +504,65 @@ ASHBY_SLUGS = [
     "browserbase",   # 7 jobs, browser-as-a-service for agents
     "letta",         # 5 jobs, AI memory
     "weaviate",      # 4 jobs, vector DB
-    # TODO add more as discovered:
-    # "cursor",      # presumably uses Ashby — verify slug
-    # "anysphere",   # parent of Cursor
-    # "harvey",      # legal AI
+    # ── Discovery sweep batch (verified live) ──
+    "harvey",          # Harvey — 253 jobs, legal AI
+    "legora",          # Legora — 191 jobs, legal AI
+    "elevenlabs",      # ElevenLabs — 155 jobs, voice AI
+    "cohere",          # Cohere — 123 jobs, LLM lab
+    "plaid",           # Plaid — 106 jobs, fintech infra
+    "cursor",          # Cursor (Anysphere) — 95 jobs, AI code editor
+    "lovable",         # Lovable — 76 jobs, AI app builder
+    "faculty",         # Faculty — 73 jobs, AI consultancy
+    "avelios-medical", # Avelios Medical — 51 jobs, Munich health
+    "encord",          # Encord — 47 jobs, data labeling for ML
+    "elliptic",        # Elliptic — 43 jobs, crypto analytics
+    "mollie",          # Mollie — 41 jobs, payments
+    "thought-machine", # Thought Machine — 39 jobs, banking core
+    "camunda",         # Camunda — 39 jobs, Berlin process automation
+    "moss",            # Moss — 36 jobs, Berlin fintech
+    "upvest",          # Upvest — 35 jobs, Berlin investment API
+    "pleo",            # Pleo — 33 jobs, fintech
+    "pliant",          # Pliant — 32 jobs, Berlin fintech
+    "hcompany",        # H Company — 29 jobs, Paris agentic AI
+    "blacksemiconductor", # Black Semiconductor — 25 jobs, Aachen chips
+    "axelera",         # Axelera AI — 19 jobs, AI hardware
+    "deepjudge",       # DeepJudge — 19 jobs, legal AI search
+    "adaptive-ml",     # Adaptive ML — 18 jobs, LLM
+    "kestra",          # Kestra — 18 jobs, data orchestration
+    "hawk",            # Hawk AI — 17 jobs, Munich AML/fraud ML
+    "lemon-markets",   # lemon.markets — 16 jobs, Berlin trading API
+    "nelly",           # Nelly Solutions — 15 jobs, health
+    "langdock",        # Langdock — 15 jobs, Berlin enterprise LLM
+    "e2b",             # E2B — 13 jobs, AI agent infra
+    "klim",            # Klim — 11 jobs, regenerative ag
+    "cradlebio",       # Cradle Bio — 11 jobs, protein ML
+    "langfuse",        # Langfuse — 11 jobs, LLM observability (Berlin)
+    "knowunity",       # Knowunity — 11 jobs, Berlin edtech AI
+    "ledger",          # Ledger — 9 jobs, crypto
+    "alephalpha",      # Aleph Alpha — 9 jobs, Heidelberg LLM lab
+    "swan",            # Swan — 8 jobs, embedded banking
+    "sweep",           # Sweep — 7 jobs, climate
+    "codesphere",      # Codesphere — 7 jobs, Karlsruhe dev platform
+    "deeploy",         # Deeploy — 7 jobs, ML monitoring
+    "lightdash",       # Lightdash — 6 jobs, BI / analytics
+    "sylvera",         # Sylvera — 4 jobs, carbon data
+    "ceezer",          # Ceezer — 4 jobs, carbon
+    "bitvavo",         # Bitvavo — 3 jobs, crypto exchange
+    "ostrom",          # Ostrom — 3 jobs, Berlin energy
+    "billie",          # Billie — 1 job, Berlin BNPL
 ]
 
 # ── Recruitee ATS slugs (https://{slug}.recruitee.com/api/offers) ─────────────
 RECRUITEE_SLUGS = [
     "limehome",      # 16 jobs, Munich hospitality
     "personio",      # 1 job
-    # TODO: search for more EU startups using Recruitee
+    # ── Discovery sweep batch (verified live) ──
+    "bunq",          # bunq — 27 jobs, neobank
+    "sequra",        # SeQura — 18 jobs, BNPL
+    "payflows",      # Payflows — 10 jobs
+    "climeworks",    # Climeworks — 10 jobs, carbon capture (Zurich)
+    "ethonai",       # EthonAI — 9 jobs, manufacturing AI (Zurich)
+    "ginmon",        # Ginmon — 7 jobs, Frankfurt roboadvisor
+    "constellr",     # Constellr — 4 jobs, space/climate data
+    "flower",        # Flower Labs — 4 jobs, federated LLM (GmbH)
 ]
