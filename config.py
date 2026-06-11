@@ -319,6 +319,16 @@ GREENHOUSE_SLUGS = [
     "copperco",        # Copper — 7 jobs
     "clarityai",       # Clarity AI — 6 jobs, sustainability data
     "carbonfuture",    # Carbonfuture — 3 jobs, Freiburg climate
+    # ── E-commerce sweep batch (verified live) ──
+    "catawiki",        # Catawiki — 59 jobs, marketplace
+    "gostudent",       # GoStudent — 29 jobs, Vienna edtech
+    "flaconi",         # Flaconi — 21 jobs, Berlin beauty e-com
+    "refurbed",        # Refurbed — 17 jobs, Vienna circular
+    "gymshark",        # Gymshark — 14 jobs
+    "commercetools",   # Commercetools — 13 jobs, Munich commerce API
+    "grover",          # Grover — 5 jobs, Berlin tech rental
+    "airup",           # Air up — 5 jobs, Munich D2C
+    "spryker",         # Spryker — 2 jobs, Berlin commerce
 ]
 
 # ── Companies with Lever JSON API (free, no scraping needed) ──────────────────
@@ -338,6 +348,12 @@ LEVER_SLUGS = [
     "doctrine",        # Doctrine — 20 jobs, legal AI
     "anybotics",       # ANYbotics — 12 jobs, robotics (Zurich)
     "younited",        # Younited — 8 jobs
+    # ── E-commerce sweep batch (verified live) ──
+    "emma-sleep",      # Emma — 75 jobs, Frankfurt mattresses
+    "finn",            # Finn — 41 jobs, Munich car subscription
+    "veo",             # Veo — 23 jobs
+    "vestiairecollective", # Vestiaire Collective — 12 jobs
+    "factor",          # Factor — 11 jobs, meal kits
 ]
 
 # ── Companies with Personio public XML feeds ──────────────────────────────────
@@ -413,6 +429,16 @@ PERSONIO_SLUGS = [
     "hypofriend",      # Hypofriend — 1
     "vara",            # Vara — 1, Berlin medical AI
     "kipu-quantum",    # Kipu Quantum — 1, Berlin quantum
+    # ── E-commerce sweep batch (verified live) ──
+    "urbansportsclub", # Urban Sports Club — 38, Berlin fitness
+    "tonies",          # Tonies — 13, audio for kids
+    "everphone",       # Everphone — 9, Berlin device rental
+    "connox",          # Connox — 4, Hannover home design
+    "selfmade",        # Selfmade — 3
+    "bbg",             # Berlin Brands Group — 3, e-com aggregator
+    "cabify",          # Cabify — 3, mobility
+    "momox",           # Momox — 2, Berlin recommerce
+    "trbo",            # trbo — 1, Munich e-com personalization
 ]
 
 # ── Workday CXS tenants (modern JSON API) ─────────────────────────────────────
@@ -464,6 +490,9 @@ SMARTRECRUITERS_SLUGS = [
     "ecovadis",        # EcoVadis — 32 jobs, sustainability ratings
     "kaiahealth",      # Kaia Health — 2 jobs
     "kadmos",          # Kadmos — 1 job
+    # ── E-commerce sweep batch (verified live) ──
+    "home24",          # Home24 — 9 jobs, furniture e-com
+    "picnic",          # Picnic — 2 jobs, online grocery
 ]
 
 # ── Major German companies — direct career page scraping ──────────────────────
@@ -550,6 +579,17 @@ ASHBY_SLUGS = [
     "bitvavo",         # Bitvavo — 3 jobs, crypto exchange
     "ostrom",          # Ostrom — 3 jobs, Berlin energy
     "billie",          # Billie — 1 job, Berlin BNPL
+    # ── E-commerce sweep batch (verified live) ──
+    "preply",          # Preply — 143 jobs, language learning
+    "rohlik",          # Rohlik — 51 jobs, grocery (Prague/DE)
+    "crisp",           # Crisp — 29 jobs, grocery
+    "backmarket",      # Back Market — 24 jobs, refurbished
+    "forto",           # Forto — 17 jobs, Berlin logistics
+    "real",            # Real — 14 jobs, retail
+    "babbel",          # Babbel — 4 jobs, Berlin edtech
+    "flink",           # Flink — 3 jobs, Berlin grocery
+    "choco",           # Choco — 2 jobs, Berlin food supply
+    "sellerx",         # SellerX — 1 job, Berlin aggregator
 ]
 
 # ── Recruitee ATS slugs (https://{slug}.recruitee.com/api/offers) ─────────────
@@ -565,4 +605,10 @@ RECRUITEE_SLUGS = [
     "ginmon",        # Ginmon — 7 jobs, Frankfurt roboadvisor
     "constellr",     # Constellr — 4 jobs, space/climate data
     "flower",        # Flower Labs — 4 jobs, federated LLM (GmbH)
+    # ── E-commerce sweep batch (verified live) ──
+    "channable",     # Channable — 17 jobs, feed management
+    "shopwareag",    # Shopware — 13 jobs, e-com platform
+    "everdrop",      # Everdrop — 11 jobs, Munich D2C
+    "rebuy",         # Rebuy — 7 jobs, Berlin recommerce
+    "lillydoo",      # Lillydoo — 3 jobs
 ]
