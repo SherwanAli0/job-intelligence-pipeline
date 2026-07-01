@@ -481,7 +481,7 @@ CANDIDATE PROFILE:
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
 ═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Junior/intern level, English-OK, AI/ML/LLM core, no major gaps. Examples: paretos AI Backend Engineer (Claude Code stack mentioned), Enpal Working Student AI Agents.
+- 85-100: Excellent fit. Real shot at interview. Junior/intern level, English-OK, no major gaps, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: paretos AI Backend Engineer (Claude Code stack mentioned), Enpal Working Student AI Agents, Junior Data Scientist with scikit-learn/XGBoost stack and Berlin office, BI/Data Analyst role built on SQL + Tableau with an English-speaking team.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
@@ -560,15 +560,53 @@ OFF-TARGET (start at 40, max possible 50 even with boosts):
   (e.g. pure frontend, pure DevOps, sales, marketing, non-technical).
 
 ═══════════════════════════════════════════════════════════════
-BOOSTS — additive, but never exceed the applicable cap
+BOOSTS — additive, but never exceed the applicable cap.
+IMPORTANT: exactly ONE track-specific boost block applies per job (the one
+matching its track). Do not let a job's track determine whether ANY boost is
+reachable — each track has an equal-value +15 and +10 boost available.
+Never apply an AI-track boost to a non-AI role just because AI is trendy.
 ═══════════════════════════════════════════════════════════════
 
-+15: Job description explicitly mentions ANY of:
-- Claude Code, Claude Agent SDK, MCP, custom skills, hooks, plan/execute/review loop
-- LangGraph, LangChain agents, agentic systems, agent workflows, tool calling, function calling
-- These are exactly what Sherwan is building at iseremo and in his projects. Hiring managers who write these in JDs are looking for his profile.
+TRACK-SPECIFIC BOOSTS (pick the block matching the job's track — each track
+has an equally-weighted +15 and +10 available, so no track has a structural
+ceiling advantage over another):
 
-+10: Job description explicitly mentions: LLM evaluation frameworks, RAG, vector databases, prompt engineering, fine-tuning (LoRA/QLoRA), Anthropic API, OpenAI API, Hugging Face
+  AI track — +15 if JD mentions: Claude Code, Claude Agent SDK, MCP, custom
+    skills, hooks, plan/execute/review loop, LangGraph, LangChain agents,
+    agentic systems, agent workflows, tool calling, function calling.
+    (Matches Sherwan's iseremo work and his own agentic projects.)
+  AI track — +10 if JD mentions: LLM evaluation frameworks, RAG, vector
+    databases, prompt engineering, fine-tuning (LoRA/QLoRA), Anthropic API,
+    OpenAI API, Hugging Face, hallucination detection/evaluation.
+
+  ML track — +15 if JD mentions: production ML pipelines, model deployment/
+    serving, MLOps tooling (MLflow, Weights & Biases, Kubeflow), CI/CD for
+    ML, imbalanced classification, ensemble methods (XGBoost/boosting).
+    (Matches Sherwan's CSRBoost forensic-audit project — imbalanced-learn,
+    75k configurations, reproducibility engineering.)
+  ML track — +10 if JD mentions: PyTorch, TensorFlow, scikit-learn, computer
+    vision, transformers, transfer learning, hyperparameter tuning,
+    cross-validation, model reproducibility/benchmarking.
+
+  Data Science track — +15 if JD mentions: experimentation / A-B testing,
+    statistical rigor, hypothesis testing, causal inference, recommender
+    systems, research replication/reproducibility.
+    (Matches Sherwan's FUS recommender-system replication — 10-fold CV,
+    matched paper metrics to 4 decimal places.)
+  Data Science track — +10 if JD mentions: NumPy/Pandas-heavy analysis,
+    feature engineering, model evaluation methodology, Jupyter-based
+    research workflows, published/reproducible results.
+
+  Data Analyst track — +15 if JD mentions: SQL-heavy analysis, dashboarding
+    (Tableau, Power BI, Looker), stakeholder reporting, KPI definition,
+    data storytelling for non-technical audiences.
+    (Matches Sherwan's Google Advanced Data Analytics cert — Tableau,
+    regression, statistics — and IBM SQL for Data Science cert.)
+  Data Analyst track — +10 if JD mentions: business intelligence tooling,
+    ETL/data pipeline basics, A/B test reporting, data quality/cleaning,
+    cohort or funnel analysis.
+
+UNIVERSAL BOOSTS (apply regardless of track):
 
 +8: Working language is explicitly English / international team / "we work in English"
 
@@ -578,7 +616,7 @@ BOOSTS — additive, but never exceed the applicable cap
 
 +5: Visa sponsorship not required (Sherwan has full work auth)
 
-+5: Company is an English-first AI startup (Aleph Alpha, deepset, parloa, Helsing, Black Forest Labs, n8n, Langfuse, Cohere, Mistral, Hugging Face, Stability)
++5: Company is an English-first tech/data/AI startup known for strong engineering culture (e.g. Aleph Alpha, deepset, parloa, Helsing, Black Forest Labs, n8n, Langfuse, Cohere, Mistral, Hugging Face, Stability for AI; Celonis, Personio, N26, DeepL, Contentful for broader tech/data) — this boost is NOT AI-exclusive, apply it to any track if the company fits the profile.
 
 ═══════════════════════════════════════════════════════════════
 PENALTIES — subtractive, applied AFTER caps and boosts
@@ -599,6 +637,9 @@ Each entry: {{"index": N, "score": 0-100, "reason": "ONE concrete sentence: iden
 
 Examples of good reasons:
 - "Tier 1 AI Engineer match, Claude Code mentioned (+15), English-first, Berlin (+5) → 88"
+- "Tier 1 Junior Data Scientist match, XGBoost/imbalanced classification (+15), scikit-learn (+10), Bochum (+8) → 91"
+- "Tier 1 BI/Data Analyst match, SQL + Tableau dashboarding (+15), English-first (+8) → 82"
+- "Tier 1 ML Engineer match, MLOps/model deployment (+15), PyTorch (+10) → 89"
 - "Capped at 20: explicitly requires fluent German for DACH customer-facing role"
 - "Capped at 35: 3-4 years production ML required, Sherwan has zero"
 - "Capped at 20: Master's required, no Bachelor's alternative in qualifications"
