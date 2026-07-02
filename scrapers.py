@@ -77,7 +77,8 @@ def make_id(url: str, title: str, company: str) -> str:
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-def job(title, company, location, url, source, description="", posted_at=""):
+def job(title, company, location, url, source, description="", posted_at="",
+        apply_url="", contact="", salary=""):
     return {
         "id": make_id(url, title, company),
         "title": title,
@@ -87,6 +88,10 @@ def job(title, company, location, url, source, description="", posted_at=""):
         "source": source,
         "description": description[:5000],  # cap size — must be long enough that the requirements section isn't lost behind a verbose intro
         "posted_at": posted_at,  # ISO 8601 string, empty if source doesn't expose it
+        # ── Enrichment fields (additive; empty when the source doesn't expose them) ──
+        "apply_url": apply_url,   # direct "apply on company site" link (skips the board relay)
+        "contact":   contact,     # named contact / email / phone pulled from the ad body
+        "salary":    salary,      # salary band string, e.g. "50,000–60,000 €"
         "score": 0,
         "reason": "",
     }
@@ -122,6 +127,12 @@ def _jobspy_rows_to_jobs(df, results: list[dict]) -> None:
         if not url:
             continue
         posted = row.get("date_posted", "") or ""
+        # job_url_direct = the "apply on company site" link JobSpy resolves —
+        # applying at the ATS source (vs the LinkedIn/Indeed relay) lands in the
+        # same queue earlier and isn't deprioritized as an aggregated apply.
+        direct = str(row.get("job_url_direct", "") or "")
+        if direct.lower() in ("nan", "none"):
+            direct = ""
         results.append(job(
             title=str(row.get("title", "")),
             company=str(row.get("company", "")),
@@ -130,6 +141,7 @@ def _jobspy_rows_to_jobs(df, results: list[dict]) -> None:
             source=str(row.get("site", "jobspy")),
             description=str(row.get("description", "")),
             posted_at=str(posted) if posted else "",
+            apply_url=direct,
         ))
 
 
@@ -520,10 +532,82 @@ ARBEITSAGENTUR_QUERIES = [
     "Data Analyst Praktikum",
 ]
 
+# ── Arbeitsagentur enrichment (idea 3 + idea 1-lite) ─────────────────────────
+# The search endpoint returns only a snippet. The jobdetails endpoint returns
+# the FULL ad text, salary band, contract type, a staffing-agency flag, and
+# (sometimes) the employer's own application URL. Verified live 2026-07-02:
+# stellenangebotsBeschreibung present on 15/15 sampled jobs; salary on ~4/12;
+# externeUrl on ~4/12; a contact email/phone appears inline in the body on
+# ~25% of ads. We cap detail fetches per run so runtime stays bounded.
+import base64 as _b64
+import re as _re_ba
+
+_BA_ENRICH_CAP = 150  # max jobdetails calls per run (each ~0.3s)
+
+_BA_EMAIL   = _re_ba.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+_BA_PHONE   = _re_ba.compile(r"(?:\+49|0)[\s\-/()]?\d[\d\s\-/()]{6,}\d")
+_BA_CONTACT = _re_ba.compile(
+    r"(?:ansprechpartner(?:in)?|ihr(?:e)?\s+kontakt|kontaktperson|bei\s+fragen[^:\n]{0,30})"
+    r"[:\s]+((?:herr|frau|dr\.?|mr\.?|ms\.?)?\s*[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+){0,2})",
+    _re_ba.IGNORECASE,
+)
+
+
+def _ba_extract_contact(desc: str) -> str:
+    """Best-effort: pull a named contact / email / phone from the ad body."""
+    parts = []
+    m = _BA_CONTACT.search(desc)
+    if m:
+        parts.append(m.group(1).strip())
+    em = _BA_EMAIL.search(desc)
+    if em:
+        parts.append(em.group(0))
+    ph = _BA_PHONE.search(desc)
+    if ph:
+        parts.append(ph.group(0).strip())
+    return " · ".join(dict.fromkeys(parts))  # dedupe, keep order
+
+
+def _ba_enrich(ref: str) -> dict:
+    """
+    Fetch the full jobdetails for a BA refnr. Returns a dict with any of:
+    description, apply_url, salary, contact, is_staffing. Empty dict on failure.
+    """
+    try:
+        enc = _b64.b64encode(ref.encode()).decode()
+        r = requests.get(
+            f"https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/{enc}",
+            headers={**HEADERS, "X-API-Key": "jobboerse-jobsuche"},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return {}
+        d = r.json()
+        out = {}
+        desc = str(d.get("stellenangebotsBeschreibung", "") or "")
+        if desc:
+            out["description"] = desc
+            contact = _ba_extract_contact(desc)
+            if contact:
+                out["contact"] = contact
+        ext = d.get("externeUrl") or d.get("externeURL")
+        if ext:
+            out["apply_url"] = str(ext)
+        lo, hi = d.get("gehaltsspanneVon"), d.get("gehaltsspanneBis")
+        if lo or hi:
+            out["salary"] = f"{lo or '?'}–{hi or '?'} € / Jahr"
+        if d.get("istArbeitnehmerueberlassung") or d.get("istArbeitnehmerUeberlassung"):
+            out["is_staffing"] = True
+        return out
+    except Exception:
+        return {}
+
+
 def scrape_arbeitsagentur() -> list[dict]:
     """Uses the unofficial but stable Arbeitsagentur API — free, no auth needed."""
     results = []
     seen_refs: set[str] = set()
+    enriched = 0
 
     for query in ARBEITSAGENTUR_QUERIES:
         try:
@@ -553,15 +637,30 @@ def scrape_arbeitsagentur() -> list[dict]:
                 location = item.get("arbeitsort", {}).get("ort", "Germany")
                 job_url = f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{ref}"
                 description = item.get("kurzbeschreibung", "") or ""
+                apply_url = contact = salary = ""
 
-                results.append(job(title, company, location, job_url, "Arbeitsagentur", description))
+                # Enrich with the full jobdetails (bounded per run)
+                if enriched < _BA_ENRICH_CAP:
+                    det = _ba_enrich(ref)
+                    enriched += 1
+                    if det.get("description"):
+                        description = det["description"]  # full text > snippet
+                    apply_url = det.get("apply_url", "")
+                    contact   = det.get("contact", "")
+                    salary    = det.get("salary", "")
+                    time.sleep(0.25)
+
+                results.append(job(
+                    title, company, location, job_url, "Arbeitsagentur",
+                    description, apply_url=apply_url, contact=contact, salary=salary,
+                ))
 
             time.sleep(1)
         except Exception as e:
             print(f"  [Arbeitsagentur] query '{query}' failed: {e}")
             continue
 
-    print(f"  [Arbeitsagentur] {len(results)} jobs")
+    print(f"  [Arbeitsagentur] {len(results)} jobs ({enriched} enriched with full detail)")
     return results
 
 

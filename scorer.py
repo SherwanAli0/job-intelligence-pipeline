@@ -633,7 +633,11 @@ OUTPUT FORMAT
 ═══════════════════════════════════════════════════════════════
 
 Return ONLY a valid JSON array. No preamble, no markdown fences, no commentary.
-Each entry: {{"index": N, "score": 0-100, "reason": "ONE concrete sentence: identify the cap that applied OR the tier match, and the single biggest factor."}}
+Each entry MUST have: {{"index": N, "score": 0-100, "reason": "ONE concrete sentence: identify the cap that applied OR the tier match, and the single biggest factor."}}
+
+For any job you score >= 55, ALSO include two tailoring fields (omit them for lower scores):
+- "missing_keywords": array of 4-8 EXACT terms/skills/tools the job description requires that are absent or weak in the candidate's CV profile above (e.g. ["Airflow", "dbt", "Tableau", "stakeholder management"]). These are what he should add/emphasise before applying so his CV passes the ATS keyword filter for THIS job. Use the job's own wording.
+- "cv_hint": ONE short concrete sentence telling him how to re-angle his CV for this specific role (e.g. "Lead with the FUS recommender replication and frame it as production-style A/B evaluation, and add a SQL/Tableau line to match their BI stack.").
 
 Examples of good reasons:
 - "Tier 1 AI Engineer match, Claude Code mentioned (+15), English-first, Berlin (+5) → 88"
@@ -693,6 +697,14 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL) -> list[dict]:
             if 0 <= idx < len(batch):
                 batch[idx]["score"] = item.get("score", 0)
                 batch[idx]["reason"] = item.get("reason", "")
+                # Optional tailoring fields (present for score >= 55). Kept only
+                # when non-empty so a later pass can't blank out an earlier one.
+                mk = item.get("missing_keywords")
+                if isinstance(mk, list) and mk:
+                    batch[idx]["missing_keywords"] = [str(x) for x in mk][:8]
+                hint = item.get("cv_hint")
+                if isinstance(hint, str) and hint.strip():
+                    batch[idx]["cv_hint"] = hint.strip()
         return batch
 
     except Exception as e:

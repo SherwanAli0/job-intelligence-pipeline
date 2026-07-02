@@ -109,14 +109,50 @@ def _build_html(jobs: list[dict]) -> str:
         badge = _freshness_badge(j.get("posted_at", ""))
         if "🔥" in badge:
             fresh_count += 1
+
+        # ── Enrichment extras (all additive; render only when present) ────────
+        # Direct-apply link: apply at the company's own ATS, not the board relay.
+        apply_url = (j.get("apply_url") or "").strip()
+        apply_html = (
+            f' &nbsp;<a href="{apply_url}" style="color:#16a34a;font-size:12px;'
+            f'font-weight:600;text-decoration:none;">⚡ apply direct</a>'
+        ) if apply_url and apply_url.lower().startswith("http") else ""
+
+        # Salary band
+        salary = (j.get("salary") or "").strip()
+        salary_html = (
+            f'<span style="color:#059669;font-size:12px;"> · 💶 {salary}</span>'
+        ) if salary else ""
+
+        # Named contact / email / phone pulled from the ad body
+        contact = (j.get("contact") or "").strip()
+        contact_html = (
+            f'<br><span style="color:#0369a1;font-size:12px;">📇 {contact}</span>'
+        ) if contact else ""
+
+        # Keyword-gap tailoring hint
+        mk = j.get("missing_keywords") or []
+        hint = (j.get("cv_hint") or "").strip()
+        tailor_html = ""
+        if mk or hint:
+            kw = ", ".join(str(x) for x in mk[:8])
+            kw_line = (f'<b>Tailor — add/emphasise:</b> {kw}' if kw else "")
+            hint_line = (f'<br>{hint}' if hint else "")
+            tailor_html = (
+                f'<div style="margin-top:5px;padding:6px 9px;background:#fffbeb;'
+                f'border-radius:6px;border:1px solid #fde68a;color:#92400e;'
+                f'font-size:12px;">✍️ {kw_line}{hint_line}</div>'
+            )
+
         rows += f"""
         <tr>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;">
             <a href="{j['url']}" style="font-weight:600;color:#111827;text-decoration:none;font-size:14px;">
               {j['title']}
-            </a>{badge}<br>
-            <span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}</span><br>
+            </a>{badge}{apply_html}<br>
+            <span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
             <span style="color:#6b7280;font-size:12px;font-style:italic;">{j.get('reason','')}</span>
+            {tailor_html}
           </td>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap;">
             <span style="background:{color};color:#fff;padding:3px 10px;border-radius:12px;font-size:13px;font-weight:600;">
