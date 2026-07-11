@@ -283,6 +283,24 @@ _EXP_SOFTENERS = (
 )
 
 
+# Titles that mark a role as designed for fresh graduates. Such postings
+# often still boilerplate "X years experience" in the body (e.g. Airbus VIE
+# programmes) — the title-level intent wins, so they skip the experience drop.
+_GRADUATE_TITLE_RE = None  # compiled lazily below
+
+
+def _is_graduate_designed(title: str) -> bool:
+    global _GRADUATE_TITLE_RE
+    import re
+    if _GRADUATE_TITLE_RE is None:
+        _GRADUATE_TITLE_RE = re.compile(
+            r"\b(graduate|trainee|vie|intern(?:ship)?|praktikum|praktikant(?:in)?|"
+            r"absolvent(?:in)?|entry[\s\-]?level|junior)\b",
+            re.IGNORECASE,
+        )
+    return bool(_GRADUATE_TITLE_RE.search(title or ""))
+
+
 def _no_experience_overload(j: dict) -> bool:
     """
     Tiered experience filter (recall-friendly):
@@ -293,11 +311,18 @@ def _no_experience_overload(j: dict) -> bool:
       - under 2 / vague   → KEEP ("1-2 years", "0-2 years", "up to 2 years",
                             bare "2 years experience" without a hard word)
 
+    Graduate immunity: titles containing graduate/trainee/VIE/intern/
+    Praktikum/Absolvent/entry-level/junior are designed for fresh grads —
+    body-text year mentions are boilerplate there, so they always KEEP.
+    (Werkstudent roles are still dropped by the scorer's own check.)
+
     Guards: calendar years (2024), team sizes ("team of 25"), "24/7", salary
     figures never match — the number must sit next to year(s)/Jahre in an
     experience context, and range right-hand sides don't count.
     """
     import re
+    if _is_graduate_designed(j.get("title", "")):
+        return True
     desc = (j.get("description") or "").lower()
 
     written = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -375,6 +400,13 @@ _RE_SENIOR_IN_TITLE = _re_senior.compile(
 )
 
 
+# "(Senior)" as a PARENTHESIZED prefix is German-ad convention for "senior
+# OPTIONAL — mid/junior candidates also considered" (e.g. "(Senior) Applied
+# Scientist"). Strip that token before the seniority test so those roles
+# survive; a bare "Senior Applied Scientist" still drops.
+_RE_OPTIONAL_SENIOR = _re_senior.compile(r"\(\s*senior\s*\)", _re_senior.IGNORECASE)
+
+
 def _not_fulltime_senior(j: dict) -> bool:
     """
     Drop senior/lead/principal/manager/architect/director roles.
@@ -386,9 +418,12 @@ def _not_fulltime_senior(j: dict) -> bool:
 
     Allows the role through ONLY if a junior/entry/intern/graduate qualifier
     is also present in the title (e.g. "Junior Engineering Manager" is rare
-    but legitimate).
+    but legitimate) — or if the ONLY seniority marker is a parenthesized
+    "(Senior)" prefix, which in German ads means the level is optional.
     """
     title = j.get("title", "")
+    # Neutralize the optional "(Senior)" token before testing
+    title = _RE_OPTIONAL_SENIOR.sub(" ", title)
     title_lower = title.lower()
 
     if _RE_SENIOR_IN_TITLE.search(title):
@@ -597,8 +632,20 @@ def main(dry_run: bool = False) -> None:
     good.sort(key=lambda x: x["score"], reverse=True)
     top = good[:MAX_RESULTS]
 
+    # ── Near misses (35–44): visible, clearly separated ───────────────────────
+    # Haiku fails >90% of pre-screen survivors below the 45 floor; the 35-44
+    # band is where miscalibrated-but-real matches die invisibly. Surface the
+    # top 10 of that band in a dimmed section so Sherwan can judge calibration
+    # himself instead of trusting the cliff.
+    near = [j for j in scored if 35 <= j["score"] < MIN_SCORE]
+    near.sort(key=lambda x: x["score"], reverse=True)
+    near = near[:10]
+    for j in near:
+        j["near_miss"] = True
+
     print(f"\nJobs scoring >= {MIN_SCORE}: {len(good)}")
-    print(f"Sending top {len(top)} to notifications\n")
+    print(f"Near misses (35-{MIN_SCORE - 1}): {len(near)}")
+    print(f"Sending top {len(top)} + {len(near)} near misses to notifications\n")
 
     for j in top[:10]:  # preview in CI logs
         print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} ({j['source']})")
@@ -606,9 +653,10 @@ def main(dry_run: bool = False) -> None:
     # ── Notify ────────────────────────────────────────────────────────────────
     if dry_run:
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")
-    elif top:
-        send_email(top)
-        add_to_notion(top)
+    elif top or near:
+        send_email(top + near)
+        if top:
+            add_to_notion(top)
     else:
         print("No jobs above threshold — no notifications sent.")
 

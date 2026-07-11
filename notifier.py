@@ -102,7 +102,13 @@ def _build_html(jobs: list[dict]) -> str:
         return (-j.get("score", 0), fresh_rank)
     jobs = sorted(jobs, key=_sort_key)
 
+    # Near misses (35–44, flagged by main.py) render in their own dimmed
+    # section below the main table, so the score cutoff stops hiding jobs.
+    main_jobs = [j for j in jobs if not j.get("near_miss")]
+    near_jobs = [j for j in jobs if j.get("near_miss")]
+
     rows = ""
+    near_rows = ""
     fresh_count = 0
     for j in jobs:
         label, color = _score_label(j["score"])
@@ -144,8 +150,8 @@ def _build_html(jobs: list[dict]) -> str:
                 f'font-size:12px;">✍️ {kw_line}{hint_line}</div>'
             )
 
-        rows += f"""
-        <tr>
+        row_html = f"""
+        <tr{' style="opacity:0.75;"' if j.get('near_miss') else ''}>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;">
             <a href="{j['url']}" style="font-weight:600;color:#111827;text-decoration:none;font-size:14px;">
               {j['title']}
@@ -161,6 +167,22 @@ def _build_html(jobs: list[dict]) -> str:
             <span style="color:#9ca3af;font-size:11px;">{j['source']}</span>
           </td>
         </tr>"""
+        if j.get("near_miss"):
+            near_rows += row_html
+        else:
+            rows += row_html
+
+    # Near-miss section — only rendered when main.py flagged any
+    near_html = ""
+    if near_rows:
+        near_html = f"""
+      <div style="margin-top:22px;padding:10px 14px;background:#f4f4f5;border-radius:6px 6px 0 0;">
+        <div style="font-size:13px;font-weight:700;color:#52525b;">🕵️ Near misses ({len(near_jobs)}) — scored 35–44, just under the cutoff</div>
+        <div style="font-size:11px;color:#a1a1aa;">The scorer wasn't convinced. Skim them anyway — miscalibrated good matches land here.</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <tbody>{near_rows}</tbody>
+      </table>"""
 
     fresh_summary = ""
     if fresh_count:
@@ -176,7 +198,7 @@ def _build_html(jobs: list[dict]) -> str:
     <div style="background:#1e3a5f;padding:24px 28px;">
       <h1 style="color:#fff;margin:0;font-size:20px;">🎯 Job Digest — {today}</h1>
       <p style="color:#93c5fd;margin:6px 0 0;font-size:14px;">
-        {len(jobs)} new matches · fresh first{fresh_summary}
+        {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · fresh first{fresh_summary}
       </p>
     </div>
 
@@ -190,6 +212,7 @@ def _build_html(jobs: list[dict]) -> str:
         </thead>
         <tbody>{rows}</tbody>
       </table>
+      {near_html}
     </div>
 
     <div style="padding:16px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;">

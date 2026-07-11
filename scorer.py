@@ -370,21 +370,33 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     title    = (j.get("title")       or "")
     desc     = (j.get("description") or "")
     loc      = (j.get("location")    or "")
+    # "(Senior)" as a parenthesized prefix = German-ad convention for "senior
+    # OPTIONAL — mid/junior also considered". Neutralize before title tests.
+    title_for_seniority = re.sub(r"\(\s*senior\s*\)", " ", title, flags=re.IGNORECASE)
     t_low    = title.lower()
     d_low    = desc.lower()
     combined = f"{t_low} {d_low}"
 
+    # Graduate-designed titles (graduate/trainee/VIE/intern/Praktikum/
+    # Absolvent/entry-level/junior) skip the experience checks — body-text
+    # year mentions are boilerplate in programmes built for fresh grads.
+    graduate_designed = bool(re.search(
+        r"\b(graduate|trainee|vie|intern(?:ship)?|praktikum|praktikant(?:in)?|"
+        r"absolvent(?:in)?|entry[\s\-]?level|junior)\b",
+        t_low,
+    ))
+
     # ── Check 1: Experience requirement ───────────────────────────────────────
     # 1a. Numeric patterns: "3+ years", "minimum 4 years", "3-5 years experience",
     #     "with 3+ years", "demonstrated 3 years", "proven 5+ years"
-    if _RE_EXP_NUM.search(d_low):
+    if not graduate_designed and _RE_EXP_NUM.search(d_low):
         return True, "Requires 3+ years experience", "experience"
     # 1b. Written-out patterns: "three years", "minimum three (3) years"
-    if _RE_EXP_TEXT.search(d_low):
+    if not graduate_designed and _RE_EXP_TEXT.search(d_low):
         return True, "Requires 3+ years experience (written out)", "experience"
     # 1c. Title-level seniority: Senior / Lead / Head / Principal in title
     #     with no junior/entry/intern qualifier → auto-disqualify
-    if _RE_SENIOR_TITLE.search(title):
+    if _RE_SENIOR_TITLE.search(title_for_seniority):
         junior_qualifiers = ("junior", "entry", "intern", "graduate", "associate", "jr.")
         if not any(q in t_low for q in junior_qualifiers):
             return True, "Senior/Lead title with no junior qualifier", "senior_title"
