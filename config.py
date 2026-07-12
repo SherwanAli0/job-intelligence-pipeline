@@ -193,8 +193,13 @@ MAX_RESULTS = BAND_A_MAX + BAND_B_MAX + BAND_C_MAX
 # Germany on-site / hybrid / EU-wide remote, so US-only roles auto-drop.
 GREENHOUSE_SLUGS = [
     # ── German tech / e-commerce (original list)
-    "zalando", "deepl", "deliveryhero", "cognigy", "n26", "sumup",
-    "personio", "celonis", "biontech", "flixbus", "zattoo", "razor-group",
+    # NOTE (health sweep): zalando, deepl, deliveryhero, cognigy, biontech,
+    # mangopay, personio all 404'd on Greenhouse (migrated ATS). Relocated
+    # where possible: deepl -> ASHBY_SLUGS, deliveryhero -> SMARTRECRUITERS_SLUGS,
+    # flixbus -> "flix" (slug renamed), personio already in PERSONIO_SLUGS.
+    # zalando/biontech/cognigy/mangopay not on any free ATS at sweep time.
+    "n26", "sumup",
+    "celonis", "flix", "zattoo", "razor-group",
     # ── German / EU AI-first startups (verified)
     "parloa",          # 58 jobs, conversational AI agents
     "helsing",         # 105 jobs, defence AI
@@ -313,7 +318,7 @@ GREENHOUSE_SLUGS = [
     "kinexon",         # Kinexon — 25 jobs, Munich sensors/ML
     "dkbcodefactory",  # DKB Code Factory — 21 jobs, Berlin banking tech
     "moonfare",        # Moonfare — 13 jobs, Berlin fintech
-    "mangopay",        # Mangopay — 10 jobs
+    # mangopay removed — 404 on Greenhouse (moved ATS, not on any free one)
     "truelayer",       # TrueLayer — 9 jobs
     "bondora",         # Bondora — 8 jobs
     "copperco",        # Copper — 7 jobs
@@ -335,7 +340,7 @@ GREENHOUSE_SLUGS = [
 # Verified: each slug returned 200 OK with > 0 jobs at time of addition.
 # NOTE: hellofresh moved to GREENHOUSE_SLUGS (396 jobs there vs Lever).
 LEVER_SLUGS = [
-    "nuri",
+    # nuri removed — 404 (Nuri/Bitwala ceased operations)
     "mistral",         # 161 jobs, top AI lab — Paris, EU-hires
     "qonto",           # 35 jobs, French fintech, EU remote
     "moonpay",         # 24 jobs, fintech / crypto
@@ -479,6 +484,7 @@ WORKDAY_CXS_TENANTS = [
 # 4641 active jobs (across all functions). Only relevant ones reach Claude.
 SMARTRECRUITERS_SLUGS = [
     "BoschGroup",      # 4641 total jobs, ~947 in Germany
+    "deliveryhero",    # 1087 jobs — relocated from Greenhouse (404 there)
     "Continental",     # 1188 jobs
     "RolandBerger",    # 213 jobs, top European consultancy
     "Visa",            # 20 jobs
@@ -523,6 +529,7 @@ COMPANY_PAGES = [
 # Slug = the final path segment of a company's jobs.ashbyhq.com/{slug} board.
 # Verified: each returned 200 OK with > 0 jobs at time of addition.
 ASHBY_SLUGS = [
+    "deepl",         # 24 jobs — relocated from Greenhouse (404 there), Cologne LLM/MT
     "ramp",          # 121 jobs, fintech
     "deepgram",      # 61 jobs, speech AI — direct AI/ML fit
     "perplexity",    # 59 jobs, frontier AI lab
