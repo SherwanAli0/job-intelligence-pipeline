@@ -2032,6 +2032,138 @@ def scrape_join() -> list[dict]:
     return results
 
 
+# ── 23. XING jobs (Germany's recruiter-native network) ───────────────────────
+# XING carries German SME / Mittelstand roles that never reach LinkedIn — the
+# channel new grads most often credit for interviews. Public GraphQL endpoint
+# at xing-one/api; the operation/field shape below was reverse-engineered live
+# (introspection is disabled, so it was derived from the endpoint's own
+# semantic-error feedback). Search returns title/company/location/url/date;
+# the full description is pulled from each job page's JSON-LD JobPosting so the
+# English/experience/German filters and the scorer have real text to judge.
+
+_XING_URL = "https://www.xing.com/xing-one/api"
+_XING_CONSUMER = "loggedout.web.jobs.search_results.center"
+_XING_HEADERS = {
+    "User-Agent": HEADERS["User-Agent"],
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Origin": "https://www.xing.com",
+    "Referer": "https://www.xing.com/jobs/search",
+}
+_XING_QUERY = """query JobSearchByQuery($query: JobSearchQueryInput!, $consumer: String!, $limit: Int, $offset: Int) {
+  jobSearchByQuery(query: $query, consumer: $consumer, limit: $limit, offset: $offset) {
+    collection {
+      jobDetail {
+        ... on VisibleJob {
+          id
+          title
+          url
+          activatedAt
+          location { city }
+          companyInfo { companyNameOverride company { companyName } }
+        }
+      }
+    }
+  }
+}"""
+
+# Balanced across the four tracks; German-market terms (XING is DE-native).
+_XING_QUERIES = (
+    "AI Engineer", "Machine Learning Engineer", "Data Scientist", "Data Analyst",
+    "LLM Engineer", "Data Engineer", "Business Intelligence", "Junior Data Scientist",
+)
+
+_XING_DESC_CAP = 60  # max job-page description fetches per run
+
+
+def _xing_fetch_description(url: str) -> str:
+    """Pull the full description from a XING job page's JSON-LD JobPosting."""
+    try:
+        import json as _json
+        r = requests.get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=12)
+        if r.status_code != 200:
+            return ""
+        soup = BeautifulSoup(r.text, "html.parser")
+        for s in soup.find_all("script", type="application/ld+json"):
+            if not s.string:
+                continue
+            try:
+                d = _json.loads(s.string)
+            except Exception:
+                continue
+            if isinstance(d, dict) and d.get("@type") == "JobPosting":
+                return BeautifulSoup(d.get("description", "") or "", "html.parser").get_text(" ", strip=True)
+        return ""
+    except Exception:
+        return ""
+
+
+def scrape_xing() -> list[dict]:
+    """Scrape XING jobs via its public GraphQL search + JSON-LD description enrichment."""
+    results: list[dict] = []
+    seen_ids: set[str] = set()
+    enriched = 0
+
+    for query in _XING_QUERIES:
+        try:
+            payload = {
+                "operationName": "JobSearchByQuery",
+                "query": _XING_QUERY,
+                "variables": {
+                    "consumer": _XING_CONSUMER,
+                    "query": {"keywords": query},
+                    "limit": 20,
+                    "offset": 0,
+                },
+            }
+            r = requests.post(_XING_URL, json=payload, headers=_XING_HEADERS, timeout=20)
+            if r.status_code != 200:
+                continue
+            data = (r.json().get("data") or {}).get("jobSearchByQuery") or {}
+            for c in data.get("collection", []) or []:
+                jd = c.get("jobDetail") or {}
+                jid = jd.get("id")
+                if not jid or jid in seen_ids:
+                    continue
+                seen_ids.add(jid)
+
+                title = jd.get("title", "") or ""
+                url = jd.get("url", "") or ""
+                if not title or not url:
+                    continue
+                ci = jd.get("companyInfo") or {}
+                company = (
+                    ci.get("companyNameOverride")
+                    or (ci.get("company") or {}).get("companyName")
+                    or "XING"
+                )
+                location = (jd.get("location") or {}).get("city", "") or "Germany"
+                posted = jd.get("activatedAt", "") or ""
+
+                description = ""
+                if enriched < _XING_DESC_CAP:
+                    description = _xing_fetch_description(url)
+                    enriched += 1
+                    time.sleep(0.2)
+
+                results.append(job(
+                    title=title,
+                    company=company,
+                    location=location,
+                    url=url,
+                    source="XING",
+                    description=description,
+                    posted_at=posted,
+                ))
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  [XING] query '{query}' failed: {e}")
+            continue
+
+    print(f"  [XING] {len(results)} jobs ({enriched} enriched with full description)")
+    return results
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def scrape_all() -> list[dict]:
@@ -2058,6 +2190,7 @@ def scrape_all() -> list[dict]:
         scrape_ashby,              # Perplexity, Deepgram, Ramp, Supabase, Linear, etc.
         scrape_recruitee,          # Limehome and other EU startups
         scrape_germantechjobs,     # germantechjobs.de RSS — German tech aggregator
+        scrape_xing,               # XING GraphQL — German SME / recruiter-native market
         scrape_berlinstartupjobs,  # berlinstartupjobs.com RSS (best-effort, Cloudflare-intermittent)
         scrape_join,               # join.com (best-effort, no confirmed public endpoint)
         scrape_company_pages,      # Generic German company pages (restored, noisy but attempted)
