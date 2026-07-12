@@ -1,0 +1,25 @@
+name: Board Health Check
+
+on:
+  schedule:
+    - cron: "0 6 1 * *"   # 1st of each month, 06:00 UTC
+  workflow_dispatch:        # run on demand from the Actions tab
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Sweep all company boards
+        run: python health_check.py
