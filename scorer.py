@@ -13,9 +13,48 @@ import time
 
 import anthropic
 
-from config import CV_PROFILE
+from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+# ── Per-track CV routing ──────────────────────────────────────────────────────
+# Each job is classified into a track and scored against the CV framed for that
+# track, so a Data Scientist job is judged against the DS-framed CV (statistics,
+# experimentation, analytics) rather than the AI-framed one. This is what lifts
+# DS/ML scores instead of every role reading as "a stretch for an AI person".
+# Data-Analyst jobs use the DS profile (closest data framing); unknown → AI.
+_TRACK_PROFILES = {"AI": CV_PROFILE_AI, "ML": CV_PROFILE_ML,
+                   "DS": CV_PROFILE_DS, "DA": CV_PROFILE_DS}
+
+
+def _classify_track(j: dict) -> str:
+    """Lightweight keyword classifier → 'AI' | 'ML' | 'DS' | 'DA'. Title-weighted."""
+    t = (j.get("title") or "").lower()
+    d = (j.get("description") or "").lower()[:600]
+    blob = f"{t} {t} {d}"  # title double-weighted
+
+    def has(*kw):
+        return any(k in blob for k in kw)
+
+    # Order matters: most-specific first.
+    if has("data analyst", "business intelligence", " bi ", "bi analyst",
+           "analytics engineer", "reporting analyst", "business analyst",
+           "power bi", "tableau", "dashboards"):
+        return "DA"
+    if has("data scientist", "data science", "quantitative analyst",
+           "statistician", "experimentation", "a/b test", "causal"):
+        return "DS"
+    if has("machine learning", "ml engineer", "mlops", "ml ops",
+           "deep learning", "computer vision", " nlp", "nlp ",
+           "applied scientist", "research engineer", "pytorch", "tensorflow"):
+        return "ML"
+    if has(" ai ", "ai engineer", "llm", "genai", "generative ai",
+           "ai agent", "agentic", "rag", "prompt", "gpt", "conversational ai"):
+        return "AI"
+    # Fall back on broad data vs AI hints, else AI (broadest current focus).
+    if has("sql", "analytics", "reporting", "data "):
+        return "DS"
+    return "AI"
 
 BATCH_SIZE = 10
 
@@ -485,10 +524,11 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
 
     return False, "", ""
 
-SYSTEM_PROMPT = f"""You are a strict job-matching filter for Sherwan Ali, a final-year Computer Engineering student graduating June 2026. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
+def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
+    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate (graduated July 2026) targeting junior full-time roles. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
 
-CANDIDATE PROFILE:
-{CV_PROFILE}
+CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
+{cv_profile}
 
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
@@ -683,7 +723,8 @@ def _format_job_block(jobs: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def _score_batch(batch: list[dict], model: str = HAIKU_MODEL) -> list[dict]:
+def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
+                 cv_profile: str = CV_PROFILE) -> list[dict]:
     jobs_block = _format_job_block(batch)
     prompt = USER_TEMPLATE.format(n=len(batch), jobs_block=jobs_block)
 
@@ -691,7 +732,7 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL) -> list[dict]:
         response = client.messages.create(
             model=model,
             max_tokens=1500,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(cv_profile),
             messages=[{"role": "user", "content": prompt}],
         )
         raw = response.content[0].text.strip()
@@ -744,16 +785,34 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
 
     print(f"  Pre-screened out: {prescreened_out} | Sending to Claude: {len(to_score)}")
 
-    # ── Stage 2: Haiku scoring for remaining jobs (cheap bulk pass) ────────────
-    scored = []
-    for i in range(0, len(to_score), BATCH_SIZE):
-        batch = to_score[i : i + BATCH_SIZE]
-        result = _score_batch(batch, model=HAIKU_MODEL)
-        scored.extend(result)
-        time.sleep(1)
-        print(f"  Scored {min(i + BATCH_SIZE, len(to_score))}/{len(to_score)}")
+    # Tag each survivor with its track so both scoring stages route it to the
+    # matching CV profile. Jobs are grouped by track and each group scored with
+    # its own profile — a DS job is judged against the DS-framed CV, etc.
+    for j in to_score:
+        j["_track"] = _classify_track(j)
+    from collections import Counter
+    tcount = Counter(j["_track"] for j in to_score)
+    print(f"  Track split: " + ", ".join(f"{k}={v}" for k, v in sorted(tcount.items())))
 
-    # ── Stage 3: Sonnet re-score of finalists (budget mode) ───────────────────
+    def _by_track(pool):
+        groups = {}
+        for j in pool:
+            groups.setdefault(j.get("_track", "AI"), []).append(j)
+        return groups
+
+    # ── Stage 2: Haiku scoring, per-track profile (cheap bulk pass) ────────────
+    scored = []
+    done = 0
+    for track, group in _by_track(to_score).items():
+        profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
+        for i in range(0, len(group), BATCH_SIZE):
+            batch = group[i : i + BATCH_SIZE]
+            scored.extend(_score_batch(batch, model=HAIKU_MODEL, cv_profile=profile))
+            done += len(batch)
+            time.sleep(1)
+            print(f"  Scored {done}/{len(to_score)} ({track})")
+
+    # ── Stage 3: Sonnet re-score of finalists (budget mode), per-track profile ─
     # Only jobs Haiku rates >= SONNET_RESCORE_FLOOR get the expensive second
     # opinion. _score_batch overwrites score/reason in place on success and
     # leaves the Haiku values untouched on any failure, so this stage can
@@ -761,9 +820,11 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
     finalists = [jb for jb in scored if jb.get("score", 0) >= SONNET_RESCORE_FLOOR]
     if finalists:
         print(f"  [Sonnet] re-scoring {len(finalists)} finalists (Haiku >= {SONNET_RESCORE_FLOOR})")
-        for i in range(0, len(finalists), BATCH_SIZE):
-            _score_batch(finalists[i : i + BATCH_SIZE], model=SONNET_MODEL)
-            time.sleep(1)
+        for track, group in _by_track(finalists).items():
+            profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
+            for i in range(0, len(group), BATCH_SIZE):
+                _score_batch(group[i : i + BATCH_SIZE], model=SONNET_MODEL, cv_profile=profile)
+                time.sleep(1)
         print(f"  [Sonnet] done")
 
     # Merge Claude-scored jobs with pre-screened (score=0) jobs

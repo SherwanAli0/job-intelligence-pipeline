@@ -2,16 +2,23 @@
 #  config.py  —  edit this file to customise
 # ─────────────────────────────────────────────
 
-# ── Your CV profile (used by Claude for scoring) ──────────────────────────────
-CV_PROFILE = """
+# ── CV profiles (used by Claude for scoring) ──────────────────────────────────
+# THREE track-specific profiles built from the same real facts but framed for
+# their track. The scorer routes each job to the matching profile (see
+# scorer.py), so a Data Scientist job is judged against the DS-framed CV, an ML
+# job against the ML-framed CV, etc. — this stops the pipeline treating every
+# role as "a stretch for an AI person" and is what lifts DS/ML scores.
+# Human-readable copies live in cv/CV_*.md for use when actually applying.
+
+# Facts shared verbatim across all three (single source of truth for scoring
+# guardrails: language, location, work authorization, availability).
+_CV_SHARED = """
 Name: Sherwan Ali
 Location: Bochum, Germany. Full work authorization (valid German residence permit).
-Availability: Currently interning at iseremo GmbH (Apr 2026 to present). Available full-time
-from August 2026.
-Not currently enrolled at a German university, so NOT eligible for Werkstudent roles for now.
-
-Target roles: Junior AI Engineer, Junior ML Engineer, Junior Data Scientist, LLM Engineer,
-AI/Software Engineer, Data Analyst, AI internship.
+Availability: B.Sc. Computer Engineering GRADUATE (Üsküdar University, Istanbul, graduated
+July 2026). Available for full-time junior roles from August 2026. Recently completed a
+Software and AI internship at iseremo GmbH (Apr–Jun 2026).
+Not enrolled at a German university, so NOT eligible for Werkstudent roles.
 
 LANGUAGE REQUIREMENT (critical for scoring):
 - English: C1. STRONGLY prefer English-first roles or English-speaking teams.
@@ -27,58 +34,138 @@ LOCATION AND WORK AUTHORIZATION (critical for scoring):
 - Roles in Germany, or remote within Germany or the EU, are a fit.
 
 Education:
-- B.Sc. Computer Engineering, Üsküdar University, Istanbul (graduating July 2026). Programme
-  delivered in English.
-- Final grade 1.9 (German scale, converted; original GPA 3.41/4.00). Focus: AI, Machine
-  Learning, Data Analytics.
+- B.Sc. Computer Engineering, Üsküdar University, Istanbul (graduated July 2026). Programme
+  delivered in English. Final grade 1.8 (German scale, official uni-assist evaluation;
+  original GPA 3.45/4.00).
 - Coursework: Machine Learning, Deep Learning, Computer Vision, Database Systems, Statistics,
   Data Mining.
-- Thesis: forensic audit and reproducibility study of CSRBoost (IEEE Access 2025).
+
+Languages: English C1, German B1, Turkish C1, Arabic native, Kurdish native.
+Certifications: IBM AI Engineering Professional Certificate (Coursera, Sep 2025);
+Google Advanced Data Analytics Professional Certificate (Coursera, Mar 2026);
+Databases and SQL for Data Science with Python (Coursera/IBM, Apr 2026).
+"""
+
+# ── DATA SCIENTIST framing — leads with statistics, experimentation, analytics ──
+CV_PROFILE_DS = _CV_SHARED + """
+Target roles: Junior Data Scientist, Data Scientist, Associate Data Scientist, Data Analyst,
+Business Intelligence Analyst, Analytics Engineer, Quantitative Analyst, Working Student is NOT
+applicable (graduate).
+
+Profile: Data-focused Computer Engineering graduate with strong statistical and
+experimentation grounding. Comfortable across the full analysis loop — hypothesis, study
+design, cross-validation, metric evaluation, and reproducible reporting — with SQL, Python,
+and Google-certified data-analytics tooling (Tableau, regression, statistics).
+
+Key Projects (data-science framing):
+- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rigorous statistical study of
+  an IEEE Access 2025 paper across 15 datasets under a 100-fold evaluation protocol; only
+  42/143 metric cells reproduced as published, so reverse-engineered the true per-method
+  protocol over ~75,000 configurations to reach 143/143, then designed a novel extension that
+  outperformed the published method on 12/15 datasets. Deep work in evaluation methodology,
+  metric integrity, imbalanced-data statistics, and experimental design.
+- FUS Recommender System Replication (4-author team): replicated an IEEE Access 2026 paper on
+  MovieLens 100k under 10-fold cross-validation; owned the collaborative-filtering and FUS
+  implementations; reproduced the headline ranking and matched MAE to four decimals
+  (0.7025 vs 0.703). Recommender systems, offline evaluation, statistical validation.
+- HalluScope, LLM evaluation (5-author team): quantitative evaluation study — computed
+  per-sentence Shannon entropy over model outputs and matched published values to ~0.02 nats
+  across 9 model-dataset cells. Measurement, metrics, statistical comparison.
+- Job Hunter (solo): Python + SQL data pipeline that ingests, dedups, scores and ranks
+  50–100 job postings/day and reports analytics on the funnel.
+
+Technical Skills (data-science emphasis):
+- Analysis & Statistics: hypothesis testing, regression, cross-validation, experiment design,
+  A/B-style evaluation, imbalanced-data methods, metric design.
+- Languages & Data: Python, SQL, Pandas, NumPy, Seaborn, Tableau (Google Advanced Data
+  Analytics), Jupyter.
+- Machine Learning: scikit-learn, XGBoost, imbalanced-learn, classification, regression,
+  recommender systems, model evaluation.
+- Also: PyTorch/TensorFlow, LLMs, Docker, Git, GitHub Actions CI/CD.
+"""
+
+# ── MACHINE LEARNING framing — leads with modelling, training, ML engineering ──
+CV_PROFILE_ML = _CV_SHARED + """
+Target roles: Junior Machine Learning Engineer, ML Engineer, Applied Scientist, Applied ML
+Engineer, MLOps Engineer, Deep Learning Engineer, Computer Vision Engineer, NLP Engineer,
+Research Engineer (ML).
+
+Profile: Machine Learning engineer/graduate with hands-on model training, evaluation and
+reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data,
+training, logits/metrics, cross-validation, CI — in Python with PyTorch, scikit-learn and
+XGBoost, containerized with Docker and automated with GitHub Actions.
+
+Key Projects (ML framing):
+- Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
+  undocumented ML evaluation protocol across 15 datasets, 10 algorithms and ~75,000
+  configurations (920 compute-hours), lifting reproduction from 42/143 to 143/143 metric
+  cells, then engineered a NOVEL method extension that beat the published approach on 12/15
+  datasets. Imbalanced classification, ensemble methods, boosting, rigorous ML evaluation.
+- HalluScope, LLM Hallucination Detection (5-author team): owned the model-generation stage —
+  ran LLaMA-3-8B, Qwen2-7B and Gemma-2-9B over 297 prompts, extracted token logits, computed
+  per-sentence Shannon entropy; reproduced the central claim across all 9 model-dataset cells
+  within ~0.02 nats. 12-test CI suite. Transformers, open-source LLM inference, evaluation.
+- FUS Recommender System Replication (4-author team): implemented collaborative-filtering and
+  FUS models on MovieLens 100k under 10-fold CV; matched published MAE to four decimals.
+- Job Hunter (solo): production-style Python ML-scoring service — batches, retries, two-stage
+  model routing (Haiku→Sonnet), structured outputs, CI/CD.
+
+Technical Skills (ML emphasis):
+- ML/DL: PyTorch, TensorFlow, scikit-learn, XGBoost, imbalanced-learn; CNNs, transformers,
+  transfer learning, computer vision, hyperparameter tuning, cross-validation, model
+  evaluation, ensemble/boosting methods.
+- LLMs: open-source LLMs (LLaMA, Qwen, Gemma), Hugging Face Transformers, token-level features,
+  LLM evaluation, RAG.
+- Engineering: Python, FastAPI, Docker, Git, GitHub Actions (CI/CD), Linux, Jupyter.
+- Also: SQL, Pandas, NumPy, Anthropic/OpenAI APIs.
+"""
+
+# ── AI / LLM framing (latest current focus) — leads with iseremo LLM/agent work ──
+CV_PROFILE_AI = _CV_SHARED + """
+Target roles: Junior AI Engineer, AI Engineer, LLM Engineer, GenAI Engineer, Applied AI
+Engineer, AI Agent Engineer, AI/Software Engineer, Forward Deployed / AI Solutions Engineer.
+
+Profile: AI/LLM-focused Computer Engineering graduate who recently built and shipped LLM
+features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker,
+prompt and system-prompt versioning — and builds agentic tools of his own. Strong Python,
+PyTorch, and open-source-LLM (LLaMA/Qwen/Gemma) foundations.
 
 Work Experience:
-- Software and AI Intern, iseremo GmbH, Düsseldorf (Apr 2026 to present): building AI chatbots
-  and digital-assistant systems with FastAPI, Docker, and the Anthropic and OpenAI APIs;
-  working in a React and TypeScript front-end codebase (components, bug fixes, live testing);
-  databases and data structures; testing, error analysis, documentation.
-- IT Support and Web Management Intern, Salam Institute for Peace and Justice (Dec 2024 to Aug
-  2025, remote): co-led a WordPress migration and redesign for a multi-country nonprofit;
-  evaluated 15+ dev firms; translated business requirements to technical specs; trained
-  non-technical staff.
+- Software and AI Intern, iseremo GmbH, Düsseldorf (Apr–Jun 2026): built and tested AI features
+  in Python and FastAPI — integrated the Anthropic and OpenAI APIs, containerized with Docker,
+  worked on prompt generation and system-prompt versioning; used the WordPress REST API and Git
+  to fix live bugs in an existing codebase; improved bilingual (DE/EN) SEO/GEO; ran tests, error
+  analyses and documentation with development tooling.
+- IT Support and Web Management Intern, Salam Institute for Peace and Justice (Dec 2024 – Aug
+  2025, remote): co-led a WordPress migration/redesign for a multi-country nonprofit with zero
+  downtime; built a vendor-evaluation framework over 15+ firms; translated business needs into
+  technical specs.
 
-Key Projects:
-- Forensic Audit of CSRBoost (graduation thesis, solo): Python, scikit-learn, PyTorch,
-  imbalanced-learn. 15 datasets, 10 algorithms, ~75,000 configurations, 900+ compute-hours.
-  Reproduced 143 of 143 metrics and showed the published Table 2 cannot come from a single ML
-  pipeline.
-- HalluScope, LLM Hallucination Detection (5-author team): Python, PyTorch, Hugging Face
-  Transformers, spaCy, scikit-learn. Replicated an IEEE BigComp 2025 method for entropy-based
-  hallucination scoring in LLMs. Owned the generation stage: ran LLaMA-3, Qwen2, and Gemma-2,
-  extracted token logits, computed per-sentence Shannon entropy. Reproduced the paper's central
-  claim across all 9 model-dataset cells. 12-test CI suite.
-- FUS Recommender System Replication (4-author team): Python, NumPy, scikit-learn, GitHub
-  Actions. Replicated a 2026 IEEE Access paper on MovieLens 100k with 10-fold cross-validation.
-  Owned the FUS and collaborative-filtering implementations. 12-test CI suite.
-- Job Hunter (solo): Python, Anthropic API, Greenhouse/Lever/Notion/Gmail REST APIs, GitHub
-  Actions CI/CD. Agentic tool scoring postings 0 to 100 with Claude structured outputs against
-  a profile; daily ranked email digest. Cost-controlled at EUR 0.02 per run.
+Key Projects (AI framing):
+- HalluScope, LLM Hallucination Detection (5-author team): ran LLaMA-3-8B, Qwen2-7B, Gemma-2-9B
+  over 297 prompts, extracted token logits, computed per-sentence Shannon entropy; reproduced
+  the central claim across all 9 model-dataset cells within ~0.02 nats. 12-test CI suite.
+- Job Hunter (solo): agentic tool integrating Greenhouse/Lever/Notion/Gmail REST APIs;
+  processes 50–100 postings/day, scores them 0–100 with Claude structured outputs, emails a
+  daily ranked digest via GitHub Actions. ~EUR 0.02 per run.
+- Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
+  IEEE Access 2025 ML paper to 143/143 metric cells over ~75,000 configurations, then built a
+  novel extension beating the published method on 12/15 datasets.
+- FUS Recommender System Replication (4-author team): MovieLens 100k, 10-fold CV, matched MAE
+  to four decimals.
 
-Technical Skills:
-- Programming: Python, SQL, JavaScript, TypeScript.
-- Machine Learning: scikit-learn, PyTorch, TensorFlow, Keras, XGBoost, imbalanced-learn;
-  classification, regression, CNNs, transformers, transfer learning, computer vision,
-  hyperparameter tuning, cross-validation.
-- LLM and GenAI: Anthropic API, OpenAI API, Hugging Face Transformers, open-source LLMs
-  (LLaMA, Qwen, Gemma), prompt engineering, RAG, agent workflows, structured outputs,
-  LLM evaluation, hallucination detection.
-- Backend and Frontend: FastAPI, REST APIs, Node.js, React, Vite, Tailwind.
-- Data: Pandas, NumPy, Seaborn, spaCy.
-- Infrastructure: Docker, Git, GitHub Actions (CI/CD), Linux, Jupyter, VS Code.
-
-Certifications:
-- IBM AI Engineering Professional Certificate (Coursera, Sep 2025).
-- Google Advanced Data Analytics Professional Certificate (Coursera, Mar 2026).
-- Databases and SQL for Data Science with Python (Coursera/IBM, Apr 2026).
+Technical Skills (AI emphasis):
+- LLM & GenAI: Anthropic API, OpenAI API, Hugging Face Transformers, open-source LLMs
+  (LLaMA, Qwen, Gemma), prompt engineering, system-prompt versioning, RAG, agent workflows,
+  structured outputs, LLM evaluation, hallucination detection.
+- ML: PyTorch, TensorFlow, scikit-learn, XGBoost, imbalanced-learn; transformers, CV.
+- Backend & Infra: Python, FastAPI, REST APIs, Docker, Git, GitHub Actions (CI/CD), Node.js,
+  React, TypeScript, Linux, Jupyter.
+- Data: SQL, Pandas, NumPy, Seaborn.
 """
+
+# Backward-compatible default (the AI profile is the current primary focus).
+CV_PROFILE = CV_PROFILE_AI
 
 # ── Search queries sent to job boards ─────────────────────────────────────────
 # BALANCED across four equal tracks: AI · ML · Data Scientist · Data Analyst.
