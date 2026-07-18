@@ -78,8 +78,17 @@ jobs:
           git add seen_jobs.json
           git diff --cached --quiet || {
             git commit -m "chore: update seen jobs [skip ci]"
-            # Belt-and-braces: if anything still landed on main mid-run,
-            # rebase our one bookkeeping commit on top instead of failing.
-            git pull --rebase origin main
-            git push
+            # Every historical red ❌ on this workflow died right here, AFTER
+            # the digest email was already sent: a commit landing on main
+            # mid-run (fetch first), a transient GitHub 500, a credentials
+            # hiccup. Retry with a rebase between attempts so a bookkeeping
+            # push never marks a successful hunt as failed.
+            ok=""
+            for i in 1 2 3; do
+              git pull --rebase origin main || true
+              if git push; then ok=1; break; fi
+              echo "push attempt $i failed; retrying in 20s"
+              sleep 20
+            done
+            [ -n "$ok" ]
           }
