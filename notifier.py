@@ -190,6 +190,42 @@ def _build_html(jobs: list[dict]) -> str:
         <tbody>{near_rows}</tbody>
       </table>"""
 
+    # ── B5: follow-up reminders + application funnel (from track.py) ──────────
+    tracker_html = ""
+    try:
+        import track
+        fu = track.get_followups()
+        funnel = track.get_funnel()
+        if funnel["total"] > 0:
+            chips = " · ".join(
+                f"{s} {funnel[s]}" for s in track.STATES if funnel[s]
+            ) or "applied 0"
+            fu_rows = ""
+            for j in fu[:8]:
+                draft = track.followup_draft(j)
+                stale = " · ⚠️ likely ghosted" if j.get("stale") else ""
+                fu_rows += (
+                    f'<div style="margin-top:8px;padding:8px 10px;background:#fff;'
+                    f'border:1px solid #fde68a;border-radius:6px;">'
+                    f'<b style="font-size:12px;color:#92400e;">{j.get("title","")} @ {j.get("company","")}</b>'
+                    f' <span style="color:#a16207;font-size:11px;">— {j["days"]}d, no response{stale}</span>'
+                    f'<div style="color:#57534e;font-size:12px;margin-top:3px;font-style:italic;">&ldquo;{draft}&rdquo;</div>'
+                    f'</div>'
+                )
+            fu_block = (
+                f'<div style="margin-top:6px;font-weight:700;color:#92400e;font-size:13px;">'
+                f'✉️ {len(fu)} application(s) to follow up on:</div>{fu_rows}'
+            ) if fu else ""
+            tracker_html = (
+                f'<div style="margin-top:22px;padding:12px 14px;background:#fffbeb;'
+                f'border-radius:8px;border:1px solid #fde68a;">'
+                f'<div style="font-size:13px;font-weight:700;color:#92400e;">📊 Your funnel</div>'
+                f'<div style="font-size:12px;color:#a16207;">{funnel["total"]} tracked · {chips}</div>'
+                f'{fu_block}</div>'
+            )
+    except Exception:
+        tracker_html = ""  # tracker is optional; never break the digest
+
     fresh_summary = ""
     if fresh_count:
         fresh_summary = f" · 🔥 {fresh_count} posted in last {FRESH_HOURS}h"
@@ -219,6 +255,7 @@ def _build_html(jobs: list[dict]) -> str:
         <tbody>{rows}</tbody>
       </table>
       {near_html}
+      {tracker_html}
     </div>
 
     <div style="padding:16px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;">
