@@ -1845,6 +1845,74 @@ def scrape_germantechjobs() -> list[dict]:
     return results
 
 
+# ── 19b. Remote-EU boards (WorkingNomads + WeWorkRemotely) ───────────────────
+# Two free, no-auth remote-job feeds discovered by mining peer projects
+# (career-ops / EuroJobHunter). They're remote-focused, so the downstream
+# location filter keeps only Germany/EU-remote-eligible roles and drops the
+# US-only ones. Each source is wrapped in its own try/except.
+
+def scrape_remote_eu_boards() -> list[dict]:
+    results: list[dict] = []
+
+    # WorkingNomads — clean JSON list
+    try:
+        r = requests.get("https://www.workingnomads.com/api/exposed_jobs/",
+                         headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            for it in (r.json() or []):
+                title = (it.get("title") or "").strip()
+                url = (it.get("url") or "").strip()
+                if not title or not url:
+                    continue
+                desc = BeautifulSoup(it.get("description", "") or "", "html.parser").get_text(" ").strip()
+                results.append(job(
+                    title=title,
+                    company=(it.get("company_name") or "").strip() or "WorkingNomads",
+                    location=(it.get("location") or "Remote").strip(),
+                    url=url,
+                    source="WorkingNomads",
+                    description=desc,
+                    posted_at=(it.get("pub_date") or ""),
+                ))
+    except Exception as e:
+        print(f"  [WorkingNomads] failed: {e}")
+
+    # WeWorkRemotely — programming + data RSS categories
+    for cat in ("remote-programming-jobs", "remote-data-jobs"):
+        try:
+            r = requests.get(f"https://weworkremotely.com/categories/{cat}.rss",
+                             headers=HEADERS, timeout=15)
+            if r.status_code != 200 or "<item" not in r.text:
+                continue
+            soup = BeautifulSoup(r.text, "xml")
+            for item in soup.find_all("item")[:60]:
+                raw = (item.find("title").text if item.find("title") else "").strip()
+                link = (item.find("link").text if item.find("link") else "").strip()
+                if not raw or not link:
+                    continue
+                # WWR title format: "Company: Role"
+                company, _, role = raw.partition(":")
+                title = (role or raw).strip()
+                region = (item.find("region").text if item.find("region") else "").strip()
+                desc = BeautifulSoup(
+                    item.find("description").text if item.find("description") else "",
+                    "html.parser").get_text(" ").strip()
+                results.append(job(
+                    title=title,
+                    company=company.strip() or "WeWorkRemotely",
+                    location=region or "Remote",
+                    url=link,
+                    source="WeWorkRemotely",
+                    description=desc,
+                    posted_at=(item.find("pubDate").text if item.find("pubDate") else ""),
+                ))
+        except Exception as e:
+            print(f"  [WeWorkRemotely/{cat}] failed: {e}")
+
+    print(f"  [RemoteEU] {len(results)} jobs (WorkingNomads + WeWorkRemotely)")
+    return results
+
+
 # ── 20. Generic company career-page scraper (RESTORED) ───────────────────────
 # Many large German companies use JavaScript-rendered SPAs, so this scraper
 # often returns navigation links rather than real job titles. That is expected
@@ -2190,6 +2258,7 @@ def scrape_all() -> list[dict]:
         scrape_ashby,              # Perplexity, Deepgram, Ramp, Supabase, Linear, etc.
         scrape_recruitee,          # Limehome and other EU startups
         scrape_germantechjobs,     # germantechjobs.de RSS — German tech aggregator
+        scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
         scrape_xing,               # XING GraphQL — German SME / recruiter-native market
         scrape_berlinstartupjobs,  # berlinstartupjobs.com RSS (best-effort, Cloudflare-intermittent)
         scrape_join,               # join.com (best-effort, no confirmed public endpoint)
