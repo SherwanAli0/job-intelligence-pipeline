@@ -22,22 +22,27 @@ from pathlib import Path
 
 import requests
 
-BANK_FILE = Path("answers.json")
+BANK_FILE = Path("answers.json")  # gitignored — persisted via Actions cache, never committed
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126"}
 MAX_KIT_JOBS = 12  # only build kits for the top digest jobs (bounded cost)
 
-# Fixed facts the model uses to answer standard questions consistently.
-_FACT_SHEET = """
-- Name: Sherwan Ali. Email: sherwan2.ali@gmail.com. Phone: [removed].
-- Location: Bochum, Germany. Full German work authorization (residence permit) —
-  no visa sponsorship needed. Willing to relocate within Germany / work hybrid.
-- Availability / earliest start: August 2026 (no notice period — recently
-  finished an internship; currently available).
-- Salary expectation: [removed].
-- German: B1 (improving). English: C1. Prefers English-speaking or English-first teams.
-- Education: B.Sc. Computer Engineering, graduated July 2026, grade 1.8 (German scale).
-- Referral: none unless stated.
-"""
+
+def _load_facts() -> str:
+    """
+    The personal fact sheet (contact details, salary expectation, availability)
+    lives OUTSIDE this public repo: the APPKIT_FACTS repo secret in CI, or the
+    gitignored personal/facts.md locally. Without it, drafting is skipped.
+    """
+    env = os.environ.get("APPKIT_FACTS", "").strip()
+    if env:
+        return env
+    p = Path("personal") / "facts.md"
+    if p.exists():
+        try:
+            return p.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+    return ""
 
 # Boilerplate question labels we never draft (the form auto-fills these).
 _SKIP_LABELS = (
@@ -116,7 +121,11 @@ def enrich_with_kits(jobs: list[dict]) -> None:
                 unknown[nq] = q  # keep original wording for the prompt
 
     # Draft all unknown answers in one Haiku call.
-    if unknown:
+    facts = _load_facts() if unknown else ""
+    if unknown and not facts:
+        print("  [AppKit] no fact sheet (APPKIT_FACTS secret / personal/facts.md) "
+              "— skipping answer drafting")
+    elif unknown:
         try:
             import anthropic
             client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -124,8 +133,8 @@ def enrich_with_kits(jobs: list[dict]) -> None:
             numbered = "\n".join(f"{i}. {q}" for i, q in enumerate(qlist))
             prompt = (
                 "Draft concise, honest answers to these job-application screening "
-                "questions for Sherwan Ali, using ONLY these facts:\n"
-                f"{_FACT_SHEET}\n"
+                "questions for the candidate, using ONLY these facts:\n"
+                f"{facts}\n"
                 "Rules: 1-2 sentences each; first person; confident, not apologetic; "
                 "if a fact isn't given, answer generically without inventing specifics. "
                 "For yes/no eligibility questions answer directly.\n\n"

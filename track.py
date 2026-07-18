@@ -7,9 +7,11 @@ You apply to jobs manually; this records them so the daily digest can:
 so after ~30 applications you KNOW which tracks/channels actually convert
 instead of guessing.
 
-State lives in applied_jobs.json (committed by CI alongside seen_jobs.json).
+State lives in applied_jobs.json — gitignored (this repo is PUBLIC and your
+application history is personal data). After every change it is mirrored to the
+APPLIED_JOBS repo secret via `gh secret set`, which is how CI sees it.
 
-CLI (run locally, then commit + push so CI picks it up):
+CLI (run locally — the secret sync happens automatically):
   py -3.11 track.py apply  <job-url-or-id>  ["Job Title"]  ["Company"]
   py -3.11 track.py status <job-url-or-id>  interview|rejected|offer|awaiting
   py -3.11 track.py list
@@ -53,6 +55,27 @@ def load_applied() -> dict:
 
 def save_applied(data: dict) -> None:
     APPLIED_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    _sync_secret(data)
+
+
+def _sync_secret(data: dict) -> None:
+    """
+    Mirror tracker state to the APPLIED_JOBS repo secret so CI can render the
+    funnel/follow-up footer without this file ever being committed (public repo).
+    Best-effort: if gh isn't installed/authenticated, local tracking still works.
+    """
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["gh", "secret", "set", "APPLIED_JOBS",
+             "--body", json.dumps(data, ensure_ascii=False)],
+            capture_output=True, timeout=30,
+        )
+        if r.returncode != 0:
+            print("(note: could not sync to GitHub secret — CI won't see this "
+                  "update until `gh auth login` works)")
+    except Exception:
+        print("(note: gh CLI not found — tracker is local-only until it is)")
 
 
 def mark_applied(url_or_id: str, title: str = "", company: str = "") -> None:

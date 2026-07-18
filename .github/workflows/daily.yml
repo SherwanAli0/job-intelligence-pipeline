@@ -29,6 +29,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Personal data never lives in this public repo. The answer bank is kept
+      # between runs via the Actions cache; the application tracker arrives via
+      # a repo secret (track.py syncs it up with `gh secret set` locally).
+      - name: Restore answer bank (private, cached — never committed)
+        uses: actions/cache@v4
+        with:
+          path: answers.json
+          key: answers-bank-${{ github.run_id }}
+          restore-keys: |
+            answers-bank-
+
+      - name: Restore application tracker from secret
+        env:
+          APPLIED_JOBS_JSON: ${{ secrets.APPLIED_JOBS }}
+        run: |
+          if [ -n "$APPLIED_JOBS_JSON" ]; then
+            printf '%s' "$APPLIED_JOBS_JSON" > applied_jobs.json
+          fi
+
       - name: Run job hunter
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -41,6 +60,9 @@ jobs:
           # Unilever, and other companies whose sites are Cloudflare-blocked.
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          # Personal fact sheet for screening-answer drafting (repo is public,
+          # so the facts live only in this secret / a gitignored local file).
+          APPKIT_FACTS: ${{ secrets.APPKIT_FACTS }}
         run: python main.py
 
       - name: Commit updated seen_jobs.json

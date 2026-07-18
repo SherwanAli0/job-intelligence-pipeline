@@ -1,1 +1,8 @@
 __pycache__/
+
+# ── Too-personal data — this repo is PUBLIC. Never commit these. ──────────────
+# personal/ holds the fact sheet (phone number, salary expectation) used for
+# screening-answer drafting; CI reads the APPKIT_FACTS secret instead.
+personal/
+answers.json
+applied_jobs.json
