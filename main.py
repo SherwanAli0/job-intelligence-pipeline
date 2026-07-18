@@ -796,6 +796,13 @@ def main(dry_run: bool = False) -> None:
     for j in top[:10]:  # preview in CI logs
         print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} ({j['source']})")
 
+    # ── B4: Application Kit — pre-draft screening answers for digest jobs ──────
+    try:
+        from application_kit import enrich_with_kits
+        enrich_with_kits(top)
+    except Exception as e:
+        print(f"  [AppKit] skipped: {e}")
+
     # ── Notify ────────────────────────────────────────────────────────────────
     if dry_run:
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")

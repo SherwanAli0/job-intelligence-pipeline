@@ -150,6 +150,21 @@ def _build_html(jobs: list[dict]) -> str:
                 f'font-size:12px;">✍️ {kw_line}{hint_line}</div>'
             )
 
+        # B4: Application Kit — pre-drafted screening-question answers
+        kit = j.get("app_kit") or []
+        kit_html = ""
+        if kit:
+            qa = "".join(
+                f'<div style="margin-top:4px;"><b style="color:#3730a3;">Q: {x["q"]}</b>'
+                f'<br><span style="color:#4b5563;">A: {x["a"]}</span></div>'
+                for x in kit[:6]
+            )
+            kit_html = (
+                f'<div style="margin-top:5px;padding:6px 9px;background:#eef2ff;'
+                f'border-radius:6px;border:1px solid #c7d2fe;color:#3730a3;font-size:12px;">'
+                f'📝 Screening answers ready ({len(kit)}):{qa}</div>'
+            )
+
         # B6: ghost/stale posting tag
         ghost_html = (
             '<span style="background:#f3f4f6;color:#9ca3af;padding:1px 6px;'
@@ -165,6 +180,7 @@ def _build_html(jobs: list[dict]) -> str:
             <span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
             <span style="color:#6b7280;font-size:12px;font-style:italic;">{j.get('reason','')}</span>
             {tailor_html}
+            {kit_html}
           </td>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap;">
             <span style="background:{color};color:#fff;padding:3px 10px;border-radius:12px;font-size:13px;font-weight:600;">
