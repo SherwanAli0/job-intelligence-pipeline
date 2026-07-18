@@ -150,12 +150,18 @@ def _build_html(jobs: list[dict]) -> str:
                 f'font-size:12px;">✍️ {kw_line}{hint_line}</div>'
             )
 
+        # B6: ghost/stale posting tag
+        ghost_html = (
+            '<span style="background:#f3f4f6;color:#9ca3af;padding:1px 6px;'
+            'border-radius:8px;font-size:10px;margin-left:6px;">👻 stale</span>'
+        ) if j.get("ghost") else ""
+
         row_html = f"""
-        <tr{' style="opacity:0.75;"' if j.get('near_miss') else ''}>
+        <tr{' style="opacity:0.75;"' if (j.get('near_miss') or j.get('ghost')) else ''}>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;">
             <a href="{j['url']}" style="font-weight:600;color:#111827;text-decoration:none;font-size:14px;">
               {j['title']}
-            </a>{badge}{apply_html}<br>
+            </a>{badge}{ghost_html}{apply_html}<br>
             <span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
             <span style="color:#6b7280;font-size:12px;font-style:italic;">{j.get('reason','')}</span>
             {tailor_html}

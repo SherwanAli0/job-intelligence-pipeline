@@ -15,7 +15,40 @@ from pathlib import Path
 from config import MAX_RESULTS, MIN_SCORE
 from notifier import add_to_notion, send_email
 from scrapers import scrape_all
-from scorer import score_jobs
+from scorer import score_jobs, _classify_track
+
+# ── A1 diversity quotas — guaranteed minimum digest slots per track ───────────
+# The market skews AI-heavy (a recent run scored 93 AI vs 4 ML), so a pure
+# score sort buries the DS/ML/DA roles Sherwan actually asked for. We reserve
+# the top-N of each track first, then fill the rest by score.
+_TRACK_QUOTA = {"DS": 6, "ML": 6, "DA": 4, "AI": 8}
+
+# ── B6 ghost-job detection ────────────────────────────────────────────────────
+# Postings older than this are likely stale/reposted "zombie" ads that rarely
+# convert. We don't drop them (age data is imperfect) — we penalise the score
+# and dim them in the digest so fresh roles rank above them.
+_GHOST_AGE_DAYS = 45
+_GHOST_PENALTY = 8
+
+# ── C9 skill-demand radar vocabulary ──────────────────────────────────────────
+# Skills we scan every JD for, to report what the market wants most vs the CV.
+_RADAR_SKILLS = (
+    "python", "sql", "pytorch", "tensorflow", "scikit-learn", "xgboost",
+    "pandas", "numpy", "spark", "airflow", "dbt", "kafka", "snowflake",
+    "databricks", "tableau", "power bi", "looker", "docker", "kubernetes",
+    "terraform", "aws", "gcp", "azure", "mlflow", "langchain", "langgraph",
+    "llm", "rag", "vector database", "hugging face", "fastapi", "git",
+    "ci/cd", "statistics", "a/b test", "nlp", "computer vision", "transformers",
+    "java", "scala", "go ", "rust", "javascript", "typescript", "react",
+    "mlops", "vertex ai", "bedrock", "sagemaker", "observability",
+)
+# Skills already on the CV (so the radar can flag GAPS specifically).
+_CV_SKILLS = {
+    "python", "sql", "javascript", "typescript", "pytorch", "tensorflow",
+    "scikit-learn", "xgboost", "pandas", "numpy", "docker", "git", "ci/cd",
+    "fastapi", "react", "llm", "rag", "langchain", "hugging face", "nlp",
+    "computer vision", "transformers", "statistics", "a/b test",
+}
 
 
 # ── Cross-source dedup ────────────────────────────────────────────────────────
@@ -556,6 +589,91 @@ def save_seen(seen: set[str]) -> None:
     SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2))
 
 
+def _job_age_days(j: dict):
+    """Age of a posting in days from posted_at, or None if unknown/unparseable."""
+    from datetime import datetime, timezone
+    s = str(j.get("posted_at") or "").strip()
+    if not s or s.lower() in ("nan", "none", "nat"):
+        return None
+    try:
+        if "T" in s:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        elif " " in s and ":" in s:
+            dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+        else:
+            dt = datetime.strptime(s[:10], "%Y-%m-%d")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)
+    except Exception:
+        return None
+
+
+def _apply_ghost_penalty(scored: list[dict]) -> int:
+    """B6: penalise + tag stale postings. Returns how many were flagged."""
+    n = 0
+    for j in scored:
+        age = _job_age_days(j)
+        if age is not None and age > _GHOST_AGE_DAYS:
+            j["score"] = max(0, j.get("score", 0) - _GHOST_PENALTY)
+            j["ghost"] = True
+            n += 1
+    return n
+
+
+def _skill_radar(jobs: list[dict], top_n: int = 15) -> None:
+    """C9: report the most-requested skills across all JDs, flagging CV gaps."""
+    from collections import Counter
+    counts = Counter()
+    for j in jobs:
+        blob = ((j.get("title") or "") + " " + (j.get("description") or "")).lower()
+        for skill in _RADAR_SKILLS:
+            if skill in blob:
+                counts[skill.strip()] += 1
+    if not counts:
+        return
+    total = len(jobs)
+    print(f"\n── C9 skill-demand radar (across {total} scraped JDs) ──")
+    for skill, c in counts.most_common(top_n):
+        pct = 100 * c / total
+        have = skill in _CV_SKILLS
+        tag = "  ✓ on CV" if have else "  ← GAP (not on CV)"
+        bar = "█" * min(int(pct / 2), 40)
+        print(f"  {skill:18s} {pct:4.0f}%  {bar}{tag}")
+    gaps = [s for s, _ in counts.most_common(top_n) if s not in _CV_SKILLS]
+    if gaps:
+        print(f"  Top demand gaps to consider learning: {', '.join(gaps[:6])}")
+
+
+def _diversify(good: list[dict], cap: int) -> list[dict]:
+    """
+    A1: build the digest so no single track dominates. Reserve the top
+    _TRACK_QUOTA[track] of each track first (in score order), then fill the
+    remaining slots by pure score. Preserves overall score ordering within
+    the guaranteed set as much as possible.
+    """
+    by_track: dict[str, list[dict]] = {}
+    for j in good:  # good is already score-sorted desc
+        by_track.setdefault(j.get("_track", "AI"), []).append(j)
+
+    picked_ids: set[str] = set()
+    picked: list[dict] = []
+    # Phase 1: quota per track
+    for track, quota in _TRACK_QUOTA.items():
+        for j in by_track.get(track, [])[:quota]:
+            if j["id"] not in picked_ids:
+                picked_ids.add(j["id"]); picked.append(j)
+    # Phase 2: fill remaining capacity by score
+    for j in good:
+        if len(picked) >= cap:
+            break
+        if j["id"] not in picked_ids:
+            picked_ids.add(j["id"]); picked.append(j)
+    # Return in score order for a clean digest
+    picked.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return picked[:cap]
+
+
 def main(dry_run: bool = False) -> None:
     print("=" * 60)
     print("  Daily Job Hunter — starting run" + ("  [DRY RUN]" if dry_run else ""))
@@ -576,11 +694,19 @@ def main(dry_run: bool = False) -> None:
     new_jobs = [j for j in all_jobs if j["id"] not in seen]
     print(f"New (unseen) jobs: {len(new_jobs)}")
 
+    # A2: accumulate which filter drops which track, printed as a matrix at the end.
+    from collections import Counter, defaultdict
+    drop_by_filter_track: dict = defaultdict(Counter)
+
     def _apply_filter(jobs: list[dict], fn, label: str) -> list[dict]:
-        """Run fn over jobs; print kept/dropped counts and 3 dropped example titles."""
+        """Run fn over jobs; print kept/dropped counts + track-level drop tally."""
         kept, dropped = [], []
         for j in jobs:
-            (kept if fn(j) else dropped).append(j)
+            if fn(j):
+                kept.append(j)
+            else:
+                dropped.append(j)
+                drop_by_filter_track[label][_classify_track(j)] += 1
         if dropped:
             print(f"[{label}] dropped {len(dropped)} jobs, e.g.:")
             for ex in dropped[:3]:
@@ -601,6 +727,16 @@ def main(dry_run: bool = False) -> None:
     # HARD filter: Master/MSc/PhD required (with softening + exclusion handling)
     new_jobs = _apply_filter(new_jobs, _no_masters_required, "MastersFilter")
 
+    # A2: which filter kills which track (diagnoses the DS/ML famine)
+    if drop_by_filter_track:
+        print("\n── A2 per-track drop matrix (which filter kills which track) ──")
+        print(f"  {'filter':32s} {'AI':>4s} {'ML':>4s} {'DS':>4s} {'DA':>4s}")
+        for label, c in drop_by_filter_track.items():
+            print(f"  {label[:32]:32s} {c['AI']:4d} {c['ML']:4d} {c['DS']:4d} {c['DA']:4d}")
+
+    # C9: skill-demand radar over everything scraped this run
+    _skill_radar(all_jobs)
+
     if not new_jobs:
         print("Nothing new today. Exiting.")
         # Still save in case seen_jobs.json was empty
@@ -610,6 +746,11 @@ def main(dry_run: bool = False) -> None:
 
     # ── Score ─────────────────────────────────────────────────────────────────
     scored = score_jobs(new_jobs)
+
+    # B6: penalise + tag stale/zombie postings so fresh roles rank above them
+    ghosts = _apply_ghost_penalty(scored)
+    if ghosts:
+        print(f"\nB6 ghost-job penalty: flagged {ghosts} stale postings (>{_GHOST_AGE_DAYS}d, -{_GHOST_PENALTY})")
 
     # ── Disqualification histogram ───────────────────────────────────────────
     # Helps tune filters over time — if "experience" dominates, the bar is too
@@ -630,7 +771,12 @@ def main(dry_run: bool = False) -> None:
     # floor and cap here.
     good = [j for j in scored if j["score"] >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
-    top = good[:MAX_RESULTS]
+    # A1: diversity quotas so DS/ML/DA aren't buried under AI
+    top = _diversify(good, MAX_RESULTS)
+    from collections import Counter as _C
+    _mix = _C(j.get("_track", "?") for j in top)
+    print(f"Digest track mix (A1 quotas applied): " +
+          ", ".join(f"{k}={v}" for k, v in sorted(_mix.items())))
 
     # ── Near misses (35–44): visible, clearly separated ───────────────────────
     # Haiku fails >90% of pre-screen survivors below the 45 floor; the 35-44
