@@ -284,14 +284,17 @@ def _build_html(jobs: list[dict]) -> str:
 </html>"""
 
 
-def send_email(jobs: list[dict]) -> None:
+def send_email(jobs: list[dict]) -> bool:
+    """Send the digest. Returns True only on confirmed delivery — main.py uses
+    this to decide whether jobs may be marked 'seen' (a failed send must not
+    bury the day's matches)."""
     gmail_user = os.environ.get("GMAIL_USER")
     gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
     gmail_to   = os.environ.get("GMAIL_TO", gmail_user)
 
     if not gmail_user or not gmail_pass:
         print("  [Email] GMAIL_USER or GMAIL_APP_PASSWORD not set, skipping.")
-        return
+        return False
 
     today = date.today().strftime("%d %b %Y")
     fresh_count = sum(
@@ -313,8 +316,10 @@ def send_email(jobs: list[dict]) -> None:
             server.login(gmail_user, gmail_pass)
             server.sendmail(gmail_user, gmail_to, msg.as_string())
         print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh) to {gmail_to}")
+        return True
     except Exception as e:
         print(f"  [Email] Failed: {e}")
+        return False
 
 
 # ── Notion ─────────────────────────────────────────────────────────────────────

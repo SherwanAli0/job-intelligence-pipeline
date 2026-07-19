@@ -728,42 +728,54 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
     jobs_block = _format_job_block(batch)
     prompt = USER_TEMPLATE.format(n=len(batch), jobs_block=jobs_block)
 
-    try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=1500,
-            system=_system_prompt(cv_profile),
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = response.content[0].text.strip()
+    # Two attempts: one transient API error / malformed response must not cost
+    # a batch of jobs.
+    for attempt in (1, 2):
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=1500,
+                system=_system_prompt(cv_profile),
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = response.content[0].text.strip()
 
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        raw = raw.strip()
+            # Strip markdown fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            raw = raw.strip()
 
-        scores = json.loads(raw)
-        for item in scores:
-            idx = item["index"]
-            if 0 <= idx < len(batch):
-                batch[idx]["score"] = item.get("score", 0)
-                batch[idx]["reason"] = item.get("reason", "")
-                # Optional tailoring fields (present for score >= 55). Kept only
-                # when non-empty so a later pass can't blank out an earlier one.
-                mk = item.get("missing_keywords")
-                if isinstance(mk, list) and mk:
-                    batch[idx]["missing_keywords"] = [str(x) for x in mk][:8]
-                hint = item.get("cv_hint")
-                if isinstance(hint, str) and hint.strip():
-                    batch[idx]["cv_hint"] = hint.strip()
-        return batch
+            scores = json.loads(raw)
+            for item in scores:
+                idx = item["index"]
+                if 0 <= idx < len(batch):
+                    batch[idx]["score"] = item.get("score", 0)
+                    batch[idx]["reason"] = item.get("reason", "")
+                    # Optional tailoring fields (present for score >= 55). Kept only
+                    # when non-empty so a later pass can't blank out an earlier one.
+                    mk = item.get("missing_keywords")
+                    if isinstance(mk, list) and mk:
+                        batch[idx]["missing_keywords"] = [str(x) for x in mk][:8]
+                    hint = item.get("cv_hint")
+                    if isinstance(hint, str) and hint.strip():
+                        batch[idx]["cv_hint"] = hint.strip()
+            break
 
-    except Exception as e:
-        print(f"  [Scorer] batch failed: {e}")
-        # Return batch with score 0 so they're still deduplicated
-        return batch
+        except Exception as e:
+            print(f"  [Scorer] batch failed (attempt {attempt}/2): {e}")
+            if attempt == 1:
+                time.sleep(3)
+
+    # Guarantee every job leaves with a score. setdefault keeps this safe for
+    # the Sonnet re-score stage too: on a Stage-3 failure the jobs already
+    # carry their Haiku score/reason and are left untouched, while a Stage-2
+    # failure yields score 0 instead of a missing key that would crash main.
+    for j in batch:
+        j.setdefault("score", 0)
+        j.setdefault("reason", "[scorer-failed] no score returned")
+    return batch
 
 
 def score_jobs(jobs: list[dict]) -> list[dict]:

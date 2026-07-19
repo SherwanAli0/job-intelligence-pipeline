@@ -769,7 +769,7 @@ def main(dry_run: bool = False) -> None:
     # Bands removed in the restored notifier; notifier sorts internally by
     # score desc + fresh-first within score, so we only need to apply the
     # floor and cap here.
-    good = [j for j in scored if j["score"] >= MIN_SCORE]
+    good = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
     # A1: diversity quotas so DS/ML/DA aren't buried under AI
     top = _diversify(good, MAX_RESULTS)
@@ -783,7 +783,7 @@ def main(dry_run: bool = False) -> None:
     # band is where miscalibrated-but-real matches die invisibly. Surface the
     # top 10 of that band in a dimmed section so Sherwan can judge calibration
     # himself instead of trusting the cliff.
-    near = [j for j in scored if 35 <= j["score"] < MIN_SCORE]
+    near = [j for j in scored if 35 <= j.get("score", 0) < MIN_SCORE]
     near.sort(key=lambda x: x["score"], reverse=True)
     near = near[:10]
     for j in near:
@@ -804,22 +804,29 @@ def main(dry_run: bool = False) -> None:
         print(f"  [AppKit] skipped: {e}")
 
     # ── Notify ────────────────────────────────────────────────────────────────
+    email_ok = True  # nothing-to-send counts as success
     if dry_run:
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")
     elif top or near:
-        send_email(top + near)
+        email_ok = send_email(top + near)
         if top:
             add_to_notion(top)
     else:
         print("No jobs above threshold — no notifications sent.")
 
     # ── Update seen ───────────────────────────────────────────────────────────
-    if not dry_run:
+    # B2 guard: if the digest email FAILED, do NOT mark jobs seen — otherwise a
+    # single SMTP outage permanently buries that day's matches. Leaving them
+    # unseen means the next run re-scores and re-sends them (cents, not losses).
+    if dry_run:
+        print("\n[DRY RUN] seen_jobs.json NOT updated.")
+    elif email_ok:
         seen.update(j["id"] for j in new_jobs)
         save_seen(seen)
         print("\nDone. seen_jobs.json updated.")
     else:
-        print("\n[DRY RUN] seen_jobs.json NOT updated.")
+        print("\nEmail delivery FAILED — seen_jobs.json NOT updated so today's "
+              "matches are retried next run instead of being buried.")
 
 
 if __name__ == "__main__":
