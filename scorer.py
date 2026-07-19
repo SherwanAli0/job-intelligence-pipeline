@@ -77,13 +77,16 @@ SONNET_RESCORE_FLOOR = 50
 # "applicable professional experience", etc.
 # Also catches: "with 3+ years", "demonstrated 3 years", "proven 3+ years",
 # "successful 5 years" — common phrasings in job descriptions.
+# The (?<![-–\d]) lookbehinds stop the UPPER bound of a range from matching:
+# "2-3 years experience" must read as a 2-year ask (within target), not as
+# "3 years" — this false-positive was caught by the golden calibration set.
 _RE_EXP_NUM = re.compile(
-    r"\b([3-9]|\d{2})\+?\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}experience"
-    r"|\b([3-9]|\d{2})\+?\s*years?\s+experience"
+    r"\b(?<![-–\d])([3-9]|\d{2})\+?\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}experience"
+    r"|\b(?<![-–\d])([3-9]|\d{2})\+?\s*years?\s+experience"
     r"|\bminimum\s*(of\s+)?([3-9]|\d{2})\s*\+?\s*years?"
     r"|\bat\s+least\s+([3-9]|\d{2})\+?\s*years?"
     r"|\b([3-9]|\d{2})\s*[-–]\s*\d+\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}experience"
-    r"|\b([3-9]|\d{2})\+\s*years?"
+    r"|\b(?<![-–\d])([3-9]|\d{2})\+\s*years?"
     r"|\bexperience\s*:?\s*([3-9]|\d{2})\+?\s*years?"
     # NEW: "with [optional adjective] N+ years" — e.g.
     #   "with 3+ years", "with proven 3 years", "with strong 5+ years"
