@@ -541,19 +541,95 @@ def _is_english_friendly(j: dict) -> bool:
     return True
 
 SEEN_FILE = Path("seen_jobs.json")
+# Prune ids not re-seen for this long. Postings that vanished 60+ days ago can
+# only reappear as genuine reposts, which deserve a fresh look anyway (the
+# ghost tag will mark them stale if they carry an old posted_at).
+_SEEN_RETENTION_DAYS = 60
 
 
-def load_seen() -> set[str]:
+def load_seen() -> dict[str, str]:
+    """{job_id: last-seen ISO date}. Transparently migrates the legacy flat
+    id list (all legacy ids get today's date, so nothing re-surfaces early)."""
+    from datetime import date
     if SEEN_FILE.exists():
         try:
-            return set(json.loads(SEEN_FILE.read_text()))
+            data = json.loads(SEEN_FILE.read_text())
+            if isinstance(data, list):  # legacy format
+                today = date.today().isoformat()
+                return {i: today for i in data}
+            return dict(data)
         except Exception:
-            return set()
-    return set()
+            return {}
+    return {}
 
 
-def save_seen(seen: set[str]) -> None:
-    SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2))
+def save_seen(seen: dict[str, str]) -> None:
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=_SEEN_RETENTION_DAYS)).isoformat()
+    kept = {k: v for k, v in seen.items() if str(v) >= cutoff}
+    if len(kept) < len(seen):
+        print(f"  [Seen] pruned {len(seen) - len(kept)} ids not re-seen for {_SEEN_RETENTION_DAYS}+ days")
+    SEEN_FILE.write_text(json.dumps(dict(sorted(kept.items())), indent=2))
+
+
+# ── T1d: run-stats history + silent-scraper-death detection ──────────────────
+# Every run appends one JSON line (per-source counts, filter drops, scores,
+# digest size, email flag) to run_stats.jsonl — committed by CI, so pipeline
+# behaviour is trendable long after Actions logs expire. On each run, any
+# source that historically delivered jobs but has now returned 0 for several
+# consecutive runs raises a warning that lands IN the digest email.
+
+STATS_FILE = Path("run_stats.jsonl")
+_DEAD_RUNS = 3          # consecutive zero-runs (incl. current) that trigger the alarm
+_DEAD_MIN_MEDIAN = 10   # only alarm for sources that historically deliver >= this
+_HISTORY_WINDOW = 30    # runs of history considered for the median
+
+
+def _load_run_history() -> list[dict]:
+    if not STATS_FILE.exists():
+        return []
+    out = []
+    for line in STATS_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass
+    return out[-_HISTORY_WINDOW:]
+
+
+def _record_run_stats(stats: dict) -> None:
+    try:
+        with STATS_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(stats, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"  [Stats] could not record run stats: {e}")
+
+
+def _dead_source_warnings(history: list[dict], current: dict) -> list[str]:
+    """Sources whose history says they deliver, but which have now been at
+    zero for _DEAD_RUNS consecutive runs — the silent-death signature."""
+    if len(history) < _DEAD_RUNS:
+        return []
+    import statistics
+    warnings = []
+    known = set()
+    for h in history:
+        known.update((h.get("sources") or {}).keys())
+    recent = history[-(_DEAD_RUNS - 1):]
+    for src in sorted(known):
+        series = [int((h.get("sources") or {}).get(src, 0)) for h in history]
+        med = statistics.median(series)
+        if med < _DEAD_MIN_MEDIAN:
+            continue
+        recent_zero = all(int((h.get("sources") or {}).get(src, 0)) == 0 for h in recent)
+        if recent_zero and int(current.get(src, 0)) == 0:
+            warnings.append(
+                f"Source '{src}' has returned 0 jobs for {_DEAD_RUNS} straight runs "
+                f"(historical median {int(med)}) — probably broken."
+            )
+    return warnings
 
 
 def _job_age_days(j: dict):
@@ -652,6 +728,14 @@ def main(dry_run: bool = False) -> None:
     # ── Scrape ────────────────────────────────────────────────────────────────
     all_jobs = scrape_all()
 
+    # T1d: per-source counts + dead-source alarm (vs committed run history)
+    from collections import Counter as _Counter
+    src_counts = dict(_Counter(j.get("source", "?") for j in all_jobs))
+    run_history = _load_run_history()
+    health_warnings = _dead_source_warnings(run_history, src_counts)
+    for w in health_warnings:
+        print(f"⚠️  {w}")
+
     # ── Cross-source dedup (before unseen filtering so logs are intuitive) ────
     before = len(all_jobs)
     all_jobs = _dedup_cross_source(all_jobs)
@@ -659,7 +743,8 @@ def main(dry_run: bool = False) -> None:
     print(f"Cross-source dedup: merged {before} jobs, {after} after dedup")
 
     new_jobs = [j for j in all_jobs if j["id"] not in seen]
-    print(f"New (unseen) jobs: {len(new_jobs)}")
+    n_new = len(new_jobs)  # captured before the filter chain reassigns
+    print(f"New (unseen) jobs: {n_new}")
 
     # A2: accumulate which filter drops which track, printed as a matrix at the end.
     from collections import Counter, defaultdict
@@ -706,9 +791,18 @@ def main(dry_run: bool = False) -> None:
 
     if not new_jobs:
         print("Nothing new today. Exiting.")
-        # Still save in case seen_jobs.json was empty
-        seen.update(j["id"] for j in all_jobs)
+        # Refresh last-seen dates so active postings never age into pruning
+        from datetime import date as _date, datetime as _dt, timezone as _tz
+        _today = _date.today().isoformat()
+        seen.update({j["id"]: _today for j in all_jobs})
         save_seen(seen)
+        if not dry_run:
+            _record_run_stats({
+                "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
+                "sources": src_counts, "scraped": before, "deduped": after,
+                "new": 0, "digest": 0, "near": 0, "email_ok": True,
+                "warnings": health_warnings,
+            })
         sys.exit(0)
 
     # ── Score ─────────────────────────────────────────────────────────────────
@@ -775,7 +869,7 @@ def main(dry_run: bool = False) -> None:
     if dry_run:
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")
     elif top or near:
-        email_ok = send_email(top + near)
+        email_ok = send_email(top + near, warnings=health_warnings)
         if top:
             add_to_notion(top)
     else:
@@ -788,12 +882,32 @@ def main(dry_run: bool = False) -> None:
     if dry_run:
         print("\n[DRY RUN] seen_jobs.json NOT updated.")
     elif email_ok:
-        seen.update(j["id"] for j in new_jobs)
+        # Refresh EVERY id seen this run (not just new ones) so still-listed
+        # postings keep a current last-seen date and only genuinely vanished
+        # ids age into the 60-day pruning window.
+        from datetime import date as _date
+        _today = _date.today().isoformat()
+        seen.update({j["id"]: _today for j in all_jobs})
         save_seen(seen)
         print("\nDone. seen_jobs.json updated.")
     else:
         print("\nEmail delivery FAILED — seen_jobs.json NOT updated so today's "
               "matches are retried next run instead of being buried.")
+
+    # ── T1d: append this run's stats line (trendable pipeline history) ────────
+    if not dry_run:
+        from datetime import datetime as _dt, timezone as _tz
+        _record_run_stats({
+            "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
+            "sources": src_counts,
+            "scraped": before, "deduped": after, "new": n_new,
+            "drops": {label: sum(c.values()) for label, c in drop_by_filter_track.items()},
+            "dq": dict(dq_counts.most_common(8)),
+            "digest": len(top), "near": len(near),
+            "track_mix": dict(_mix),
+            "email_ok": email_ok,
+            "warnings": health_warnings,
+        })
 
 
 if __name__ == "__main__":

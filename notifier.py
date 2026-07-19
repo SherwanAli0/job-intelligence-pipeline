@@ -91,8 +91,20 @@ def _freshness_badge(posted_at: str) -> str:
     return ""
 
 
-def _build_html(jobs: list[dict]) -> str:
+def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
     today = date.today().strftime("%d %b %Y")
+
+    # T1d: pipeline-health warnings (e.g. a job source silently dead for
+    # several runs) render as a red banner so problems surface in the inbox,
+    # not just in expiring CI logs.
+    warn_html = ""
+    if warnings:
+        items = "".join(f"<div>⚠️ {w}</div>" for w in warnings[:5])
+        warn_html = (
+            f'<div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;'
+            f'border-radius:8px;padding:10px 14px;margin:16px 28px 0;font-size:13px;">'
+            f'<b>Pipeline health</b>{items}</div>'
+        )
 
     # Sort jobs so that fresh ones bubble to the top within their score band
     def _sort_key(j):
@@ -259,7 +271,7 @@ def _build_html(jobs: list[dict]) -> str:
         {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · fresh first{fresh_summary}
       </p>
     </div>
-
+    {warn_html}
     <div style="padding:20px 28px;">
       <table style="width:100%;border-collapse:collapse;">
         <thead>
@@ -284,10 +296,11 @@ def _build_html(jobs: list[dict]) -> str:
 </html>"""
 
 
-def send_email(jobs: list[dict]) -> bool:
+def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     """Send the digest. Returns True only on confirmed delivery — main.py uses
     this to decide whether jobs may be marked 'seen' (a failed send must not
-    bury the day's matches)."""
+    bury the day's matches). `warnings` are pipeline-health notes rendered as
+    a banner (e.g. a scraper that has silently died)."""
     gmail_user = os.environ.get("GMAIL_USER")
     gmail_pass = os.environ.get("GMAIL_APP_PASSWORD")
     gmail_to   = os.environ.get("GMAIL_TO", gmail_user)
@@ -308,7 +321,7 @@ def send_email(jobs: list[dict]) -> bool:
     msg["From"]    = gmail_user
     msg["To"]      = gmail_to
 
-    html = _build_html(jobs)
+    html = _build_html(jobs, warnings)
     msg.attach(MIMEText(html, "html"))
 
     try:

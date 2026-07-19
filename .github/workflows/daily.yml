@@ -75,7 +75,7 @@ jobs:
         run: |
           git config user.email "sheroo16.ali@gmail.com"
           git config user.name "SherwanAli0"
-          git add seen_jobs.json
+          git add seen_jobs.json run_stats.jsonl
           git diff --cached --quiet || {
             git commit -m "chore: update seen jobs [skip ci]"
             # Every historical red ❌ on this workflow died right here, AFTER
