@@ -138,18 +138,31 @@ def enrich_with_kits(jobs: list[dict]) -> None:
                 "Rules: 1-2 sentences each; first person; confident, not apologetic; "
                 "if a fact isn't given, answer generically without inventing specifics. "
                 "For yes/no eligibility questions answer directly.\n\n"
-                f"QUESTIONS:\n{numbered}\n\n"
-                'Return ONLY a JSON array: [{"index":0,"answer":"..."}, ...]'
+                f"QUESTIONS:\n{numbered}"
             )
             resp = client.messages.create(
                 model="claude-haiku-4-5-20251001", max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}],
+                # Structured output: guaranteed-valid JSON, no fence-stripping
+                output_config={"format": {"type": "json_schema", "schema": {
+                    "type": "object",
+                    "properties": {"answers": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {"index": {"type": "integer"},
+                                       "answer": {"type": "string"}},
+                        "required": ["index", "answer"],
+                        "additionalProperties": False,
+                    }}},
+                    "required": ["answers"],
+                    "additionalProperties": False,
+                }}},
             )
             raw = resp.content[0].text.strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 raw = raw[4:] if raw.startswith("json") else raw
-            for item in json.loads(raw.strip()):
+            data = json.loads(raw.strip())
+            for item in (data["answers"] if isinstance(data, dict) else data):
                 i = item.get("index")
                 a = (item.get("answer") or "").strip()
                 if isinstance(i, int) and 0 <= i < len(qlist) and a:

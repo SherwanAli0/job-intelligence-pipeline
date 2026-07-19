@@ -62,11 +62,66 @@ BATCH_SIZE = 10
 #   Stage 2 — Haiku scores everything that survives the pre-screen (cheap bulk)
 #   Stage 3 — Sonnet re-scores only the finalists Haiku rates >= the floor,
 #             replacing their scores/reasons with sharper judgments.
-# Sonnet costs ~30x Haiku per token, but only ~10-25 finalists/run reach it,
-# so the add-on is roughly €0.05-0.10 per run.
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
-SONNET_MODEL = "claude-sonnet-4-6"
+# Sonnet 5: better than Sonnet 4.6 AND cheaper (intro $2/$10 per MTok through
+# 2026-08-31, then $3/$15 — never more than 4.6 cost). Sonnet 5 runs adaptive
+# thinking by default, so scoring calls explicitly disable it (see
+# _thinking_kwargs) to keep behaviour and cost flat.
+SONNET_MODEL = "claude-sonnet-5"
 SONNET_RESCORE_FLOOR = 50
+
+# ── T3 cost controls ─────────────────────────────────────────────────────────
+# Message Batches API: 50% off ALL tokens; used when there's enough volume to
+# be worth the polling latency (a cron pipeline doesn't care about minutes).
+# Prompt caching: cache_control on the per-track system prompt — batches of
+# the same track share the prompt, so repeats bill at ~0.1x.
+# Structured outputs: output_config guarantees valid JSON — no more losing a
+# batch of jobs to a malformed reply.
+_BATCH_API_MIN_JOBS = 30      # below this, sync calls are simpler and fine
+_BATCH_POLL_SECONDS = 20
+_BATCH_TIMEOUT_SECONDS = 30 * 60  # then cancel + fall back to sync
+
+_SCORE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scores": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "score": {"type": "integer"},
+                    "reason": {"type": "string"},
+                    "missing_keywords": {"type": "array", "items": {"type": "string"}},
+                    "cv_hint": {"type": "string"},
+                },
+                "required": ["index", "score", "reason"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["scores"],
+    "additionalProperties": False,
+}
+_OUTPUT_CONFIG = {"format": {"type": "json_schema", "schema": _SCORE_SCHEMA}}
+
+
+def _system_blocks(cv_profile: str, long_ttl: bool = False) -> list[dict]:
+    """System prompt as a cacheable block. Batch entries use the 1h TTL (they
+    may process over a longer window); sync calls use the default 5m."""
+    cc = {"type": "ephemeral"}
+    if long_ttl:
+        cc["ttl"] = "1h"
+    return [{"type": "text", "text": _system_prompt(cv_profile), "cache_control": cc}]
+
+
+def _thinking_kwargs(model: str) -> dict:
+    # Sonnet 5 defaults to adaptive thinking when the field is omitted; scoring
+    # is a structured judgment task where thinking spend buys little — disable
+    # explicitly. Haiku 4.5 (older API generation) is thinking-off by default.
+    if model == SONNET_MODEL:
+        return {"thinking": {"type": "disabled"}}
+    return {}
 
 # ── Hard disqualifiers — checked BEFORE any Claude API call ───────────────────
 # These patterns catch clear mismatches and set score=0 without spending tokens.
@@ -697,6 +752,43 @@ def _format_job_block(jobs: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def _apply_scores(batch: list[dict], raw: str) -> None:
+    """Parse a scoring response (structured output or legacy fenced JSON) and
+    write score/reason/tailoring fields onto the batch in place."""
+    raw = raw.strip()
+    # Legacy fence-stripping kept as a harmless fallback
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    data = json.loads(raw.strip())
+    scores = data["scores"] if isinstance(data, dict) else data
+    for item in scores:
+        idx = item["index"]
+        if 0 <= idx < len(batch):
+            batch[idx]["score"] = item.get("score", 0)
+            batch[idx]["reason"] = item.get("reason", "")
+            # Optional tailoring fields (present for score >= 55). Kept only
+            # when non-empty so a later pass can't blank out an earlier one.
+            mk = item.get("missing_keywords")
+            if isinstance(mk, list) and mk:
+                batch[idx]["missing_keywords"] = [str(x) for x in mk][:8]
+            hint = item.get("cv_hint")
+            if isinstance(hint, str) and hint.strip():
+                batch[idx]["cv_hint"] = hint.strip()
+
+
+def _finalize_scores(batch: list[dict]) -> list[dict]:
+    """Guarantee every job leaves with a score. setdefault keeps this safe for
+    the Sonnet re-score stage too: on a Stage-3 failure the jobs already
+    carry their Haiku score/reason and are left untouched, while a Stage-2
+    failure yields score 0 instead of a missing key that would crash main."""
+    for j in batch:
+        j.setdefault("score", 0)
+        j.setdefault("reason", "[scorer-failed] no score returned")
+    return batch
+
+
 def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
                  cv_profile: str = CV_PROFILE) -> list[dict]:
     jobs_block = _format_job_block(batch)
@@ -709,32 +801,12 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
             response = client.messages.create(
                 model=model,
                 max_tokens=1500,
-                system=_system_prompt(cv_profile),
+                system=_system_blocks(cv_profile),
                 messages=[{"role": "user", "content": prompt}],
+                output_config=_OUTPUT_CONFIG,
+                **_thinking_kwargs(model),
             )
-            raw = response.content[0].text.strip()
-
-            # Strip markdown fences if present
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
-
-            scores = json.loads(raw)
-            for item in scores:
-                idx = item["index"]
-                if 0 <= idx < len(batch):
-                    batch[idx]["score"] = item.get("score", 0)
-                    batch[idx]["reason"] = item.get("reason", "")
-                    # Optional tailoring fields (present for score >= 55). Kept only
-                    # when non-empty so a later pass can't blank out an earlier one.
-                    mk = item.get("missing_keywords")
-                    if isinstance(mk, list) and mk:
-                        batch[idx]["missing_keywords"] = [str(x) for x in mk][:8]
-                    hint = item.get("cv_hint")
-                    if isinstance(hint, str) and hint.strip():
-                        batch[idx]["cv_hint"] = hint.strip()
+            _apply_scores(batch, response.content[0].text)
             break
 
         except Exception as e:
@@ -742,14 +814,83 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
             if attempt == 1:
                 time.sleep(3)
 
-    # Guarantee every job leaves with a score. setdefault keeps this safe for
-    # the Sonnet re-score stage too: on a Stage-3 failure the jobs already
-    # carry their Haiku score/reason and are left untouched, while a Stage-2
-    # failure yields score 0 instead of a missing key that would crash main.
-    for j in batch:
-        j.setdefault("score", 0)
-        j.setdefault("reason", "[scorer-failed] no score returned")
-    return batch
+    return _finalize_scores(batch)
+
+
+def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bool:
+    """
+    Score [(jobs, model, cv_profile), ...] through the Message Batches API —
+    50% off every token. Returns True if the batch ran; False means the caller
+    must fall back to the sync path (nothing was scored). Groups whose entries
+    error inside an otherwise-successful batch are re-scored synchronously.
+    """
+    if os.environ.get("DISABLE_BATCH_API"):
+        return False
+    try:
+        requests = []
+        for gi, (grp, model, profile) in enumerate(groups):
+            prompt = USER_TEMPLATE.format(n=len(grp), jobs_block=_format_job_block(grp))
+            requests.append({
+                "custom_id": f"g{gi}",
+                "params": {
+                    "model": model,
+                    "max_tokens": 1500,
+                    "system": _system_blocks(profile, long_ttl=True),
+                    "messages": [{"role": "user", "content": prompt}],
+                    "output_config": _OUTPUT_CONFIG,
+                    **_thinking_kwargs(model),
+                },
+            })
+        batch = client.messages.batches.create(requests=requests)
+        print(f"  [BatchAPI] submitted {len(requests)} requests as {batch.id} (50% token discount)")
+
+        waited = 0
+        while True:
+            time.sleep(_BATCH_POLL_SECONDS)
+            waited += _BATCH_POLL_SECONDS
+            batch = client.messages.batches.retrieve(batch.id)
+            if batch.processing_status == "ended":
+                break
+            if waited >= _BATCH_TIMEOUT_SECONDS:
+                print(f"  [BatchAPI] timeout after {waited}s — cancelling, falling back to sync")
+                try:
+                    client.messages.batches.cancel(batch.id)
+                except Exception:
+                    pass
+                return False
+
+        ok, redo = 0, []
+        seen_ids = set()
+        for result in client.messages.batches.results(batch.id):
+            seen_ids.add(result.custom_id)
+            gi = int(result.custom_id[1:])
+            grp, model, profile = groups[gi]
+            if result.result.type == "succeeded":
+                try:
+                    msg = result.result.message
+                    text = next(b.text for b in msg.content if b.type == "text")
+                    _apply_scores(grp, text)
+                    ok += 1
+                except Exception as e:
+                    print(f"  [BatchAPI] parse failed for {result.custom_id}: {e}")
+                    redo.append(gi)
+            else:
+                redo.append(gi)
+        # Entries the batch never returned at all also need the sync fallback
+        redo.extend(gi for gi in range(len(groups)) if f"g{gi}" not in seen_ids)
+
+        for gi in redo:
+            grp, model, profile = groups[gi]
+            _score_batch(grp, model=model, cv_profile=profile)
+        for grp, _, _ in groups:
+            _finalize_scores(grp)
+        print(f"  [BatchAPI] done after ~{waited}s: {ok}/{len(groups)} groups clean, "
+              f"{len(redo)} re-scored synchronously")
+        return True
+
+    except Exception as e:
+        print(f"  [BatchAPI] unavailable ({e}) — using sync scoring")
+        return False
 
 
 def score_jobs(jobs: list[dict]) -> list[dict]:
@@ -786,30 +927,40 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
             groups.setdefault(j.get("_track", "AI"), []).append(j)
         return groups
 
+    def _make_groups(pool: list[dict], model: str) -> list[tuple[list[dict], str, str]]:
+        out = []
+        for track, group in _by_track(pool).items():
+            profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
+            for i in range(0, len(group), BATCH_SIZE):
+                out.append((group[i : i + BATCH_SIZE], model, profile))
+        return out
+
     # ── Stage 2: Haiku scoring, per-track profile (cheap bulk pass) ────────────
-    scored = []
-    done = 0
-    for track, group in _by_track(to_score).items():
-        profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
-        for i in range(0, len(group), BATCH_SIZE):
-            batch = group[i : i + BATCH_SIZE]
-            scored.extend(_score_batch(batch, model=HAIKU_MODEL, cv_profile=profile))
+    # Large runs go through the Message Batches API (50% off every token, and
+    # a cron pipeline doesn't mind minutes of polling); small runs and any
+    # batch failure use the sync path.
+    groups = _make_groups(to_score, HAIKU_MODEL)
+    if len(to_score) < _BATCH_API_MIN_JOBS or not _score_groups_via_batch_api(groups):
+        done = 0
+        for batch, model, profile in groups:
+            _score_batch(batch, model=model, cv_profile=profile)
             done += len(batch)
             time.sleep(1)
-            print(f"  Scored {done}/{len(to_score)} ({track})")
+            print(f"  Scored {done}/{len(to_score)}")
+    scored = [j for grp, _, _ in groups for j in grp]
 
     # ── Stage 3: Sonnet re-score of finalists (budget mode), per-track profile ─
     # Only jobs Haiku rates >= SONNET_RESCORE_FLOOR get the expensive second
-    # opinion. _score_batch overwrites score/reason in place on success and
-    # leaves the Haiku values untouched on any failure, so this stage can
-    # never lose a job — worst case it just keeps the Haiku ranking.
+    # opinion. Scoring overwrites score/reason in place on success and leaves
+    # the Haiku values untouched on any failure, so this stage can never lose
+    # a job — worst case it just keeps the Haiku ranking.
     finalists = [jb for jb in scored if jb.get("score", 0) >= SONNET_RESCORE_FLOOR]
     if finalists:
         print(f"  [Sonnet] re-scoring {len(finalists)} finalists (Haiku >= {SONNET_RESCORE_FLOOR})")
-        for track, group in _by_track(finalists).items():
-            profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
-            for i in range(0, len(group), BATCH_SIZE):
-                _score_batch(group[i : i + BATCH_SIZE], model=SONNET_MODEL, cv_profile=profile)
+        s3_groups = _make_groups(finalists, SONNET_MODEL)
+        if len(finalists) < _BATCH_API_MIN_JOBS or not _score_groups_via_batch_api(s3_groups):
+            for batch, model, profile in s3_groups:
+                _score_batch(batch, model=model, cv_profile=profile)
                 time.sleep(1)
         print(f"  [Sonnet] done")
 
