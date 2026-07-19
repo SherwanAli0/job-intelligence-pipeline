@@ -168,45 +168,12 @@ _GERMAN_TITLE_FRAGMENTS = (
 # though Poland is in the EU; a "Spain HQ, fully remote in EU" job IS useful
 # because Germany is covered.
 
-_GERMANY_TERMS = (
-    "germany", "deutschland", "berlin", "munich", "münchen", "hamburg",
-    "frankfurt", "cologne", "köln", "düsseldorf", "bochum", "dortmund",
-    "essen", "stuttgart", "leipzig", "nrw", "bavaria", "bayern",
-    "saxony", "sachsen", "hessen", "baden-württemberg",
-)
-
-# Phrases that confirm a remote role accepts Germany-based hires.
-# If a non-German location appears in the location field, we require ONE of these
-# in the description before keeping the job.
-_REMOTE_COVERS_GERMANY_SIGNALS = (
-    "remote in germany", "remote from germany", "remote within germany",
-    "remote (germany", "germany-remote", "remote-germany",
-    "remote in eu", "remote within the eu", "remote in the european union",
-    "fully remote eu", "fully remote within europe", "fully remote in europe",
-    "remote in europe", "remote within europe", "remote across europe",
-    "remote anywhere in europe", "europe-wide remote", "eu-wide remote",
-    "remote in dach", "dach region", "remote across the dach",
-    "we hire across europe", "we hire across the eu",
-    "open to candidates in germany", "open to applicants in germany",
-    "hiring across europe", "hiring across the eu",
-    "based in germany", "based anywhere in europe", "based anywhere in the eu",
-    "you can work from anywhere in europe",
-    "you can work from anywhere in the eu",
-    "you can work from anywhere in the european union",
-    "remote across emea",
-)
-
-# Phrases that REVOKE Germany eligibility — even if "remote" appears, if these
-# show up the role is locked outside Germany.
-_REMOTE_LOCKED_OUT_SIGNALS = (
-    "us-based only", "us only", "united states only", "must be based in the us",
-    "must reside in the us", "must be in the us", "us residents only",
-    "uk only", "uk-based only", "must be based in the uk",
-    "canada only", "must be based in canada",
-    "latin america only", "latam only", "must be based in latam",
-    "remote in latam", "remote in latin america",
-    "remote in india", "india only", "must be based in india",
-    "apac only", "must be based in apac",
+# Shared with scorer.py's hard disqualifier — single source of truth in
+# filters.py so the two stages can never drift apart again.
+from filters import (
+    GERMANY_TERMS as _GERMANY_TERMS,
+    REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
+    REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
 )
 
 

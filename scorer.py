@@ -262,41 +262,12 @@ _RE_NONGER_LOC = re.compile(
     re.IGNORECASE,
 )
 
-# Germany-presence signals — these auto-confirm the role is doable from Berlin
-_GERMANY_TERMS = (
-    "germany", "deutschland", "berlin", "munich", "münchen",
-    "hamburg", "frankfurt", "cologne", "köln", "düsseldorf",
-    "bochum", "dortmund", "essen", "stuttgart", "leipzig",
-    "nrw", "bavaria", "bayern", "saxony", "sachsen", "hessen",
-    "baden-württemberg", "dach",
-    "german market", "german office", "german team",
-)
-
-# Phrases that confirm a remote role accepts Germany-based hires.
-# Required if the location is a non-German EU country (Poland, Spain, France...).
-_REMOTE_COVERS_GERMANY_SIGNALS = (
-    "remote in germany", "remote from germany", "remote within germany",
-    "remote (germany", "germany-remote", "remote-germany",
-    "remote in eu", "remote within the eu", "remote in the european union",
-    "fully remote eu", "fully remote within europe", "fully remote in europe",
-    "remote in europe", "remote within europe", "remote across europe",
-    "remote anywhere in europe", "europe-wide remote", "eu-wide remote",
-    "remote across emea", "we hire across europe", "we hire across the eu",
-    "open to candidates in germany", "based anywhere in europe",
-    "based anywhere in the eu", "you can work from anywhere in europe",
-    "you can work from anywhere in the eu",
-)
-
-# Phrases that REVOKE Germany eligibility — even with "remote", role is locked
-# to a non-EU region.
-_REMOTE_LOCKED_OUT_SIGNALS = (
-    "us-based only", "us only", "united states only", "must be based in the us",
-    "must reside in the us", "us residents only",
-    "uk only", "uk-based only", "must be based in the uk",
-    "canada only", "must be based in canada",
-    "latin america only", "latam only", "remote in latam",
-    "remote in latin america", "india only", "must be based in india",
-    "apac only", "must be based in apac",
+# Germany-presence / remote-eligibility signals — shared with main.py's
+# location filter via filters.py so the two stages can never drift apart again.
+from filters import (
+    GERMANY_TERMS as _GERMANY_TERMS,
+    REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
+    REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
 )
 
 # Werkstudent / German-uni-student-only roles.
