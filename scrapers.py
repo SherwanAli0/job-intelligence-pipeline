@@ -19,10 +19,55 @@ import hashlib
 import os
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import requests
 from bs4 import BeautifulSoup
+
+# ── Concurrent board fetching ────────────────────────────────────────────────
+# The ATS scrapers fetch 300+ company boards, and almost all of that time is
+# spent waiting on the network rather than doing work: sequentially, one full
+# scrape took 36 minutes, which exceeds AWS Lambda's 15-minute ceiling.
+# Fetching boards in parallel removes the waiting without changing what is
+# collected.
+#
+# Set JOBHUNTER_SCRAPE_WORKERS=1 to restore the exact sequential behaviour —
+# that switch is what makes an A/B comparison of the two modes possible, and
+# it is the escape hatch if a provider ever starts rate-limiting.
+#
+# Deliberately NOT parallelised: JobSpy (LinkedIn/Indeed self-throttle and are
+# IP-reputation sensitive), the Brave/DuckDuckGo web searches (Brave's free
+# tier allows one query per second), and the Arbeitsagentur detail enrichment.
+SCRAPE_WORKERS = max(1, int(os.environ.get("JOBHUNTER_SCRAPE_WORKERS", "6")))
+
+# Per-scraper wall time from the last scrape_all(), for the run-stats record.
+SCRAPER_TIMINGS: dict[str, float] = {}
+
+
+def _parallel_collect(items: list, fetch_one, label: str = "") -> list[dict]:
+    """
+    Map fetch_one over items and concatenate the resulting lists.
+
+    Order is preserved exactly as in the sequential version (ThreadPoolExecutor
+    .map yields results in input order), so downstream cross-source dedup —
+    which keeps the FIRST occurrence of a duplicate — behaves identically.
+
+    fetch_one must swallow its own exceptions and return a list; one dead board
+    must never take down the rest of the batch.
+    """
+    if SCRAPE_WORKERS <= 1 or len(items) <= 1:
+        out = []
+        for item in items:
+            out.extend(fetch_one(item) or [])
+        return out
+
+    with ThreadPoolExecutor(max_workers=SCRAPE_WORKERS) as pool:
+        batches = list(pool.map(fetch_one, items))
+    out = []
+    for batch in batches:
+        out.extend(batch or [])
+    return out
 
 from config import (
     GREENHOUSE_SLUGS,
@@ -438,67 +483,73 @@ def scrape_hn_who_is_hiring() -> list[dict]:
 
 # ── 4. Greenhouse API ──────────────────────────────────────────────────────────
 
-def scrape_greenhouse() -> list[dict]:
-    results = []
-    for slug in GREENHOUSE_SLUGS:
-        try:
-            r = requests.get(
-                f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
-                timeout=15,
-            )
-            data = r.json()
-            for j in data.get("jobs", []):
-                title = j.get("title", "")
-                location = j.get("location", {}).get("name", "")
-                url = j.get("absolute_url", "")
-                description = BeautifulSoup(j.get("content", ""), "html.parser").get_text()[:1500]
-                posted_at = j.get("updated_at", "") or j.get("first_published", "") or ""
+def _greenhouse_board(slug: str) -> list[dict]:
+    out = []
+    try:
+        r = requests.get(
+            f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
+            timeout=15,
+        )
+        data = r.json()
+        for j in data.get("jobs", []):
+            title = j.get("title", "")
+            location = j.get("location", {}).get("name", "")
+            url = j.get("absolute_url", "")
+            description = BeautifulSoup(j.get("content", ""), "html.parser").get_text()[:1500]
+            posted_at = j.get("updated_at", "") or j.get("first_published", "") or ""
 
-                # Only include Germany-based roles (or remote)
-                loc_lower = location.lower()
-                if "germany" in loc_lower or "deutschland" in loc_lower or "remote" in loc_lower or not location:
-                    results.append(job(title, slug.title(), location, url, "Greenhouse", description, posted_at))
-            time.sleep(1)
-        except Exception:
-            continue
+            # Only include Germany-based roles (or remote)
+            loc_lower = location.lower()
+            if "germany" in loc_lower or "deutschland" in loc_lower or "remote" in loc_lower or not location:
+                out.append(job(title, slug.title(), location, url, "Greenhouse", description, posted_at))
+    except Exception:
+        return out
+    return out
+
+
+def scrape_greenhouse() -> list[dict]:
+    results = _parallel_collect(GREENHOUSE_SLUGS, _greenhouse_board, "Greenhouse")
     print(f"  [Greenhouse] {len(results)} jobs")
     return results
 
 
 # ── 5. Lever API ───────────────────────────────────────────────────────────────
 
+def _lever_board(slug: str) -> list[dict]:
+    out = []
+    try:
+        r = requests.get(
+            f"https://api.lever.co/v0/postings/{slug}?mode=json",
+            timeout=15,
+        )
+        postings = r.json()
+        for p in postings:
+            location = p.get("categories", {}).get("location", "")
+            loc_lower = location.lower()
+            if "germany" not in loc_lower and "deutschland" not in loc_lower and "remote" not in loc_lower and location:
+                continue
+            title = p.get("text", "")
+            url = p.get("hostedUrl", "")
+            description = BeautifulSoup(
+                p.get("descriptionPlain", "") or p.get("description", ""), "html.parser"
+            ).get_text()[:1500]
+            # Lever createdAt is epoch ms
+            created_ms = p.get("createdAt")
+            posted_at = ""
+            if created_ms:
+                try:
+                    from datetime import datetime, timezone
+                    posted_at = datetime.fromtimestamp(int(created_ms) / 1000, tz=timezone.utc).isoformat()
+                except Exception:
+                    posted_at = ""
+            out.append(job(title, slug.title(), location, url, "Lever", description, posted_at))
+    except Exception:
+        return out
+    return out
+
+
 def scrape_lever() -> list[dict]:
-    results = []
-    for slug in LEVER_SLUGS:
-        try:
-            r = requests.get(
-                f"https://api.lever.co/v0/postings/{slug}?mode=json",
-                timeout=15,
-            )
-            postings = r.json()
-            for p in postings:
-                location = p.get("categories", {}).get("location", "")
-                loc_lower = location.lower()
-                if "germany" not in loc_lower and "deutschland" not in loc_lower and "remote" not in loc_lower and location:
-                    continue
-                title = p.get("text", "")
-                url = p.get("hostedUrl", "")
-                description = BeautifulSoup(
-                    p.get("descriptionPlain", "") or p.get("description", ""), "html.parser"
-                ).get_text()[:1500]
-                # Lever createdAt is epoch ms
-                created_ms = p.get("createdAt")
-                posted_at = ""
-                if created_ms:
-                    try:
-                        from datetime import datetime, timezone
-                        posted_at = datetime.fromtimestamp(int(created_ms) / 1000, tz=timezone.utc).isoformat()
-                    except Exception:
-                        posted_at = ""
-                results.append(job(title, slug.title(), location, url, "Lever", description, posted_at))
-            time.sleep(1)
-        except Exception:
-            continue
+    results = _parallel_collect(LEVER_SLUGS, _lever_board, "Lever")
     print(f"  [Lever] {len(results)} jobs")
     return results
 
@@ -2339,11 +2390,14 @@ def scrape_all() -> list[dict]:
         scrape_brave_search,       # Brave web search API
         scrape_web_search,         # DuckDuckGo web search
     ]:
+        t0 = time.time()
         try:
             jobs = scraper()
             all_jobs.extend(jobs)
         except Exception:
             traceback.print_exc()
+        finally:
+            SCRAPER_TIMINGS[scraper.__name__] = round(time.time() - t0, 1)
 
     # Deduplicate by job id
     seen_ids: set[str] = set()
@@ -2353,5 +2407,11 @@ def scrape_all() -> list[dict]:
             seen_ids.add(j["id"])
             unique.append(j)
 
+    # Slowest scrapers first — this is what tells us where a long run actually
+    # goes, and whether a scraper has started hanging rather than failing.
+    slowest = sorted(SCRAPER_TIMINGS.items(), key=lambda x: -x[1])[:8]
+    total = sum(SCRAPER_TIMINGS.values())
+    print(f"Scrape timing: {total/60:.1f} min total | slowest: "
+          + ", ".join(f"{n.replace('scrape_', '')} {s:.0f}s" for n, s in slowest))
     print(f"Total unique jobs from all sources: {len(unique)}")
     return unique
