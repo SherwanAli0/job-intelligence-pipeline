@@ -832,6 +832,32 @@ def scrape_successfactors() -> list[dict]:
 
 # ── 10. Brave Search API (official, reliable web search) ─────────────────────
 
+# Per-run Brave query budget.
+#
+# The plan bills $5.00 per 1,000 requests and includes $5 of credit each month,
+# so the effective free allowance is 1,000 requests/month. At the previous 29
+# queries x 2 scheduled runs/day (58/day) that credit is gone in ~17 days,
+# which is exactly what happened: the source reported 0 jobs with HTTP 402 for
+# the rest of the month.
+#
+# 10 queries x ~62 runs/month = ~620, leaving ~380 requests of headroom for
+# manual runs, CI re-runs and local testing.
+_BRAVE_MAX_QUERIES = 10
+
+
+def _brave_query_slice() -> list[str]:
+    """A rotating window of _WEB_QUERIES, so a smaller per-run budget still
+    covers every query over time instead of permanently ignoring the tail.
+    Rotates by day-of-year, which is stable within a run and across the two
+    daily runs, so both of a day's runs search the same themes."""
+    from datetime import date
+    if len(_WEB_QUERIES) <= _BRAVE_MAX_QUERIES:
+        return list(_WEB_QUERIES)
+    start = (date.today().timetuple().tm_yday * _BRAVE_MAX_QUERIES) % len(_WEB_QUERIES)
+    doubled = list(_WEB_QUERIES) + list(_WEB_QUERIES)
+    return doubled[start:start + _BRAVE_MAX_QUERIES]
+
+
 def scrape_brave_search() -> list[dict]:
     """
     Brave Search API — official web search over company career pages.
@@ -863,7 +889,14 @@ def scrape_brave_search() -> list[dict]:
     http_errors: dict[int, int] = {}
     quota_note = ""
 
-    for qi, query in enumerate(_WEB_QUERIES):
+    # Stay inside the free tier. 29 queries x 2 scheduled runs/day is 1,740 a
+    # month against a 2,000 allowance, which leaves no room for manual runs or
+    # local testing — and it duly ran out. A smaller per-run budget, rotated so
+    # every query still gets used across runs, keeps total usage well under the
+    # cap while losing almost nothing: this source yields ~15 jobs out of ~8,900.
+    queries = _brave_query_slice()
+
+    for qi, query in enumerate(queries):
         r = None
         try:
             # Free tier allows 1 query/second; retry a throttled query twice
@@ -905,6 +938,15 @@ def scrape_brave_search() -> list[dict]:
                 print(f"  [Brave] AUTH FAILED (HTTP {r.status_code}) — key rejected. "
                       f"Regenerate BRAVE_API_KEY at api-dashboard.search.brave.com "
                       f"and update the repo secret. Detail: {detail}")
+                return []
+            if r.status_code == 402:
+                # Payment Required = the free tier's monthly allowance is spent.
+                # Account-level, so every remaining query would fail too. It
+                # resets on its own at the start of the next billing month.
+                print(f"  [Brave] MONTHLY QUOTA EXHAUSTED (HTTP 402{quota_note}). "
+                      f"The included $5/month credit covers ~1,000 requests and resets "
+                      f"automatically at the start of the billing month. "
+                      f"Reduce _BRAVE_MAX_QUERIES if it keeps running out.")
                 return []
             if r.status_code != 200:
                 http_errors[r.status_code] = http_errors.get(r.status_code, 0) + 1
@@ -972,7 +1014,7 @@ def scrape_brave_search() -> list[dict]:
             continue
 
     print(f"  [Brave] {len(results)} jobs "
-          f"({queries_ok}/{len(_WEB_QUERIES)} queries ok, {raw_hits} raw hits{quota_note})")
+          f"({queries_ok}/{len(queries)} queries ok, {raw_hits} raw hits{quota_note})")
     if http_errors:
         detail = ", ".join(f"HTTP {code} x{n}" for code, n in sorted(http_errors.items()))
         print(f"  [Brave] request failures: {detail}"

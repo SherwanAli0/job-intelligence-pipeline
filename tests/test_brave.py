@@ -127,3 +127,58 @@ class TestUnchangedHappyPath:
         monkeypatch.delenv("BRAVE_API_KEY", raising=False)
         assert scrapers.scrape_brave_search() == []
         assert "not set" in capsys.readouterr().out
+
+
+class TestQuotaHandling:
+    """HTTP 402 is Brave's 'monthly free-tier allowance spent' response. It is
+    account-level, so every remaining query would fail too — the real incident
+    burned three calls before giving up, and the log said nothing about quota."""
+
+    def test_402_fails_fast_with_quota_message(self, monkeypatch, capsys):
+        calls = []
+
+        def fake_get(*a, **kw):
+            calls.append(1)
+            return _Resp(status=402, headers={"X-RateLimit-Remaining": "49, 0"})
+
+        monkeypatch.setattr(scrapers.requests, "get", fake_get)
+        out = scrapers.scrape_brave_search()
+        printed = capsys.readouterr().out
+
+        assert out == []
+        assert len(calls) == 1, "402 is account-level; must not retry every query"
+        assert "QUOTA EXHAUSTED" in printed
+        assert "resets automatically" in printed
+
+
+class TestQueryBudget:
+    def test_per_run_budget_is_capped(self):
+        assert len(scrapers._brave_query_slice()) == scrapers._BRAVE_MAX_QUERIES
+
+    def test_budget_keeps_monthly_usage_inside_the_included_credit(self):
+        # Plan: $5.00/1,000 requests with $5 included monthly = ~1,000 requests.
+        # 2 scheduled runs/day over ~31 days must stay well inside that, with
+        # room left for manual runs and local testing.
+        monthly = scrapers._BRAVE_MAX_QUERIES * 2 * 31
+        assert monthly < 1000, f"{monthly} requests/month would exhaust the $5 credit"
+
+    def test_slice_rotates_so_every_query_is_used_over_time(self, monkeypatch):
+        seen = set()
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            _day = 1
+
+            @classmethod
+            def today(cls):
+                return _dt.date(2026, 1, 1) + _dt.timedelta(days=cls._day - 1)
+
+        monkeypatch.setattr(_dt, "date", _FakeDate)
+        for day in range(1, 40):
+            _FakeDate._day = day
+            seen.update(scrapers._brave_query_slice())
+        assert seen == set(scrapers._WEB_QUERIES), "rotation must eventually cover every query"
+
+    def test_slice_never_exceeds_available_queries(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "_WEB_QUERIES", ["a", "b"])
+        assert scrapers._brave_query_slice() == ["a", "b"]
