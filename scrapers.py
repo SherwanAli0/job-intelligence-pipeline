@@ -1611,91 +1611,96 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
         return ""
 
 
+def _workday_cxs_tenant(entry) -> list[dict]:
+    """One Workday tenant. Extracted so tenants can be fetched concurrently:
+    measured at 718s sequentially across 15 tenants, the second-largest cost
+    in the whole scrape after JobSpy (which cannot be parallelised)."""
+    out: list[dict] = []
+    if not isinstance(entry, (tuple, list)) or len(entry) != 3:
+        return out
+    tenant, region, site = entry
+    host = f"{tenant}.{region}.myworkdayjobs.com"
+    list_url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
+    per_tenant_fetched = 0
+    per_tenant_added = 0
+    offset = 0
+
+    try:
+        while offset < 200:  # safety cap: never walk past 200 postings per tenant
+            payload = dict(_WD_PAYLOAD)
+            payload["offset"] = offset
+            payload["limit"] = 20
+            r = requests.post(
+                list_url,
+                json=payload,
+                headers=_wd_headers(host),
+                timeout=15,
+            )
+            if r.status_code != 200:
+                break
+            data = r.json()
+            postings = data.get("jobPostings", []) or []
+            if not postings:
+                break
+
+            for jp in postings:
+                title = (jp.get("title") or "").strip()
+                if not title:
+                    continue
+                title_low = title.lower()
+
+                # Pre-filter at title level to AI/ML/data-relevant only.
+                # NVIDIA has 2000 jobs total; we only want maybe 30 of them.
+                if not any(k in title_low for k in _WD_AI_KEYWORDS):
+                    continue
+                # Cap at ~30 relevant jobs per tenant to keep scrape fast
+                if per_tenant_added >= 30:
+                    break
+
+                location = (
+                    jp.get("locationsText", "")
+                    or (jp.get("locations") or [{}])[0].get("descriptor", "")
+                    or ""
+                )
+                posted = jp.get("postedOn", "") or ""
+                external_path = jp.get("externalPath", "") or ""
+                job_url = f"https://{host}{external_path}" if external_path else list_url
+
+                # Pull full description (one extra GET per relevant job)
+                desc = _wd_fetch_description(host, tenant, site, external_path)
+                if not desc:
+                    # Fallback stub if description fetch failed
+                    desc = f"View full job on Workday: {job_url}"
+
+                out.append(job(
+                    title=title,
+                    company=tenant,
+                    location=location,
+                    url=job_url,
+                    source="Workday-CXS",
+                    description=desc,
+                    posted_at=posted,
+                ))
+                per_tenant_added += 1
+                time.sleep(0.15)  # rate-limit description fetches
+
+            per_tenant_fetched += len(postings)
+            if per_tenant_added >= 30 or len(postings) < 20:
+                break
+            offset += 20
+            time.sleep(0.3)
+    except Exception as e:
+        print(f"  [WD-CXS/{tenant}] failed: {e}")
+        return out
+    return out
+
+
 def scrape_workday_cxs() -> list[dict]:
     """
     Scrape Workday CXS endpoints (the modern JSON API). Distinct from the
-    older `scrape_workday()` which scrapes HTML — that one mostly fails on
-    JS-rendered career pages.
+    older `scrape_workday()` which scrapes HTML.
     """
-    results: list[dict] = []
-    for entry in WORKDAY_CXS_TENANTS:
-        if not isinstance(entry, (tuple, list)) or len(entry) != 3:
-            continue
-        tenant, region, site = entry
-        host = f"{tenant}.{region}.myworkdayjobs.com"
-        list_url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
-        per_tenant_fetched = 0
-        per_tenant_added = 0
-        offset = 0
-
-        try:
-            while offset < 200:  # safety cap: never walk past 200 postings per tenant
-                payload = dict(_WD_PAYLOAD)
-                payload["offset"] = offset
-                payload["limit"] = 20
-                r = requests.post(
-                    list_url,
-                    json=payload,
-                    headers=_wd_headers(host),
-                    timeout=15,
-                )
-                if r.status_code != 200:
-                    break
-                data = r.json()
-                postings = data.get("jobPostings", []) or []
-                if not postings:
-                    break
-
-                for jp in postings:
-                    title = (jp.get("title") or "").strip()
-                    if not title:
-                        continue
-                    title_low = title.lower()
-
-                    # Pre-filter at title level to AI/ML/data-relevant only.
-                    # NVIDIA has 2000 jobs total; we only want maybe 30 of them.
-                    if not any(k in title_low for k in _WD_AI_KEYWORDS):
-                        continue
-                    # Cap at ~30 relevant jobs per tenant to keep scrape fast
-                    if per_tenant_added >= 30:
-                        break
-
-                    location = (
-                        jp.get("locationsText", "")
-                        or (jp.get("locations") or [{}])[0].get("descriptor", "")
-                        or ""
-                    )
-                    posted = jp.get("postedOn", "") or ""
-                    external_path = jp.get("externalPath", "") or ""
-                    job_url = f"https://{host}{external_path}" if external_path else list_url
-
-                    # Pull full description (one extra GET per relevant job)
-                    desc = _wd_fetch_description(host, tenant, site, external_path)
-                    if not desc:
-                        # Fallback stub if description fetch failed
-                        desc = f"View full job on Workday: {job_url}"
-
-                    results.append(job(
-                        title=title,
-                        company=tenant,
-                        location=location,
-                        url=job_url,
-                        source="Workday-CXS",
-                        description=desc,
-                        posted_at=posted,
-                    ))
-                    per_tenant_added += 1
-                    time.sleep(0.15)  # rate-limit description fetches
-
-                per_tenant_fetched += len(postings)
-                if per_tenant_added >= 30 or len(postings) < 20:
-                    break
-                offset += 20
-                time.sleep(0.3)
-        except Exception as e:
-            print(f"  [WD-CXS/{tenant}] failed: {e}")
-            continue
-
+    results = _parallel_collect(list(WORKDAY_CXS_TENANTS), _workday_cxs_tenant, "WD-CXS")
     print(f"  [WD-CXS] {len(results)} AI/ML-relevant jobs across {len(WORKDAY_CXS_TENANTS)} tenants")
     return results
 
