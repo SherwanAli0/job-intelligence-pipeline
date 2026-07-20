@@ -618,6 +618,14 @@ def _detect_platform() -> str:
     unless you can group runs by where they ran."""
     if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
         return "aws-lambda"
+    # ECS/Fargate sets both of these itself. Without this branch the migration
+    # runs were recorded as 'local', which silently defeats the whole point of
+    # the tag: compare_sources.py could not tell a Fargate run from a laptop
+    # run, so the parity check had no target platform to compare.
+    if (os.environ.get("ECS_CONTAINER_METADATA_URI_V4")
+            or os.environ.get("ECS_CONTAINER_METADATA_URI")
+            or "ECS" in os.environ.get("AWS_EXECUTION_ENV", "")):
+        return "aws-fargate"
     if os.environ.get("GITHUB_ACTIONS"):
         return "github-actions"
     return "local"

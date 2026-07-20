@@ -88,3 +88,34 @@ class TestPlatformTagging:
 
     def test_explicit_platform_is_respected(self):
         assert cs._platform({"platform": "aws-lambda"}) == "aws-lambda"
+
+
+class TestFargateIsRecognised:
+    """The migration runs were initially tagged 'local' because the detector
+    only knew Lambda and GitHub Actions. That silently defeats the tag: the
+    parity check then has no target platform to compare against."""
+
+    def test_fargate_env_is_detected(self, monkeypatch):
+        import main
+        monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.setenv("ECS_CONTAINER_METADATA_URI_V4", "http://169.254.170.2/v4/abc")
+        assert main._detect_platform() == "aws-fargate"
+
+    def test_execution_env_variant_is_detected(self, monkeypatch):
+        import main
+        monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("ECS_CONTAINER_METADATA_URI_V4", raising=False)
+        monkeypatch.setenv("AWS_EXECUTION_ENV", "AWS_ECS_FARGATE")
+        assert main._detect_platform() == "aws-fargate"
+
+    def test_lambda_still_wins_over_ecs(self, monkeypatch):
+        import main
+        monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "fn")
+        monkeypatch.setenv("ECS_CONTAINER_METADATA_URI_V4", "http://x")
+        assert main._detect_platform() == "aws-lambda"
+
+    def test_default_target_is_fargate(self):
+        src = open("compare_sources.py", encoding="utf-8").read()
+        assert 'default="aws-fargate"' in src

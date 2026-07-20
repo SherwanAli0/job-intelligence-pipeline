@@ -13,8 +13,8 @@ baseline platform and a target platform, and reports which sources moved by
 more than day-to-day noise.
 
 Usage:
-  py -3.11 compare_sources.py                                   # auto: github-actions -> aws-lambda
-  py -3.11 compare_sources.py --baseline github-actions --target aws-lambda
+  py -3.11 compare_sources.py                                   # auto: github-actions -> aws-fargate
+  py -3.11 compare_sources.py --baseline github-actions --target aws-fargate
   py -3.11 compare_sources.py --baseline-runs 5                 # widen the baseline window
 
 Exit code is 1 if any source regressed, so it can gate a migration cutover.
@@ -128,7 +128,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--baseline", default="github-actions", help="platform to compare against")
-    ap.add_argument("--target", default="aws-lambda", help="platform being validated")
+    ap.add_argument("--target", default="aws-fargate", help="platform being validated")
     ap.add_argument("--baseline-runs", type=int, default=5, help="baseline window size")
     args = ap.parse_args()
 
