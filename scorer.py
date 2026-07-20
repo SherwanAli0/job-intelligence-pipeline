@@ -15,7 +15,25 @@ import anthropic
 
 from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS
 
-client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+# The client is built on first use, not at import time. On Lambda the API key
+# arrives from Parameter Store during startup, which happens after imports —
+# building the client here would crash the function in its init phase with a
+# bare KeyError, before any of our own error handling could report why. Tests
+# and callers may still assign `scorer.client` directly to inject a fake.
+client = None
+
+
+def _client():
+    global client
+    if client is None:
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not set. On AWS it should come from SSM "
+                "Parameter Store (JOBHUNTER_SSM_PREFIX); locally, export it."
+            )
+        client = anthropic.Anthropic(api_key=key)
+    return client
 
 # ── Per-track CV routing ──────────────────────────────────────────────────────
 # Each job is classified into a track and scored against the CV framed for that
@@ -798,7 +816,7 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
     # a batch of jobs.
     for attempt in (1, 2):
         try:
-            response = client.messages.create(
+            response = _client().messages.create(
                 model=model,
                 max_tokens=1500,
                 system=_system_blocks(cv_profile),
@@ -841,27 +859,27 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
                     **_thinking_kwargs(model),
                 },
             })
-        batch = client.messages.batches.create(requests=requests)
+        batch = _client().messages.batches.create(requests=requests)
         print(f"  [BatchAPI] submitted {len(requests)} requests as {batch.id} (50% token discount)")
 
         waited = 0
         while True:
             time.sleep(_BATCH_POLL_SECONDS)
             waited += _BATCH_POLL_SECONDS
-            batch = client.messages.batches.retrieve(batch.id)
+            batch = _client().messages.batches.retrieve(batch.id)
             if batch.processing_status == "ended":
                 break
             if waited >= _BATCH_TIMEOUT_SECONDS:
                 print(f"  [BatchAPI] timeout after {waited}s — cancelling, falling back to sync")
                 try:
-                    client.messages.batches.cancel(batch.id)
+                    _client().messages.batches.cancel(batch.id)
                 except Exception:
                     pass
                 return False
 
         ok, redo = 0, []
         seen_ids = set()
-        for result in client.messages.batches.results(batch.id):
+        for result in _client().messages.batches.results(batch.id):
             seen_ids.add(result.custom_id)
             gi = int(result.custom_id[1:])
             grp, model, profile = groups[gi]

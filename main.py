@@ -12,6 +12,13 @@ import re
 import sys
 from pathlib import Path
 
+# Secrets must be in the environment before any module that reads them is
+# imported (config/scorer/notifier all consult os.environ). No-op unless
+# JOBHUNTER_SSM_PREFIX is set, so laptop and GitHub Actions runs are unchanged.
+import secrets_loader
+
+secrets_loader.load()
+
 import storage
 from config import MAX_RESULTS, MIN_SCORE
 from notifier import add_to_notion, send_email
