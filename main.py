@@ -623,6 +623,15 @@ def _detect_platform() -> str:
     return "local"
 
 
+def _scraper_timings() -> dict:
+    """Per-scraper wall time from the last scrape_all(), if available."""
+    try:
+        from scrapers import SCRAPER_TIMINGS
+        return dict(SCRAPER_TIMINGS)
+    except Exception:
+        return {}
+
+
 def _record_run_stats(stats: dict) -> None:
     try:
         stats.setdefault("platform", _detect_platform())
@@ -746,11 +755,28 @@ def main(dry_run: bool = False) -> None:
     print("  Daily Job Hunter — starting run" + ("  [DRY RUN]" if dry_run else ""))
     print("=" * 60)
 
+    # Phase timing. The compute decision turns on how the run splits between
+    # the long scrape and the comparatively short post-scoring work: the
+    # scrape needs an unbounded runtime (measured at 40 min, vs Lambda's
+    # 15-minute ceiling), while everything after batch retrieval is small
+    # enough to be a Lambda if we ever separate the stages. Recorded per run
+    # so that split is decided on data rather than estimates.
+    import time as _time
+    _phase_t0 = _time.time()
+    _phases: dict[str, float] = {}
+
+    def _phase(name: str) -> None:
+        nonlocal _phase_t0
+        now = _time.time()
+        _phases[name] = round(now - _phase_t0, 1)
+        _phase_t0 = now
+
     seen = load_seen()
     print(f"Previously seen jobs: {len(seen)}")
 
     # ── Scrape ────────────────────────────────────────────────────────────────
     all_jobs = scrape_all()
+    _phase("scrape")
 
     # T1d: per-source counts + dead-source alarm (vs committed run history)
     from collections import Counter as _Counter
@@ -829,8 +855,11 @@ def main(dry_run: bool = False) -> None:
             })
         sys.exit(0)
 
+    _phase("filter")
+
     # ── Score ─────────────────────────────────────────────────────────────────
     scored = score_jobs(new_jobs)
+    _phase("score")
 
     # B6: penalise + tag stale/zombie postings so fresh roles rank above them
     ghosts = _apply_ghost_penalty(scored)
@@ -888,6 +917,8 @@ def main(dry_run: bool = False) -> None:
     except Exception as e:
         print(f"  [AppKit] skipped: {e}")
 
+    _phase("rank_and_kits")
+
     # ── Notify ────────────────────────────────────────────────────────────────
     email_ok = True  # nothing-to-send counts as success
     if dry_run:
@@ -931,6 +962,13 @@ def main(dry_run: bool = False) -> None:
             "track_mix": dict(_mix),
             "email_ok": email_ok,
             "warnings": health_warnings,
+            # Per-phase seconds. The scrape phase needs unbounded runtime;
+            # everything after it is small enough to run as a Lambda if the
+            # stages are ever separated. Recorded so that choice stays
+            # evidence-based.
+            "phases": _phases,
+            "scrapers": dict(sorted(_scraper_timings().items(),
+                                    key=lambda x: -x[1])[:10]),
         })
 
 
