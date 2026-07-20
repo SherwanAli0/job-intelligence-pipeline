@@ -45,9 +45,19 @@ def _key(url_or_id: str) -> str:
 
 
 def load_applied() -> dict:
-    if APPLIED_FILE.exists():
+    # Read through the storage layer so the digest can render your funnel when
+    # running on Lambda; writes stay local + secret-synced (you run the CLI on
+    # your own machine, never in the cloud).
+    try:
+        import storage
+        raw = storage.read_text(str(APPLIED_FILE))
+    except Exception:
+        raw = None
+    if raw is None and APPLIED_FILE.exists():
+        raw = APPLIED_FILE.read_text(encoding="utf-8")
+    if raw:
         try:
-            return json.loads(APPLIED_FILE.read_text(encoding="utf-8"))
+            return json.loads(raw)
         except Exception:
             return {}
     return {}

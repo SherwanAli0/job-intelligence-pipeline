@@ -60,16 +60,19 @@ def _norm_q(label: str) -> str:
 
 
 def load_bank() -> dict:
-    if BANK_FILE.exists():
+    import storage
+    raw = storage.read_text(str(BANK_FILE))
+    if raw:
         try:
-            return json.loads(BANK_FILE.read_text(encoding="utf-8"))
+            return json.loads(raw)
         except Exception:
             return {}
     return {}
 
 
 def save_bank(bank: dict) -> None:
-    BANK_FILE.write_text(json.dumps(bank, indent=2, ensure_ascii=False), encoding="utf-8")
+    import storage
+    storage.write_text(str(BANK_FILE), json.dumps(bank, indent=2, ensure_ascii=False))
 
 
 def _greenhouse_questions(url: str) -> list[str]:

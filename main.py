@@ -12,6 +12,7 @@ import re
 import sys
 from pathlib import Path
 
+import storage
 from config import MAX_RESULTS, MIN_SCORE
 from notifier import add_to_notion, send_email
 from scrapers import scrape_all
@@ -551,9 +552,10 @@ def load_seen() -> dict[str, str]:
     """{job_id: last-seen ISO date}. Transparently migrates the legacy flat
     id list (all legacy ids get today's date, so nothing re-surfaces early)."""
     from datetime import date
-    if SEEN_FILE.exists():
+    raw = storage.read_text(str(SEEN_FILE))
+    if raw:
         try:
-            data = json.loads(SEEN_FILE.read_text())
+            data = json.loads(raw)
             if isinstance(data, list):  # legacy format
                 today = date.today().isoformat()
                 return {i: today for i in data}
@@ -569,7 +571,7 @@ def save_seen(seen: dict[str, str]) -> None:
     kept = {k: v for k, v in seen.items() if str(v) >= cutoff}
     if len(kept) < len(seen):
         print(f"  [Seen] pruned {len(seen) - len(kept)} ids not re-seen for {_SEEN_RETENTION_DAYS}+ days")
-    SEEN_FILE.write_text(json.dumps(dict(sorted(kept.items())), indent=2))
+    storage.write_text(str(SEEN_FILE), json.dumps(dict(sorted(kept.items())), indent=2))
 
 
 # ── T1d: run-stats history + silent-scraper-death detection ──────────────────
@@ -586,10 +588,11 @@ _HISTORY_WINDOW = 30    # runs of history considered for the median
 
 
 def _load_run_history() -> list[dict]:
-    if not STATS_FILE.exists():
+    raw = storage.read_text(str(STATS_FILE))
+    if not raw:
         return []
     out = []
-    for line in STATS_FILE.read_text(encoding="utf-8").splitlines():
+    for line in raw.splitlines():
         line = line.strip()
         if line:
             try:
@@ -616,8 +619,7 @@ def _detect_platform() -> str:
 def _record_run_stats(stats: dict) -> None:
     try:
         stats.setdefault("platform", _detect_platform())
-        with STATS_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(stats, ensure_ascii=False) + "\n")
+        storage.append_line(str(STATS_FILE), json.dumps(stats, ensure_ascii=False))
     except Exception as e:
         print(f"  [Stats] could not record run stats: {e}")
 
