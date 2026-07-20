@@ -63,3 +63,41 @@ class TestTimeout:
         assert scrapers.SCRAPER_TIMEOUT_SECONDS == 42
         monkeypatch.delenv("JOBHUNTER_SCRAPER_TIMEOUT", raising=False)
         importlib.reload(scrapers)
+
+
+class TestLateRecovery:
+    """A timed-out scraper often finishes while the remaining sources run.
+    Observed live: a throttled JobSpy timed out at 420s, then completed with
+    696 real jobs during the 20 minutes of scraping that followed, and every
+    one of them was discarded."""
+
+    def test_late_finisher_is_recovered(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "SCRAPER_TIMEOUT_SECONDS", 1)
+        scrapers._PENDING_SCRAPERS.clear()
+
+        def slow_but_finishes():
+            time.sleep(2)
+            return [{"id": "late-1"}, {"id": "late-2"}]
+
+        jobs, timed_out = scrapers._run_scraper_guarded(slow_but_finishes)
+        assert timed_out is True and jobs == []
+
+        recovered = scrapers._recover_late_scrapers(grace_seconds=5)
+        assert [j["id"] for j in recovered] == ["late-1", "late-2"]
+
+    def test_still_hung_scraper_is_skipped_not_waited_on(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "SCRAPER_TIMEOUT_SECONDS", 1)
+        scrapers._PENDING_SCRAPERS.clear()
+
+        scrapers._run_scraper_guarded(lambda: (time.sleep(60), [{"id": "never"}])[1])
+        started = time.time()
+        recovered = scrapers._recover_late_scrapers(grace_seconds=1)
+        assert recovered == []
+        assert time.time() - started < 4, "must not block on a genuinely hung source"
+
+    def test_pending_list_is_cleared_between_runs(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "SCRAPER_TIMEOUT_SECONDS", 1)
+        scrapers._PENDING_SCRAPERS.clear()
+        scrapers._run_scraper_guarded(lambda: (time.sleep(2), [{"id": "x"}])[1])
+        scrapers._recover_late_scrapers(grace_seconds=3)
+        assert scrapers._PENDING_SCRAPERS == []

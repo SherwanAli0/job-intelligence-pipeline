@@ -57,6 +57,15 @@ SCRAPER_TIMINGS: dict[str, float] = {}
 SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("JOBHUNTER_SCRAPER_TIMEOUT", "600"))
 
 
+# Scrapers that blew the timeout, kept so their results can be collected if
+# they finish while the remaining sources are still running. Observed live: a
+# throttled JobSpy timed out at 420s, then completed with 696 real jobs while
+# later scrapers ran for another 20 minutes — those jobs were simply thrown
+# away. The thread is already running and already paid for; discarding a
+# completed result is pure waste.
+_PENDING_SCRAPERS: list = []
+
+
 def _run_scraper_guarded(scraper) -> tuple[list, bool]:
     """Run one scraper with a wall-clock limit. Returns (jobs, timed_out)."""
     import threading
@@ -73,8 +82,24 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
     t.start()
     t.join(SCRAPER_TIMEOUT_SECONDS)
     if t.is_alive():
-        return [], True          # abandoned; the daemon dies with the process
+        _PENDING_SCRAPERS.append((scraper.__name__, box, t))
+        return [], True          # abandoned for now; may be recovered below
     return box["jobs"], False
+
+
+def _recover_late_scrapers(grace_seconds: int = 60) -> list[dict]:
+    """Collect results from timed-out scrapers that have since finished."""
+    recovered: list[dict] = []
+    for name, box, t in _PENDING_SCRAPERS:
+        t.join(grace_seconds if t.is_alive() else 0)
+        if not t.is_alive() and box["jobs"]:
+            print(f"  [{name}] finished late — recovering {len(box['jobs'])} jobs")
+            recovered.extend(box["jobs"])
+            SCRAPER_TIMINGS[name + " (late)"] = 0.0
+        elif t.is_alive():
+            print(f"  [{name}] still hung after the grace period — permanently skipped")
+    _PENDING_SCRAPERS.clear()
+    return recovered
 
 
 def _parallel_collect(items: list, fetch_one, label: str = "") -> list[dict]:
@@ -2483,6 +2508,9 @@ def scrape_all() -> list[dict]:
                   f"— abandoned, continuing with the other sources")
         all_jobs.extend(jobs)
         SCRAPER_TIMINGS[scraper.__name__] = round(time.time() - t0, 1)
+
+    # A source that blew its timeout may have finished while the others ran.
+    all_jobs.extend(_recover_late_scrapers())
 
     # Deduplicate by job id
     seen_ids: set[str] = set()
