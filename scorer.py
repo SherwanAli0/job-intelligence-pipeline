@@ -23,6 +23,59 @@ from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS
 client = None
 
 
+# ── Token accounting ─────────────────────────────────────────────────────────
+# Cost per run was previously an estimate quoted from memory. The API reports
+# exact usage on every response, so the pipeline now measures what it spent
+# instead — the same "measure, don't estimate" discipline that decided Fargate
+# over Lambda.
+TOKEN_USAGE: dict = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
+                     "by_model": {}, "batched": False}
+
+# USD per million tokens. Batch requests bill at 50%; cached reads at ~10% of
+# the input rate, cache writes at 125%.
+_PRICES = {
+    "claude-haiku-4-5-20251001": {"in": 1.00, "out": 5.00},
+    "claude-sonnet-5": {"in": 2.00, "out": 10.00},   # intro pricing to 2026-08-31
+}
+_DEFAULT_PRICE = {"in": 3.00, "out": 15.00}
+
+
+def _record_usage(model: str, usage, batched: bool = False) -> None:
+    """Accumulate token usage from a Messages API response. Never raises: cost
+    telemetry must not be able to break a scoring run."""
+    try:
+        if usage is None:
+            return
+        i = int(getattr(usage, "input_tokens", 0) or 0)
+        o = int(getattr(usage, "output_tokens", 0) or 0)
+        cr = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        cw = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        TOKEN_USAGE["input"] += i
+        TOKEN_USAGE["output"] += o
+        TOKEN_USAGE["cache_read"] += cr
+        TOKEN_USAGE["cache_write"] += cw
+        TOKEN_USAGE["batched"] = TOKEN_USAGE["batched"] or batched
+        m = TOKEN_USAGE["by_model"].setdefault(model, {"in": 0, "out": 0, "cache_read": 0,
+                                                       "cache_write": 0, "batched": batched})
+        m["in"] += i; m["out"] += o; m["cache_read"] += cr; m["cache_write"] += cw
+        m["batched"] = m["batched"] or batched
+    except Exception:
+        pass
+
+
+def estimated_cost_usd() -> float:
+    """Cost of this run from measured token counts, in USD."""
+    total = 0.0
+    for model, u in TOKEN_USAGE["by_model"].items():
+        p = _PRICES.get(model, _DEFAULT_PRICE)
+        discount = 0.5 if u.get("batched") else 1.0
+        total += (u["in"] / 1e6) * p["in"] * discount
+        total += (u["out"] / 1e6) * p["out"] * discount
+        total += (u["cache_read"] / 1e6) * p["in"] * 0.10 * discount
+        total += (u["cache_write"] / 1e6) * p["in"] * 1.25 * discount
+    return round(total, 4)
+
+
 def _client():
     global client
     if client is None:
@@ -824,6 +877,7 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
                 output_config=_OUTPUT_CONFIG,
                 **_thinking_kwargs(model),
             )
+            _record_usage(model, getattr(response, "usage", None))
             _apply_scores(batch, response.content[0].text)
             break
 
@@ -887,6 +941,7 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
                 try:
                     msg = result.result.message
                     text = next(b.text for b in msg.content if b.type == "text")
+                    _record_usage(model, getattr(msg, "usage", None), batched=True)
                     _apply_scores(grp, text)
                     ok += 1
                 except Exception as e:

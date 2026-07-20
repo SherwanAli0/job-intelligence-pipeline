@@ -952,6 +952,13 @@ def main(dry_run: bool = False) -> None:
     # ── T1d: append this run's stats line (trendable pipeline history) ────────
     if not dry_run:
         from datetime import datetime as _dt, timezone as _tz
+        try:
+            import scorer as _sc
+            _llm_cost, _token_usage = _sc.estimated_cost_usd(), dict(_sc.TOKEN_USAGE)
+        except Exception:
+            _llm_cost, _token_usage = 0.0, {}
+        print(f"Measured LLM cost this run: ${_llm_cost:.4f}")
+
         _record_run_stats({
             "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
             "sources": src_counts,
@@ -969,7 +976,19 @@ def main(dry_run: bool = False) -> None:
             "phases": _phases,
             "scrapers": dict(sorted(_scraper_timings().items(),
                                     key=lambda x: -x[1])[:10]),
+            # Measured, not estimated: exact token usage from the API.
+            "llm_cost_usd": _llm_cost,
+            "tokens": {k: v for k, v in _token_usage.items() if k != "by_model"},
         })
+
+        # CloudWatch (no-op unless JOBHUNTER_METRICS=1)
+        import metrics
+        metrics.publish(
+            duration_seconds=sum(_phases.values()),
+            llm_cost_usd=_llm_cost,
+            scraped=before, digest=len(top), near=len(near),
+            email_ok=email_ok, phases=_phases,
+        )
 
 
 if __name__ == "__main__":
