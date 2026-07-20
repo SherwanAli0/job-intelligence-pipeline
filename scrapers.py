@@ -56,6 +56,40 @@ SCRAPER_TIMINGS: dict[str, float] = {}
 # every other source. Losing one source's jobs beats losing the entire digest.
 SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("JOBHUNTER_SCRAPER_TIMEOUT", "600"))
 
+# ── Background sources ───────────────────────────────────────────────────────
+# Some sources are slow for reasons we cannot fix: LinkedIn/Indeed (via JobSpy)
+# and the DuckDuckGo web search both self-throttle deliberately, and going
+# faster risks being blocked outright. Measured on Fargate: jobspy 600s+ and
+# web_search 428s, together more than half of a 27-minute scrape.
+#
+# Running them sequentially means the whole pipeline waits on sources that are
+# only ~5% of the jobs. Instead they are STARTED FIRST and collected at the
+# end, so their unavoidable slowness overlaps the ~15 minutes of ATS scraping
+# that has to happen anyway. Same jobs, roughly a third less wall time.
+_BACKGROUND_SCRAPERS = {"scrape_jobspy", "scrape_web_search"}
+
+# How long to wait for a background source once everything else is done. They
+# have already had the full sequential scrape to work in, so this is a final
+# grace period rather than the budget itself.
+BACKGROUND_JOIN_SECONDS = int(os.environ.get("JOBHUNTER_BACKGROUND_JOIN", "420"))
+
+
+def _start_scraper(scraper):
+    """Start a scraper on a daemon thread and return (name, box, thread)."""
+    import threading
+
+    box: dict = {"jobs": []}
+
+    def _target():
+        try:
+            box["jobs"] = scraper() or []
+        except Exception:
+            traceback.print_exc()
+
+    t = threading.Thread(target=_target, daemon=True, name=scraper.__name__)
+    t.start()
+    return scraper.__name__, box, t
+
 
 # Scrapers that blew the timeout, kept so their results can be collected if
 # they finish while the remaining sources are still running. Observed live: a
@@ -273,25 +307,12 @@ def scrape_jobspy() -> list[dict]:
         li_in_count = len(results)
         print(f"  [JobSpy] {li_in_count} jobs from LinkedIn+Indeed")
 
-        # Google Jobs — aggregates StepStone, XING, and corporate boards we
-        # can't scrape directly. Newer jobspy versions need google_search_term;
-        # per-query try/except so an unsupported version or block never aborts.
-        for query in active[:10]:
-            try:
-                df = scrape_jobs(
-                    site_name=["google"],
-                    search_term=query,
-                    google_search_term=f"{query} jobs in Germany since last 3 days",
-                    location=LOCATION,
-                    results_wanted=25,
-                    hours_old=72,
-                )
-                _jobspy_rows_to_jobs(df, results)
-                time.sleep(3)
-            except Exception:
-                continue
-
-        print(f"  [JobSpy] {len(results) - li_in_count} jobs from Google Jobs")
+        # Google Jobs REMOVED. JobSpy's Google backend has returned exactly 0
+        # jobs on every run for months (upstream issue #302, open since 2025),
+        # while costing 10 requests plus 10x3s of sleeping per run. Measured in
+        # production: "[JobSpy] 0 jobs from Google Jobs", every time. Keeping a
+        # source that has never once produced a result is not resilience, it is
+        # a tax on every run. Re-add if upstream ever fixes it.
         print(f"  [JobSpy] {len(results)} jobs total")
         return results
     except Exception as e:
@@ -2473,7 +2494,7 @@ def scrape_all() -> list[dict]:
     print("Scraping all sources...")
     all_jobs: list[dict] = []
 
-    for scraper in [
+    scrapers_in_order = [
         scrape_jobspy,             # LinkedIn + Indeed
         scrape_arbeitnow,          # Free JSON API — English jobs, Germany-focused
         scrape_remotive,           # Free JSON API — remote jobs worldwide
@@ -2500,7 +2521,17 @@ def scrape_all() -> list[dict]:
         scrape_company_pages,      # Generic German company pages (restored, noisy but attempted)
         scrape_brave_search,       # Brave web search API
         scrape_web_search,         # DuckDuckGo web search
-    ]:
+    ]
+
+    # Start the deliberately-slow, self-throttling sources first so their wait
+    # overlaps the sequential ATS scraping instead of adding to it.
+    background = []
+    for scraper in scrapers_in_order:
+        if scraper.__name__ in _BACKGROUND_SCRAPERS:
+            background.append(_start_scraper(scraper))
+            print(f"  [{scraper.__name__}] started in background")
+
+    for scraper in [s for s in scrapers_in_order if s.__name__ not in _BACKGROUND_SCRAPERS]:
         t0 = time.time()
         jobs, timed_out = _run_scraper_guarded(scraper)
         if timed_out:
@@ -2509,7 +2540,19 @@ def scrape_all() -> list[dict]:
         all_jobs.extend(jobs)
         SCRAPER_TIMINGS[scraper.__name__] = round(time.time() - t0, 1)
 
-    # A source that blew its timeout may have finished while the others ran.
+    # Collect the background sources. They have had the whole sequential scrape
+    # to run in, so most of the time they are already finished.
+    for name, box, t in background:
+        t0 = time.time()
+        t.join(BACKGROUND_JOIN_SECONDS)
+        SCRAPER_TIMINGS[name] = round(time.time() - t0, 1)
+        if t.is_alive():
+            print(f"  [{name}] still running after the grace period — skipped this run")
+        else:
+            print(f"  [{name}] collected {len(box['jobs'])} jobs from background")
+            all_jobs.extend(box["jobs"])
+
+    # A non-background source that blew its timeout may also have finished.
     all_jobs.extend(_recover_late_scrapers())
 
     # Deduplicate by job id

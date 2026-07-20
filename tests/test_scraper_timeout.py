@@ -101,3 +101,42 @@ class TestLateRecovery:
         scrapers._run_scraper_guarded(lambda: (time.sleep(2), [{"id": "x"}])[1])
         scrapers._recover_late_scrapers(grace_seconds=3)
         assert scrapers._PENDING_SCRAPERS == []
+
+
+class TestBackgroundScrapers:
+    """LinkedIn/Indeed and the web search self-throttle and cannot be made
+    faster. Measured on Fargate they were 600s+ and 428s of a 27-minute
+    scrape, for ~5% of the jobs. Running them alongside the ATS scraping that
+    has to happen anyway removes that wait without losing anything."""
+
+    def test_slow_sources_are_marked_background(self):
+        assert "scrape_jobspy" in scrapers._BACKGROUND_SCRAPERS
+        assert "scrape_web_search" in scrapers._BACKGROUND_SCRAPERS
+
+    def test_started_scraper_runs_concurrently(self):
+        import time as _t
+
+        def slow():
+            _t.sleep(1.5)
+            return [{"id": "bg"}]
+
+        started = _t.time()
+        name, box, thread = scrapers._start_scraper(slow)
+        # Control returns immediately; the work happens on the thread
+        assert _t.time() - started < 0.5
+        thread.join(5)
+        assert box["jobs"] == [{"id": "bg"}]
+
+    def test_background_failure_does_not_propagate(self):
+        name, box, thread = scrapers._start_scraper(
+            lambda: (_ for _ in ()).throw(RuntimeError("linkedin blocked")))
+        thread.join(5)
+        assert box["jobs"] == []
+
+    def test_google_jobs_loop_is_gone(self):
+        """It returned 0 jobs on every run for months while costing 10
+        requests and 30s of sleeping."""
+        import inspect
+        src = inspect.getsource(scrapers.scrape_jobspy)
+        assert "google_search_term" not in src
+        assert 'site_name=["google"]' not in src
