@@ -139,3 +139,76 @@ class TestMainUsesStorage:
         history = main._load_run_history()
         assert len(history) == 1
         assert history[0]["platform"] in ("local", "github-actions", "aws-lambda")
+
+
+# ── Run claims (mutual exclusion) ─────────────────────────────────────────────
+# EventBridge has no equivalent of the GitHub Actions concurrency group, so two
+# overlapping runs would each see the same jobs as unseen and both send a
+# digest. The same guard covers a future check-and-exit consumer, where the
+# tick that finds a finished batch may take minutes to email and the next tick
+# must not reprocess it.
+
+class _CondFakeS3(_FakeS3):
+    """Adds S3 conditional-write semantics: If-None-Match:* fails if present."""
+
+    def put_object(self, Bucket, Key, Body, **kw):
+        if kw.get("IfNoneMatch") == "*" and Key in self.objects:
+            raise Exception("PreconditionFailed: At least one of the "
+                            "pre-conditions you specified did not hold (412)")
+        self.objects[Key] = Body
+
+    def delete_object(self, Bucket, Key):
+        self.objects.pop(Key, None)
+
+
+@pytest.fixture
+def s3_cond(monkeypatch):
+    fake = _CondFakeS3()
+    monkeypatch.setattr(storage, "BUCKET", "test-bucket")
+    monkeypatch.setattr(storage, "PREFIX", "state")
+    monkeypatch.setattr(storage, "_s3", lambda: fake)
+    return fake
+
+
+class TestRunClaims:
+    def test_first_caller_wins_second_is_refused(self, s3_cond):
+        assert storage.claim("run-full") is True
+        assert storage.claim("run-full") is False
+
+    def test_release_lets_the_next_run_start(self, s3_cond):
+        assert storage.claim("run-full") is True
+        storage.release("run-full")
+        assert storage.claim("run-full") is True
+
+    def test_abandoned_claim_is_taken_over_after_ttl(self, s3_cond, monkeypatch):
+        assert storage.claim("run-full", ttl_seconds=60) is True
+        # Simulate the holder having crashed two hours ago
+        later = storage._now_epoch() + 7200
+        monkeypatch.setattr(storage, "_now_epoch", lambda: later)
+        assert storage.claim("run-full", ttl_seconds=60) is True, \
+            "a crashed run must not wedge the pipeline forever"
+
+    def test_unparseable_claim_is_treated_as_abandoned(self, s3_cond):
+        s3_cond.objects["state/run-full.claim"] = b"not json"
+        assert storage.claim("run-full") is True
+
+    def test_unrelated_s3_error_does_not_block_the_run(self, monkeypatch):
+        """A network blip must not look like 'someone else is running'."""
+        class _Broken(_CondFakeS3):
+            def put_object(self, *a, **kw):
+                raise Exception("ConnectionError: transient")
+
+        fake = _Broken()
+        monkeypatch.setattr(storage, "BUCKET", "test-bucket")
+        monkeypatch.setattr(storage, "_s3", lambda: fake)
+        assert storage.claim("run-full") is True
+
+    def test_claim_key_is_namespaced_per_stage(self, s3_cond):
+        storage.claim("run-full")
+        storage.claim("run-consumer")
+        assert "state/run-full.claim" in s3_cond.objects
+        assert "state/run-consumer.claim" in s3_cond.objects
+
+    def test_local_mode_claims_do_not_crash(self, local):
+        assert storage.claim("run-full") is True
+        storage.release("run-full")

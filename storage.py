@@ -13,6 +13,7 @@ untouched while the migration is in progress.
 boto3 is imported lazily so nothing outside AWS needs it installed.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -86,6 +87,92 @@ def append_line(name: str, line: str) -> None:
     if existing and not existing.endswith("\n"):
         existing += "\n"
     write_text(name, existing + line + "\n")
+
+
+# ── Run claims (mutual exclusion) ────────────────────────────────────────────
+# GitHub Actions prevented overlapping runs with a `concurrency` group after a
+# real collision. EventBridge has no equivalent, so the guard has to live in
+# the pipeline: two tasks that start together would both see the same jobs as
+# unseen (seen_jobs is only written at the END of a run) and both send a
+# digest.
+#
+# The same primitive covers the check-and-exit consumer stage if the pipeline
+# is later split: the tick that finds a finished batch may take minutes to
+# score and email, and the next tick must not pick up the same batch and
+# double-send.
+#
+# S3 conditional writes (If-None-Match: *) make the claim atomic: exactly one
+# concurrent caller can create the object, everyone else gets 412.
+
+_CLAIM_TTL_SECONDS = 90 * 60   # a crashed run must not lock the pipeline forever
+
+
+def _now_epoch() -> float:
+    import time
+    return time.time()
+
+
+def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
+    """
+    Try to acquire the named claim. True = this process owns it and may
+    proceed; False = someone else holds it and this process should exit.
+
+    A claim older than ttl_seconds is treated as abandoned (the holder crashed)
+    and taken over, so a failed run cannot wedge the pipeline permanently.
+    """
+    key = f"{name}.claim"
+    payload = json.dumps({"claimed_at": _now_epoch(), "ttl": ttl_seconds})
+
+    if not using_s3():
+        # Local runs are single-process; keep the same interface without
+        # pretending a file gives real mutual exclusion.
+        p = Path(key)
+        if p.exists():
+            try:
+                held = json.loads(p.read_text(encoding="utf-8"))
+                if _now_epoch() - float(held.get("claimed_at", 0)) < ttl_seconds:
+                    return False
+            except Exception:
+                pass
+        p.write_text(payload, encoding="utf-8")
+        return True
+
+    try:
+        _s3().put_object(Bucket=BUCKET, Key=_key(key),
+                         Body=payload.encode("utf-8"), IfNoneMatch="*")
+        return True
+    except Exception as e:
+        if "PreconditionFailed" not in str(e) and "412" not in str(e):
+            # Not a lost race — don't let an unrelated S3 error silently
+            # block the run.
+            print(f"  [Claim] could not evaluate {name}: {e}")
+            return True
+        held_raw = read_text(key)
+        try:
+            held = json.loads(held_raw or "{}")
+            age = _now_epoch() - float(held.get("claimed_at", 0))
+        except Exception:
+            age = ttl_seconds + 1        # unparseable claim = abandoned
+        if age < ttl_seconds:
+            print(f"  [Claim] {name} held by another run ({int(age)}s ago) — exiting")
+            return False
+        print(f"  [Claim] taking over abandoned {name} claim ({int(age)}s old)")
+        write_text(key, payload)
+        return True
+
+
+def release(name: str) -> None:
+    """Drop a claim so the next scheduled run can start immediately."""
+    key = f"{name}.claim"
+    try:
+        if not using_s3():
+            p = Path(key)
+            if p.exists():
+                p.unlink()
+            return
+        _s3().delete_object(Bucket=BUCKET, Key=_key(key))
+    except Exception as e:
+        print(f"  [Claim] could not release {name}: {e}")
 
 
 def exists(name: str) -> bool:

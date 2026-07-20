@@ -23,6 +23,19 @@ def _run(mode: str = "full", dry_run: bool = False) -> dict:
     # failure with context, rather than killing the Lambda during init where
     # the traceback is far less legible.
     import main
+    import storage
+
+    # Mutual exclusion: EventBridge has no equivalent of the GitHub Actions
+    # concurrency group, and two overlapping runs would each see the same jobs
+    # as unseen (seen_jobs is written only at the end) and both send a digest.
+    # Skipping is a success, not a failure — the run that holds the claim is
+    # doing the work.
+    claim_name = f"run-{mode}"
+    if not dry_run and not storage.claim(claim_name):
+        result = {"status": "skipped", "mode": mode,
+                  "reason": "another run holds the claim"}
+        print(json.dumps({"jobhunter_run": result}))
+        return result
 
     started = time.time()
     try:
@@ -33,6 +46,11 @@ def _run(mode: str = "full", dry_run: bool = False) -> dict:
         status, error = ("ok" if not e.code else "error"), (None if not e.code else str(e.code))
     except Exception as e:
         status, error = "error", f"{type(e).__name__}: {e}"
+    finally:
+        # Always release, including on failure: a crashed run must not lock the
+        # pipeline until the TTL expires.
+        if not dry_run:
+            storage.release(claim_name)
 
     result = {
         "status": status,
