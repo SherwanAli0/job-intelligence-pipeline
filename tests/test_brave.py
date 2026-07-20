@@ -152,17 +152,27 @@ class TestQuotaHandling:
 
 
 class TestQueryBudget:
-    def test_per_run_budget_is_capped(self):
-        assert len(scrapers._brave_query_slice()) == scrapers._BRAVE_MAX_QUERIES
+    def test_cap_is_respected_when_set(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "_BRAVE_MAX_QUERIES", 10)
+        assert len(scrapers._brave_query_slice()) == 10
 
-    def test_budget_keeps_monthly_usage_inside_the_included_credit(self):
-        # Plan: $5.00/1,000 requests with $5 included monthly = ~1,000 requests.
-        # 2 scheduled runs/day over ~31 days must stay well inside that, with
-        # room left for manual runs and local testing.
-        monthly = scrapers._BRAVE_MAX_QUERIES * 2 * 31
-        assert monthly < 1000, f"{monthly} requests/month would exhaust the $5 credit"
+    def test_default_runs_every_query_for_maximum_coverage(self):
+        # Deliberate: coverage beats cost here. A missed posting cannot be
+        # recovered; the overage is a few euros a month.
+        assert scrapers._BRAVE_MAX_QUERIES == 0, "0 means no cap"
+        assert scrapers._brave_query_slice() == list(scrapers._WEB_QUERIES)
+
+    def test_monthly_cost_of_the_default_is_what_we_think_it_is(self):
+        # Guards against the query list growing without anyone noticing the
+        # bill move. $5.00/1,000 requests, $5 of credit included monthly.
+        monthly_requests = len(scrapers._brave_query_slice()) * 2 * 31
+        usage_usd = monthly_requests / 1000 * 5.00
+        payable = max(0.0, usage_usd - 5.00)
+        assert monthly_requests < 2500, "query list grew: re-check the spend limit"
+        assert payable < 8.00, f"would cost ${payable:.2f}/month after credit"
 
     def test_slice_rotates_so_every_query_is_used_over_time(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "_BRAVE_MAX_QUERIES", 10)
         seen = set()
         import datetime as _dt
 

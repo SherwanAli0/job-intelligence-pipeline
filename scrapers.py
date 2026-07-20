@@ -834,15 +834,21 @@ def scrape_successfactors() -> list[dict]:
 
 # Per-run Brave query budget.
 #
-# The plan bills $5.00 per 1,000 requests and includes $5 of credit each month,
-# so the effective free allowance is 1,000 requests/month. At the previous 29
-# queries x 2 scheduled runs/day (58/day) that credit is gone in ~17 days,
-# which is exactly what happened: the source reported 0 jobs with HTTP 402 for
-# the rest of the month.
+# DELIBERATE CHOICE: run the full query list. Coverage is worth more than the
+# money here — a missed posting cannot be recovered later, whereas the cost is
+# a few euros a month.
 #
-# 10 queries x ~62 runs/month = ~620, leaving ~380 requests of headroom for
-# manual runs, CI re-runs and local testing.
-_BRAVE_MAX_QUERIES = 10
+# Cost model: the plan bills $5.00 per 1,000 requests and includes $5 of credit
+# monthly (~1,000 requests free). All 29 queries x 2 scheduled runs/day is
+# ~1,800 requests/month, about $9 of usage, so roughly $4/month after the
+# credit. The Brave dashboard's monthly spend override MUST be raised above $0
+# or the account returns HTTP 402 once the credit is spent and the source dies
+# silently for the rest of the month — which is exactly what happened.
+#
+# Lower this (or set BRAVE_MAX_QUERIES) to trade coverage for cost; the slice
+# rotates, so a smaller budget still reaches every query over several days.
+# 0 (the default) means no cap: run every query.
+_BRAVE_MAX_QUERIES = int(os.environ.get("BRAVE_MAX_QUERIES", "0") or 0)
 
 
 def _brave_query_slice() -> list[str]:
@@ -851,11 +857,12 @@ def _brave_query_slice() -> list[str]:
     Rotates by day-of-year, which is stable within a run and across the two
     daily runs, so both of a day's runs search the same themes."""
     from datetime import date
-    if len(_WEB_QUERIES) <= _BRAVE_MAX_QUERIES:
+    cap = _BRAVE_MAX_QUERIES or len(_WEB_QUERIES)
+    if len(_WEB_QUERIES) <= cap:
         return list(_WEB_QUERIES)
-    start = (date.today().timetuple().tm_yday * _BRAVE_MAX_QUERIES) % len(_WEB_QUERIES)
+    start = (date.today().timetuple().tm_yday * cap) % len(_WEB_QUERIES)
     doubled = list(_WEB_QUERIES) + list(_WEB_QUERIES)
-    return doubled[start:start + _BRAVE_MAX_QUERIES]
+    return doubled[start:start + cap]
 
 
 def scrape_brave_search() -> list[dict]:
