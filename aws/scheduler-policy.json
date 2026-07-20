@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunOnlyTheJobHunterTask",
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:eu-central-1:278371786270:task-definition/job-hunter:*",
+      "Condition": {"ArnEquals": {"ecs:cluster": "arn:aws:ecs:eu-central-1:278371786270:cluster/job-hunter"}}
+    },
+    {
+      "Sid": "PassOnlyTheseTwoRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::278371786270:role/jobHunterTaskRole",
+        "arn:aws:iam::278371786270:role/jobHunterExecutionRole"
+      ]
+    }
+  ]
+}

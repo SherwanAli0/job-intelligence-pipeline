@@ -1,0 +1,17 @@
+{
+  "Arn": "arn:aws:ecs:eu-central-1:278371786270:cluster/job-hunter",
+  "RoleArn": "arn:aws:iam::278371786270:role/jobHunterSchedulerRole",
+  "EcsParameters": {
+    "TaskDefinitionArn": "arn:aws:ecs:eu-central-1:278371786270:task-definition/job-hunter",
+    "LaunchType": "FARGATE",
+    "TaskCount": 1,
+    "NetworkConfiguration": {
+      "awsvpcConfiguration": {
+        "Subnets": ["subnet-0d16bf613dcad401f", "subnet-07ddd1e4c738c3e64"],
+        "SecurityGroups": ["sg-03fa4900281aa7b73"],
+        "AssignPublicIp": "ENABLED"
+      }
+    }
+  },
+  "RetryPolicy": {"MaximumRetryAttempts": 1, "MaximumEventAgeInSeconds": 3600}
+}

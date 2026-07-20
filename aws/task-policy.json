@@ -1,0 +1,62 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StateBucketObjectsOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::job-hunter-state-278371786270/*"
+    },
+    {
+      "Sid": "ListOwnBucketOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::job-hunter-state-278371786270"
+    },
+    {
+      "Sid": "ReadOwnParametersOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": [
+        "arn:aws:ssm:eu-central-1:278371786270:parameter/job-hunter",
+        "arn:aws:ssm:eu-central-1:278371786270:parameter/job-hunter/*"
+      ]
+    },
+    {
+      "Sid": "DecryptThoseParameters",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ssm.eu-central-1.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "PublishCostMetric",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricData"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": "JobHunter"
+        }
+      }
+    }
+  ]
+}

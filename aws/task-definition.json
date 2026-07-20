@@ -1,0 +1,32 @@
+{
+  "family": "job-hunter",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::278371786270:role/jobHunterExecutionRole",
+  "taskRoleArn": "arn:aws:iam::278371786270:role/jobHunterTaskRole",
+  "runtimePlatform": {"cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX"},
+  "containerDefinitions": [
+    {
+      "name": "job-hunter",
+      "image": "278371786270.dkr.ecr.eu-central-1.amazonaws.com/job-hunter:latest",
+      "essential": true,
+      "entryPoint": ["python"],
+      "command": ["handler.py"],
+      "environment": [
+        {"name": "JOBHUNTER_S3_BUCKET", "value": "job-hunter-state-278371786270"},
+        {"name": "JOBHUNTER_SSM_PREFIX", "value": "/job-hunter"},
+        {"name": "PYTHONUNBUFFERED", "value": "1"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/job-hunter",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "run"
+        }
+      }
+    }
+  ]
+}
