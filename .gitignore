@@ -6,3 +6,7 @@ __pycache__/
 personal/
 answers.json
 applied_jobs.json
+
+# transient task ids from manual runs
+aws/.*-run
+aws/.*-task
