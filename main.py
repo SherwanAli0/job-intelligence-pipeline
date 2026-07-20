@@ -599,8 +599,23 @@ def _load_run_history() -> list[dict]:
     return out[-_HISTORY_WINDOW:]
 
 
+def _detect_platform() -> str:
+    """Which compute platform produced this run. Both runtimes set these vars
+    themselves, so no configuration is needed. Recorded in run_stats.jsonl so
+    per-source counts can be compared across a platform migration — some
+    sources (notably LinkedIn/Indeed via JobSpy) rate-limit datacenter IP
+    ranges differently, and a degraded source looks identical to a quiet day
+    unless you can group runs by where they ran."""
+    if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return "aws-lambda"
+    if os.environ.get("GITHUB_ACTIONS"):
+        return "github-actions"
+    return "local"
+
+
 def _record_run_stats(stats: dict) -> None:
     try:
+        stats.setdefault("platform", _detect_platform())
         with STATS_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(stats, ensure_ascii=False) + "\n")
     except Exception as e:
