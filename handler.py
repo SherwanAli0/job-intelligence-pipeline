@@ -81,5 +81,12 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
-    outcome = _run(dry_run="--dry-run" in sys.argv)
+    # DRY_RUN must be honoured here too, not only in lambda_handler. On Fargate
+    # the container is started as `python handler.py`, so an earlier version
+    # that only inspected sys.argv silently ignored a DRY_RUN=1 container
+    # override and performed a REAL run: it emailed a digest and wrote state
+    # while the operator believed nothing would be sent. A dry-run switch that
+    # quietly does not apply is worse than having none.
+    _dry = "--dry-run" in sys.argv or bool(os.environ.get("DRY_RUN"))
+    outcome = _run(dry_run=_dry)
     sys.exit(0 if outcome["status"] == "ok" else 1)
