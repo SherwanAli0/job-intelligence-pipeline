@@ -44,6 +44,38 @@ SCRAPE_WORKERS = max(1, int(os.environ.get("JOBHUNTER_SCRAPE_WORKERS", "6")))
 # Per-scraper wall time from the last scrape_all(), for the run-stats record.
 SCRAPER_TIMINGS: dict[str, float] = {}
 
+# ── Per-scraper timeout ──────────────────────────────────────────────────────
+# Observed live: after several full scrapes in one evening, LinkedIn/Indeed
+# began rate-limiting and JobSpy retried silently forever. Both a local run and
+# a Fargate task sat at the same line for over 20 minutes with no output and no
+# error. Without a timeout, one throttled source stalls the whole run — on
+# Fargate that means paying for a container that will never deliver a digest.
+#
+# The scraper runs on a daemon thread we can abandon: Python cannot kill a
+# thread, but a daemon does not block process exit, and the run continues with
+# every other source. Losing one source's jobs beats losing the entire digest.
+SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("JOBHUNTER_SCRAPER_TIMEOUT", "600"))
+
+
+def _run_scraper_guarded(scraper) -> tuple[list, bool]:
+    """Run one scraper with a wall-clock limit. Returns (jobs, timed_out)."""
+    import threading
+
+    box: dict = {"jobs": []}
+
+    def _target():
+        try:
+            box["jobs"] = scraper() or []
+        except Exception:
+            traceback.print_exc()
+
+    t = threading.Thread(target=_target, daemon=True, name=scraper.__name__)
+    t.start()
+    t.join(SCRAPER_TIMEOUT_SECONDS)
+    if t.is_alive():
+        return [], True          # abandoned; the daemon dies with the process
+    return box["jobs"], False
+
 
 def _parallel_collect(items: list, fetch_one, label: str = "") -> list[dict]:
     """
@@ -2440,13 +2472,12 @@ def scrape_all() -> list[dict]:
         scrape_web_search,         # DuckDuckGo web search
     ]:
         t0 = time.time()
-        try:
-            jobs = scraper()
-            all_jobs.extend(jobs)
-        except Exception:
-            traceback.print_exc()
-        finally:
-            SCRAPER_TIMINGS[scraper.__name__] = round(time.time() - t0, 1)
+        jobs, timed_out = _run_scraper_guarded(scraper)
+        if timed_out:
+            print(f"  [{scraper.__name__}] TIMED OUT after {SCRAPER_TIMEOUT_SECONDS}s "
+                  f"— abandoned, continuing with the other sources")
+        all_jobs.extend(jobs)
+        SCRAPER_TIMINGS[scraper.__name__] = round(time.time() - t0, 1)
 
     # Deduplicate by job id
     seen_ids: set[str] = set()
