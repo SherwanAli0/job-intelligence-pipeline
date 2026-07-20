@@ -1,0 +1,17 @@
+# Keep the image small and free of anything private or irrelevant.
+.git/
+.github/
+__pycache__/
+**/__pycache__/
+*.pyc
+tests/
+cv/
+personal/          # personal fact sheet — comes from SSM at runtime instead
+answers.json       # state lives in S3
+applied_jobs.json
+seen_jobs.json     # 1.3 MB of state that would otherwise bloat every image
+run_stats.jsonl
+README.md
+*.md
+.venv/
+venv/
