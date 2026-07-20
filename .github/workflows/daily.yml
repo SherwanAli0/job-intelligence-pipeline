@@ -1,3 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  ROLLBACK ONLY — the pipeline now runs on AWS ECS Fargate.
+#
+#  Migrated 2026-07-20 after source parity was verified: 8,948 postings from
+#  Fargate against a 8,901 GitHub baseline, no source regressed.
+#  Live schedule: EventBridge `job-hunter-morning` / `-afternoon`,
+#  07:00 and 15:00 Europe/Berlin (this cron was UTC-only and DST-naive).
+#
+#  This workflow is DISABLED, not deleted. To roll back:
+#    gh workflow enable "Daily Job Hunt"
+#    aws scheduler update-schedule --name job-hunter-morning   ... --state DISABLED
+#    aws scheduler update-schedule --name job-hunter-afternoon ... --state DISABLED
+#
+#  NOTE: state diverged at migration. This workflow reads seen_jobs.json from
+#  the repo; AWS reads s3://job-hunter-state-278371786270/state/. After a
+#  rollback the first run may re-send jobs AWS has already shown you.
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Daily Job Hunt
 
 on:
