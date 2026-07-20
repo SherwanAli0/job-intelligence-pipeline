@@ -782,7 +782,23 @@ def scrape_successfactors() -> list[dict]:
 # ── 10. Brave Search API (official, reliable web search) ─────────────────────
 
 def scrape_brave_search() -> list[dict]:
-    """Brave Search API — official, reliable alternative to DuckDuckGo."""
+    """
+    Brave Search API — official web search over company career pages.
+
+    This scraper reports WHY it returned nothing. The previous version read
+    `data["web"]["results"]` without ever checking the HTTP status, so a 401
+    (revoked key), a 429 (rate limit) and a quota-exhausted response all
+    decoded as valid JSON with no "web" key and printed a cheerful
+    "[Brave] 0 jobs" — indistinguishable from a genuinely empty search. It
+    silently returned 0 for two days before anyone noticed.
+
+    Three distinct causes are now separated in the output:
+      1. HTTP/auth/quota failure  -> status code + Brave's error message
+      2. API returned results but our own filters removed them all
+         (_SKIP_DOMAINS deliberately excludes the big job boards, so a shift
+         in Brave's ranking toward LinkedIn et al. looks like "no results")
+      3. The search genuinely found nothing
+    """
     api_key = os.environ.get("BRAVE_API_KEY")
     if not api_key:
         print("  [Brave] BRAVE_API_KEY not set, skipping.")
@@ -790,32 +806,74 @@ def scrape_brave_search() -> list[dict]:
 
     results = []
     seen_urls: set[str] = set()
+    # Filter funnel — distinguishes "API gave us nothing" from "we dropped it all"
+    raw_hits = queries_ok = 0
+    drop_domain = drop_keyword = drop_dupe = 0
+    http_errors: dict[int, int] = {}
+    quota_note = ""
 
-    for query in _WEB_QUERIES:
+    for qi, query in enumerate(_WEB_QUERIES):
+        r = None
         try:
-            r = requests.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                headers={
-                    "Accept": "application/json",
-                    "Accept-Encoding": "gzip",
-                    "X-Subscription-Token": api_key,
-                },
-                params={
-                    "q": query,
-                    "count": 20,
-                    "country": "de",
-                    "search_lang": "en",
-                    "freshness": "pw",  # past week
-                },
-                timeout=15,
-            )
+            # Free tier allows 1 query/second; retry a throttled query twice
+            # with backoff before giving up on it.
+            for attempt in (1, 2, 3):
+                r = requests.get(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    headers={
+                        "Accept": "application/json",
+                        "Accept-Encoding": "gzip",
+                        "X-Subscription-Token": api_key,
+                    },
+                    params={
+                        "q": query,
+                        "count": 20,
+                        "country": "de",
+                        "search_lang": "en",
+                        "freshness": "pw",  # past week
+                    },
+                    timeout=15,
+                )
+                if r.status_code == 429 and attempt < 3:
+                    time.sleep(2 * attempt)
+                    continue
+                break
+
+            # Record remaining quota once — this is what makes a future
+            # quota exhaustion diagnosable from the log alone.
+            if qi == 0:
+                remaining = (r.headers.get("X-RateLimit-Remaining")
+                             or r.headers.get("x-ratelimit-remaining"))
+                if remaining:
+                    quota_note = f" | quota remaining: {remaining}"
+
+            # Auth/quota failures affect every query, so fail fast instead of
+            # making 28 more doomed calls.
+            if r.status_code in (401, 403):
+                detail = (r.text or "")[:160].replace("\n", " ")
+                print(f"  [Brave] AUTH FAILED (HTTP {r.status_code}) — key rejected. "
+                      f"Regenerate BRAVE_API_KEY at api-dashboard.search.brave.com "
+                      f"and update the repo secret. Detail: {detail}")
+                return []
+            if r.status_code != 200:
+                http_errors[r.status_code] = http_errors.get(r.status_code, 0) + 1
+                time.sleep(1.1)
+                continue
+
             data = r.json()
-            for item in data.get("web", {}).get("results", []):
+            web_results = data.get("web", {}).get("results", []) or []
+            raw_hits += len(web_results)
+            queries_ok += 1
+
+            for item in web_results:
                 url = item.get("url", "")
                 title = item.get("title", "")
                 snippet = item.get("description", "")
 
-                if not url or not title or url in seen_urls:
+                if not url or not title:
+                    continue
+                if url in seen_urls:
+                    drop_dupe += 1
                     continue
 
                 try:
@@ -823,6 +881,7 @@ def scrape_brave_search() -> list[dict]:
                 except IndexError:
                     continue
                 if any(skip in domain for skip in _SKIP_DOMAINS):
+                    drop_domain += 1
                     continue
 
                 title_lower = title.lower()
@@ -832,6 +891,7 @@ def scrape_brave_search() -> list[dict]:
                     "data", "machine", "analyst", "engineer", "scientist",
                     "werkstudent", "praktikum", "internship",
                 )):
+                    drop_keyword += 1
                     continue
 
                 seen_urls.add(url)
@@ -854,12 +914,25 @@ def scrape_brave_search() -> list[dict]:
                     source="BraveSearch",
                     description=description,
                 ))
-            time.sleep(1)
+            time.sleep(1.1)
         except Exception as e:
             print(f"  [Brave] query failed: {e}")
+            time.sleep(1.1)
             continue
 
-    print(f"  [Brave] {len(results)} jobs")
+    print(f"  [Brave] {len(results)} jobs "
+          f"({queries_ok}/{len(_WEB_QUERIES)} queries ok, {raw_hits} raw hits{quota_note})")
+    if http_errors:
+        detail = ", ".join(f"HTTP {code} x{n}" for code, n in sorted(http_errors.items()))
+        print(f"  [Brave] request failures: {detail}"
+              + (" — 429 means the rate limit was hit" if 429 in http_errors else ""))
+    if raw_hits and not results:
+        print(f"  [Brave] all {raw_hits} results were filtered out "
+              f"(job-board domain: {drop_domain}, no job keyword: {drop_keyword}, "
+              f"duplicate: {drop_dupe}) — the API is healthy, our filters removed everything")
+    elif queries_ok and not raw_hits:
+        print("  [Brave] API healthy but returned no web results at all "
+              "(freshness=past week may be too narrow)")
     return results
 
 
