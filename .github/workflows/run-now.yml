@@ -1,0 +1,83 @@
+name: Run job hunt now
+
+# Trigger a hunt on demand, from a browser button — no laptop, no AWS console,
+# no CLI. GitHub → Actions → "Run job hunt now" → Run workflow.
+#
+# It starts the same ECS Fargate task the schedule uses, so it runs on the same
+# image with the same secrets and the same state. The task keeps running in AWS
+# even if you close the tab.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (scrape and score, but do NOT email or write state)"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never start a second hunt while one is running: two concurrent runs would
+# both see the same jobs as unseen and both send a digest.
+concurrency:
+  group: job-hunter-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assume the deploy role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::278371786270:role/job-hunter-deploy
+          aws-region: eu-central-1
+
+      - name: Start the Fargate task
+        id: start
+        run: |
+          OVERRIDES='{}'
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            OVERRIDES='{"containerOverrides":[{"name":"job-hunter","environment":[{"name":"DRY_RUN","value":"1"}]}]}'
+          fi
+
+          TASK=$(aws ecs run-task \
+            --cluster job-hunter \
+            --task-definition job-hunter \
+            --launch-type FARGATE \
+            --network-configuration 'awsvpcConfiguration={subnets=["subnet-0d16bf613dcad401f","subnet-07ddd1e4c738c3e64"],securityGroups=["sg-03fa4900281aa7b73"],assignPublicIp=ENABLED}' \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+
+          ID="${TASK##*/}"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Hunt started"
+            echo ""
+            echo "Task: \`$ID\`"
+            echo "Mode: ${{ inputs.dry_run == true && 'DRY RUN (no email)' || 'full run (digest will be emailed)' }}"
+            echo ""
+            echo "Takes roughly 15-45 minutes depending on the Claude batch queue."
+            echo "It runs in AWS — closing this page does not stop it."
+            echo ""
+            echo "[CloudWatch logs](https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#logsV2:log-groups/log-group/\$252Fecs\$252Fjob-hunter/log-events/run\$252Fjob-hunter\$252F$ID)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for it to finish and report
+        run: |
+          # The waiter gives up after ~10 minutes, so poll instead: a hunt
+          # regularly takes longer than that.
+          ID="${{ steps.start.outputs.id }}"
+          for i in $(seq 1 60); do
+            ST=$(aws ecs describe-tasks --cluster job-hunter --tasks "$ID" \
+                   --query 'tasks[0].lastStatus' --output text 2>/dev/null || echo UNKNOWN)
+            [ "$ST" = "STOPPED" ] && break
+            sleep 60
+          done
+          EXIT=$(aws ecs describe-tasks --cluster job-hunter --tasks "$ID" \
+                   --query 'tasks[0].containers[0].exitCode' --output text)
+          echo "Task finished with exit code: $EXIT"
+          echo "Exit code: \`$EXIT\`" >> "$GITHUB_STEP_SUMMARY"
+          [ "$EXIT" = "0" ]

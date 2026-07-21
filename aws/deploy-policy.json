@@ -34,6 +34,18 @@
         "arn:aws:iam::278371786270:role/jobHunterTaskRole",
         "arn:aws:iam::278371786270:role/jobHunterExecutionRole"
       ]
+    },
+    {
+      "Sid": "RunTheJobHunterTaskOnDemand",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RunTask",
+        "ecs:DescribeTasks"
+      ],
+      "Resource": [
+        "arn:aws:ecs:eu-central-1:278371786270:task-definition/job-hunter:*",
+        "arn:aws:ecs:eu-central-1:278371786270:task/job-hunter/*"
+      ]
     }
   ]
 }

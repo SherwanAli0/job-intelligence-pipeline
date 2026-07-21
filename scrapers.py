@@ -295,7 +295,19 @@ def scrape_jobspy() -> list[dict]:
                     site_name=["linkedin", "indeed"],
                     search_term=query,
                     location=LOCATION,
-                    results_wanted=40,
+                    # 40 was chosen when JobSpy blocked the whole pipeline and
+                    # LinkedIn throttling risked the run. It now executes in
+                    # the background with late-result recovery, so a slower
+                    # JobSpy no longer delays the digest — and 40 was the
+                    # binding constraint on coverage: a search matching 800
+                    # postings returned the first 40 and hid the rest.
+                    #
+                    # Deliberately the ONLY coverage variable changed in this
+                    # step. The query rotation (half the list per run) and
+                    # hours_old stay as they are so the next run's job count
+                    # can be attributed to this change alone. LinkedIn throttles
+                    # by IP, so more requests could plausibly return LESS.
+                    results_wanted=100,
                     hours_old=72,
                     country_indeed="Germany",
                     # WITHOUT this, LinkedIn rows carry only a short snippet —
