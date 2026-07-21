@@ -911,58 +911,44 @@ def _diversify(good: list[dict], cap: int) -> list[dict]:
     return picked[:cap]
 
 
-def main(dry_run: bool = False) -> None:
-    print("=" * 60)
-    print("  Daily Job Hunter — starting run" + ("  [DRY RUN]" if dry_run else ""))
-    print("=" * 60)
+# -- Pipeline stages as graph nodes -------------------------------------------
+# Each node takes the shared RunState and returns a partial update. They
+# delegate to the same functions the linear pipeline used, so scoring,
+# filtering and notification keep their existing test coverage; what changed is
+# that the stages and their dependencies are now declared rather than implied
+# by statement order (see graph.py).
 
-    # Phase timing. The compute decision turns on how the run splits between
-    # the long scrape and the comparatively short post-scoring work: the
-    # scrape needs an unbounded runtime (measured at 40 min, vs Lambda's
-    # 15-minute ceiling), while everything after batch retrieval is small
-    # enough to be a Lambda if we ever separate the stages. Recorded per run
-    # so that split is decided on data rather than estimates.
-    import time as _time
-    _phase_t0 = _time.time()
-    _phases: dict[str, float] = {}
 
-    def _phase(name: str) -> None:
-        nonlocal _phase_t0
-        now = _time.time()
-        _phases[name] = round(now - _phase_t0, 1)
-        _phase_t0 = now
-
+def node_scrape(state: dict) -> dict:
     seen = load_seen()
     print(f"Previously seen jobs: {len(seen)}")
 
-    # ── Scrape ────────────────────────────────────────────────────────────────
     all_jobs = scrape_all()
-    _phase("scrape")
 
-    # T1d: per-source counts + dead-source alarm (vs committed run history)
     from collections import Counter as _Counter
     src_counts = dict(_Counter(j.get("source", "?") for j in all_jobs))
-    run_history = _load_run_history()
-    health_warnings = _dead_source_warnings(run_history, src_counts)
+    health_warnings = _dead_source_warnings(_load_run_history(), src_counts)
     for w in health_warnings:
-        print(f"⚠️  {w}")
+        print(f"WARNING: {w}")
 
-    # ── Cross-source dedup (before unseen filtering so logs are intuitive) ────
     before = len(all_jobs)
     all_jobs = _dedup_cross_source(all_jobs)
     after = len(all_jobs)
     print(f"Cross-source dedup: merged {before} jobs, {after} after dedup")
 
-    new_jobs = [j for j in all_jobs if j["id"] not in seen]
-    n_new = len(new_jobs)  # captured before the filter chain reassigns
-    print(f"New (unseen) jobs: {n_new}")
+    return {"seen": seen, "all_jobs": all_jobs, "src_counts": src_counts,
+            "health_warnings": health_warnings, "scraped": before, "deduped": after}
 
-    # A2: accumulate which filter drops which track, printed as a matrix at the end.
+
+def node_filter(state: dict) -> dict:
+    seen, all_jobs = state["seen"], state["all_jobs"]
+    new_jobs = [j for j in all_jobs if j["id"] not in seen]
+    print(f"New (unseen) jobs: {len(new_jobs)}")
+
     from collections import Counter, defaultdict
     drop_by_filter_track: dict = defaultdict(Counter)
 
     def _apply_filter(jobs: list[dict], fn, label: str) -> list[dict]:
-        """Run fn over jobs; print kept/dropped counts + track-level drop tally."""
         kept, dropped = [], []
         for j in jobs:
             if fn(j):
@@ -979,85 +965,55 @@ def main(dry_run: bool = False) -> None:
         print(f"After {label}: {len(kept)}")
         return kept
 
-    # Germany on-site OR remote-that-includes-Germany only.
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
-    # Drop jobs that are clearly German-language with no English mention
     new_jobs = _apply_filter(new_jobs, _is_english_friendly, "English filter")
-    # HARD filter: experience requirement of 2 or more years
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
-    # Drop senior/lead roles
     new_jobs = _apply_filter(new_jobs, _not_fulltime_senior, "Senior-title filter")
-    # HARD filter: Master/MSc/PhD required (with softening + exclusion handling)
     new_jobs = _apply_filter(new_jobs, _no_masters_required, "MastersFilter")
 
-    # A2: which filter kills which track (diagnoses the DS/ML famine)
     if drop_by_filter_track:
-        print("\n── A2 per-track drop matrix (which filter kills which track) ──")
+        print("\n-- A2 per-track drop matrix (which filter kills which track) --")
         print(f"  {'filter':32s} {'AI':>4s} {'ML':>4s} {'DS':>4s} {'DA':>4s}")
         for label, c in drop_by_filter_track.items():
             print(f"  {label[:32]:32s} {c['AI']:4d} {c['ML']:4d} {c['DS']:4d} {c['DA']:4d}")
 
-    # C9: skill-demand radar over everything scraped this run
     _skill_radar(all_jobs)
 
     if not new_jobs:
-        print("Nothing new today. Exiting.")
-        # Refresh last-seen dates so active postings never age into pruning
-        from datetime import date as _date, datetime as _dt, timezone as _tz
-        _today = _date.today().isoformat()
-        seen.update({j["id"]: _today for j in all_jobs})
-        save_seen(seen)
-        if not dry_run:
-            _record_run_stats({
-                "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
-                "sources": src_counts, "scraped": before, "deduped": after,
-                "new": 0, "digest": 0, "near": 0, "email_ok": True,
-                "warnings": health_warnings,
-            })
-        sys.exit(0)
+        print("Nothing new today - skipping scoring and notification.")
 
-    _phase("filter")
+    return {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track}
 
-    # ── Score ─────────────────────────────────────────────────────────────────
-    scored = score_jobs(new_jobs)
-    _phase("score")
 
-    # B6: penalise + tag stale/zombie postings so fresh roles rank above them
+def node_score(state: dict) -> dict:
+    scored = score_jobs(state["new_jobs"])
+
     ghosts = _apply_ghost_penalty(scored)
     if ghosts:
-        print(f"\nB6 ghost-job penalty: flagged {ghosts} stale postings (>{_GHOST_AGE_DAYS}d, -{_GHOST_PENALTY})")
+        print(f"\nB6 ghost-job penalty: flagged {ghosts} stale postings "
+              f"(>{_GHOST_AGE_DAYS}d, -{_GHOST_PENALTY})")
 
-    # ── Disqualification histogram ───────────────────────────────────────────
-    # Helps tune filters over time — if "experience" dominates, the bar is too
-    # strict; if "german_required" is huge, search pool needs better targeting.
     from collections import Counter
-    dq_counts = Counter(
-        j.get("disqualified_category") or "(passed)"
-        for j in scored
-    )
-    print("\n── Pre-screen disqualification histogram ──")
+    dq_counts = Counter(j.get("disqualified_category") or "(passed)" for j in scored)
+    print("\n-- Pre-screen disqualification histogram --")
     for category, count in dq_counts.most_common():
-        bar = "█" * min(count, 40)
-        print(f"  {category:22s} {count:4d}  {bar}")
+        print(f"  {category:22s} {count:4d}  {'#' * min(count, 40)}")
 
-    # ── Single ranked list — sorted by score desc, capped at MAX_RESULTS ─────
-    # Bands removed in the restored notifier; notifier sorts internally by
-    # score desc + fresh-first within score, so we only need to apply the
-    # floor and cap here.
+    return {"scored": scored, "dq_counts": dq_counts}
+
+
+def node_rank(state: dict) -> dict:
+    scored = state["scored"]
+
     good = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
-    # A1: diversity quotas so DS/ML/DA aren't buried under AI
     top = _diversify(good, MAX_RESULTS)
-    from collections import Counter as _C
-    _mix = _C(j.get("_track", "?") for j in top)
-    print(f"Digest track mix (A1 quotas applied): " +
-          ", ".join(f"{k}={v}" for k, v in sorted(_mix.items())))
 
-    # ── Near misses (35–44): visible, clearly separated ───────────────────────
-    # Haiku fails >90% of pre-screen survivors below the 45 floor; the 35-44
-    # band is where miscalibrated-but-real matches die invisibly. Surface the
-    # top 10 of that band in a dimmed section so Sherwan can judge calibration
-    # himself instead of trusting the cliff.
+    from collections import Counter as _C
+    mix = dict(_C(j.get("_track", "?") for j in top))
+    print("Digest track mix (A1 quotas applied): "
+          + ", ".join(f"{k}={v}" for k, v in sorted(mix.items())))
+
     near = [j for j in scored if 35 <= j.get("score", 0) < MIN_SCORE]
     near.sort(key=lambda x: x["score"], reverse=True)
     near = near[:10]
@@ -1067,89 +1023,118 @@ def main(dry_run: bool = False) -> None:
     print(f"\nJobs scoring >= {MIN_SCORE}: {len(good)}")
     print(f"Near misses (35-{MIN_SCORE - 1}): {len(near)}")
     print(f"Sending top {len(top)} + {len(near)} near misses to notifications\n")
-
-    for j in top[:10]:  # preview in CI logs
+    for j in top[:10]:
         print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} ({j['source']})")
 
-    # ── B4: Application Kit — pre-draft screening answers for digest jobs ──────
     try:
         from application_kit import enrich_with_kits
         enrich_with_kits(top)
     except Exception as e:
         print(f"  [AppKit] skipped: {e}")
 
-    _phase("rank_and_kits")
+    return {"top": top, "near": near, "track_mix": mix}
 
-    # ── Notify ────────────────────────────────────────────────────────────────
-    email_ok = True  # nothing-to-send counts as success
-    if dry_run:
+
+def node_notify(state: dict) -> dict:
+    top, near = state.get("top", []), state.get("near", [])
+    if state.get("dry_run"):
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")
-    elif top or near:
-        email_ok = send_email(top + near, warnings=health_warnings)
+        return {"email_ok": True}
+    if top or near:
+        ok = send_email(top + near, warnings=state.get("health_warnings"))
         if top:
             add_to_notion(top)
-    else:
-        print("No jobs above threshold — no notifications sent.")
+        return {"email_ok": ok}
+    print("No jobs above threshold - no notifications sent.")
+    return {"email_ok": True}
 
-    # ── Update seen ───────────────────────────────────────────────────────────
-    # B2 guard: if the digest email FAILED, do NOT mark jobs seen — otherwise a
-    # single SMTP outage permanently buries that day's matches. Leaving them
-    # unseen means the next run re-scores and re-sends them (cents, not losses).
+
+def node_persist(state: dict) -> dict:
+    """Mark jobs seen and record run stats.
+
+    Reached on BOTH paths, including "nothing new today". As a linear function
+    that case called sys.exit() before the stats write, so quiet days left no
+    trace in the run history at all.
+    """
+    dry_run = state.get("dry_run", False)
+    seen, all_jobs = state["seen"], state.get("all_jobs", [])
+    email_ok = state.get("email_ok", True)
+
     if dry_run:
         print("\n[DRY RUN] seen_jobs.json NOT updated.")
     elif email_ok:
-        # Refresh EVERY id seen this run (not just new ones) so still-listed
-        # postings keep a current last-seen date and only genuinely vanished
-        # ids age into the 60-day pruning window.
+        # Refresh EVERY id seen this run so still-listed postings keep a current
+        # last-seen date and only genuinely vanished ids age into pruning.
         from datetime import date as _date
-        _today = _date.today().isoformat()
-        seen.update({j["id"]: _today for j in all_jobs})
+        today = _date.today().isoformat()
+        seen.update({j["id"]: today for j in all_jobs})
         save_seen(seen)
         print("\nDone. seen_jobs.json updated.")
     else:
-        print("\nEmail delivery FAILED — seen_jobs.json NOT updated so today's "
+        # B2 guard: a failed send must not bury the day's matches.
+        print("\nEmail delivery FAILED - seen_jobs.json NOT updated so today's "
               "matches are retried next run instead of being buried.")
 
-    # ── T1d: append this run's stats line (trendable pipeline history) ────────
     if not dry_run:
         from datetime import datetime as _dt, timezone as _tz
         try:
             import scorer as _sc
-            _llm_cost, _token_usage = _sc.estimated_cost_usd(), dict(_sc.TOKEN_USAGE)
+            llm_cost, token_usage = _sc.estimated_cost_usd(), dict(_sc.TOKEN_USAGE)
         except Exception:
-            _llm_cost, _token_usage = 0.0, {}
-        print(f"Measured LLM cost this run: ${_llm_cost:.4f}")
+            llm_cost, token_usage = 0.0, {}
+        print(f"Measured LLM cost this run: ${llm_cost:.4f}")
 
+        drops = state.get("drop_by_filter_track") or {}
+        dq = state.get("dq_counts")
         _record_run_stats({
             "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
-            "sources": src_counts,
-            "scraped": before, "deduped": after, "new": n_new,
-            "drops": {label: sum(c.values()) for label, c in drop_by_filter_track.items()},
-            "dq": dict(dq_counts.most_common(8)),
-            "digest": len(top), "near": len(near),
-            "track_mix": dict(_mix),
+            "sources": state.get("src_counts", {}),
+            "scraped": state.get("scraped", 0), "deduped": state.get("deduped", 0),
+            "new": len(state.get("new_jobs", [])),
+            "drops": {label: sum(c.values()) for label, c in drops.items()},
+            "dq": dict(dq.most_common(8)) if dq else {},
+            "digest": len(state.get("top", [])), "near": len(state.get("near", [])),
+            "track_mix": state.get("track_mix", {}),
             "email_ok": email_ok,
-            "warnings": health_warnings,
-            # Per-phase seconds. The scrape phase needs unbounded runtime;
-            # everything after it is small enough to run as a Lambda if the
-            # stages are ever separated. Recorded so that choice stays
-            # evidence-based.
-            "phases": _phases,
-            "scrapers": dict(sorted(_scraper_timings().items(),
-                                    key=lambda x: -x[1])[:10]),
-            # Measured, not estimated: exact token usage from the API.
-            "llm_cost_usd": _llm_cost,
-            "tokens": {k: v for k, v in _token_usage.items() if k != "by_model"},
+            "warnings": state.get("health_warnings", []),
+            "phases": state.get("phases", {}),
+            "scrapers": dict(sorted(_scraper_timings().items(), key=lambda x: -x[1])[:10]),
+            "llm_cost_usd": round(llm_cost, 4),
+            "tokens": {k: v for k, v in token_usage.items() if k != "by_model"},
         })
 
         # CloudWatch (no-op unless JOBHUNTER_METRICS=1)
+        phases = state.get("phases", {})
         import metrics
         metrics.publish(
-            duration_seconds=sum(_phases.values()),
-            llm_cost_usd=_llm_cost,
-            scraped=before, digest=len(top), near=len(near),
-            email_ok=email_ok, phases=_phases,
+            duration_seconds=sum(phases.values()),
+            llm_cost_usd=llm_cost,
+            scraped=state.get("scraped", 0),
+            digest=len(state.get("top", [])),
+            near=len(state.get("near", [])),
+            email_ok=email_ok,
+            phases=phases,
         )
+
+    return {}
+
+
+def main(dry_run: bool = False) -> None:
+    print("=" * 60)
+    print("  Daily Job Hunter - starting run" + ("  [DRY RUN]" if dry_run else ""))
+    print("=" * 60)
+
+    from graph import build_graph, describe
+    print(describe())
+    print("=" * 60)
+
+    app = build_graph({
+        "scrape": node_scrape, "filter": node_filter, "score": node_score,
+        "rank": node_rank, "notify": node_notify, "persist": node_persist,
+    })
+    # Recursion limit guards a malformed graph; this pipeline is a straight
+    # line with one branch, so the default would suffice.
+    app.invoke({"dry_run": dry_run}, {"recursion_limit": 25})
 
 
 if __name__ == "__main__":

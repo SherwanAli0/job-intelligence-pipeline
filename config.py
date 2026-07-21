@@ -170,7 +170,7 @@ Key Projects (AI framing):
   outputs and emailing a ranked digest. Runs as a scheduled AWS ECS Fargate task — chosen
   after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM
   secrets, EventBridge scheduling, CloudWatch metrics and a 199-test CI suite. Batch API and
-  prompt caching keep it near $0.07 per run.
+  prompt caching keep it near $0.06 per run (measured, not estimated).
 - Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
   IEEE Access 2025 ML paper to 143/143 metric cells over ~75,000 configurations, then built
   ERF-CSRBoost, beating the published method on 14/15 datasets (mAP +0.090) and deploying it
