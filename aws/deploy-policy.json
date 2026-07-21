@@ -31,8 +31,8 @@
       "Effect": "Allow",
       "Action": "iam:PassRole",
       "Resource": [
-        "arn:aws:iam::278371786270:role/job-hunter-task-role",
-        "arn:aws:iam::278371786270:role/job-hunter-execution-role"
+        "arn:aws:iam::278371786270:role/jobHunterTaskRole",
+        "arn:aws:iam::278371786270:role/jobHunterExecutionRole"
       ]
     }
   ]
