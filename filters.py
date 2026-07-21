@@ -12,6 +12,63 @@ Every list below is the UNION of the two former copies. Add new signals HERE
 and only here; both stages pick them up automatically.
 """
 
+import re
+
+# ── Title-only screen, used to decide whether a description is worth fetching ─
+# LinkedIn descriptions cost one HTTP request each. Fetching all ~1,100 results
+# took 420-600s and made JobSpy time out entirely, returning ZERO jobs on half
+# the runs. Screening on the title first means we only spend requests on
+# postings that could plausibly survive.
+#
+# This must stay CONSERVATIVE. It is an optimisation, not a filter: the real
+# filter chain in main.py still sees every job that gets through. Anything
+# dropped here is dropped without ever being read, so only patterns that are
+# certain — never "probably" — belong in this list.
+
+_RE_TITLE_HARD_SENIOR = re.compile(
+    r"(?<![a-z])(senior|sr\.?|lead|principal|staff|head\s+of|director|"
+    r"vice\s+president|\bvp\b|chief|manager|leiter(in)?)(?![a-z])",
+    re.IGNORECASE,
+)
+# German-market employment forms he is not eligible for, plus gender markers
+# that indicate a German-language posting.
+_RE_TITLE_INELIGIBLE = re.compile(
+    r"\b(werkstudent\w*|praktikum|praktikant\w*|studentische\w*|hiwi|"
+    r"ausbildung|dual(es|er)|abschlussarbeit|masterarbeit|bachelorarbeit|"
+    r"intern(ship)?|thesis|postdoc\w*|professor\w*)\b",
+    re.IGNORECASE,
+)
+_RE_TITLE_JUNIOR_OK = re.compile(
+    r"\b(junior|jr\.?|entry[\s-]?level|graduate|absolvent\w*|trainee|associate)\b",
+    re.IGNORECASE,
+)
+# "(Senior)" in parentheses is German-ad convention for "senior OPTIONAL".
+_RE_TITLE_OPTIONAL_SENIOR = re.compile(r"\(\s*senior\s*\)", re.IGNORECASE)
+
+
+def title_is_worth_fetching(title: str) -> bool:
+    """
+    Should we spend an HTTP request fetching this posting's description?
+
+    Conservative by design: when in doubt, fetch. A wrongly skipped job is
+    invisible forever, whereas a wrongly fetched one just costs a request.
+    """
+    t = (title or "").strip()
+    if not t:
+        return True                      # unknown title: let the real filters decide
+
+    if _RE_TITLE_INELIGIBLE.search(t):
+        return False
+
+    # Neutralise the optional-senior convention before the seniority test.
+    t_clean = _RE_TITLE_OPTIONAL_SENIOR.sub(" ", t)
+    if _RE_TITLE_HARD_SENIOR.search(t_clean):
+        # "Junior Engineering Manager" and the like are rare but real.
+        return bool(_RE_TITLE_JUNIOR_OK.search(t_clean))
+
+    return True
+
+
 # Germany-presence signals — these confirm a role is doable from Germany.
 GERMANY_TERMS = (
     "germany", "deutschland", "berlin", "munich", "münchen", "hamburg",

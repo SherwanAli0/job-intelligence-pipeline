@@ -148,15 +148,17 @@ class TestJobSpyBudgetIsSurvivable:
     period. linkedin_fetch_description costs one request PER POSTING, so the
     result count and the runtime are directly coupled."""
 
-    def test_results_wanted_stays_within_what_can_be_fetched(self):
-        import re
-        src = open("scrapers.py", encoding="utf-8").read()
-        m = re.search(r"results_wanted=(\d+)", src)
-        assert m, "results_wanted not found"
-        n = int(m.group(1))
-        assert n <= 50, (
-            f"results_wanted={n}: with linkedin_fetch_description=True this is "
-            f"~{n * 28} description fetches, which overran the timeout at 100"
+    def test_the_budget_is_on_description_fetches_not_on_result_count(self):
+        """Superseded by two-phase fetching. results_wanted was the wrong
+        control: capping it starved coverage while the actual cost was one
+        request per description. Titles are cheap, so the ceiling now sits on
+        _JOBSPY_DESC_CAP instead and result count is free to rise."""
+        assert scrapers._JOBSPY_DESC_CAP <= 900, (
+            "description fetches are the expensive part; an unbounded cap "
+            "reintroduces the timeout that returned zero jobs"
+        )
+        assert scrapers._JOBSPY_DESC_WORKERS >= 4, (
+            "sequential fetching is what made this slow in the first place"
         )
 
     def test_grace_period_covers_a_slow_but_finishing_jobspy(self):
@@ -166,3 +168,62 @@ class TestJobSpyBudgetIsSurvivable:
             "a JobSpy that finishes just after the timeout must still be "
             "recovered; 60s was too tight and its results were discarded"
         )
+
+
+class TestTwoPhaseDescriptionFetching:
+    """LinkedIn descriptions cost one request each. Fetching all ~1,100 inline
+    pushed JobSpy past its timeout, at which point the run discarded EVERY
+    LinkedIn and Indeed job: six runs of history show either ~380 jobs or
+    exactly 0, never anything between. Phase one now takes titles only; phase
+    two fetches descriptions in parallel for the title-plausible subset."""
+
+    def test_phase_one_does_not_fetch_descriptions_inline(self):
+        src = open("scrapers.py", encoding="utf-8").read()
+        assert "linkedin_fetch_description=False" in src, (
+            "inline description fetching is what caused the timeouts"
+        )
+
+    def test_enrichment_only_fetches_plausible_titles(self, monkeypatch):
+        fetched = []
+        monkeypatch.setattr(scrapers, "_fetch_full_description",
+                            lambda url: fetched.append(url) or ("x" * 900))
+        jobs = [
+            {"title": "Junior Data Scientist", "url": "u1", "description": ""},
+            {"title": "Senior ML Engineer", "url": "u2", "description": ""},
+            {"title": "Werkstudent Data (m/w/d)", "url": "u3", "description": ""},
+            {"title": "Data Analyst", "url": "u4", "description": ""},
+        ]
+        scrapers._enrich_jobspy_descriptions(jobs)
+        assert set(fetched) == {"u1", "u4"}, "senior and Werkstudent must not cost a request"
+        assert len(jobs[0]["description"]) > 400
+        assert jobs[1]["description"] == ""
+
+    def test_jobs_that_already_have_a_description_are_not_refetched(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(scrapers, "_fetch_full_description",
+                            lambda url: calls.append(url) or "y" * 900)
+        jobs = [{"title": "Data Scientist", "url": "u", "description": "z" * 500}]
+        scrapers._enrich_jobspy_descriptions(jobs)
+        assert calls == []
+
+    def test_request_count_is_capped(self, monkeypatch):
+        monkeypatch.setattr(scrapers, "_JOBSPY_DESC_CAP", 5)
+        monkeypatch.setattr(scrapers, "_fetch_full_description", lambda url: "x" * 900)
+        jobs = [{"title": "Data Scientist", "url": f"u{i}", "description": ""} for i in range(50)]
+        scrapers._enrich_jobspy_descriptions(jobs)
+        assert sum(1 for j in jobs if j["description"]) == 5
+
+    def test_timeout_now_keeps_partial_jobspy_results(self, monkeypatch):
+        """The whole point: a slow LinkedIn scrape must not yield zero."""
+        monkeypatch.setattr(scrapers, "SCRAPER_TIMEOUT_SECONDS", 1)
+        scrapers._PENDING_SCRAPERS.clear()
+        scrapers._JOBSPY_PARTIAL.clear()
+
+        def scrape_jobspy():
+            scrapers._JOBSPY_PARTIAL.extend([{"id": "a"}, {"id": "b"}])
+            time.sleep(5)
+            return list(scrapers._JOBSPY_PARTIAL)
+
+        jobs, timed_out = scrapers._run_scraper_guarded(scrape_jobspy)
+        assert timed_out is True
+        assert [j["id"] for j in jobs] == ["a", "b"], "partial results must survive a timeout"
