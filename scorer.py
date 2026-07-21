@@ -478,6 +478,20 @@ _GERMAN_FLUENCY_PHRASES = (
     "fließend deutsch", "fliessend deutsch", "muttersprachlich deutsch",
     "deutsch auf muttersprachlichem niveau", "deutsch auf c1",
     "deutsch auf c2", "deutschkenntnisse auf c1", "deutschkenntnisse auf c2",
+    # Phrasings that reached a real digest and were NOT caught. The pattern
+    # these share is naming German alongside English, which reads as
+    # bilingual-friendly but demands C1 German all the same.
+    "deutsch- und englischkenntnisse", "deutsch und englischkenntnisse",
+    "deutsche und englische sprachkenntnisse",
+    "sehr gute deutschkenntnisse", "gute deutschkenntnisse",
+    "sehr gute deutsch- und englischkenntnisse",
+    "sicher auf deutsch und englisch", "deutsch und englisch fließend",
+    "verhandlungssichere deutschkenntnisse",
+    "deutschkenntnisse auf mindestens c1", "deutsch mindestens c1",
+    "sehr gute deutsch und englischkenntnisse",
+    "deutsch- und englischkenntnisse auf mindestens c1",
+    "german and english at c1", "german and english (c1",
+    "german and english on c1 level", "very good german",
 )
 
 # If any of these appear within ~50 chars of a German-fluency phrase, treat the

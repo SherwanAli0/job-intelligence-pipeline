@@ -162,11 +162,45 @@ _GERMAN_TITLE_KEYWORDS = {
     "berichterstattung", "lieferkette", "alle", "statistiken",
 }
 
+# German function words — used constantly in German prose, essentially never in
+# English prose, so their density is a reliable language signal.
+_GERMAN_FUNCTION_WORDS = {
+    "und", "oder", "der", "die", "das", "den", "dem", "des", "ein", "eine",
+    "einen", "einem", "einer", "eines", "mit", "für", "von", "bei", "aus",
+    "auf", "über", "unter", "durch", "nach", "vor", "zum", "zur", "im", "am",
+    "ist", "sind", "war", "wird", "werden", "wurde", "haben", "hat", "hast",
+    "sich", "wir", "uns", "unser", "unsere", "unseren", "unserem", "du",
+    "dein", "deine", "deinen", "deinem", "dich", "dir", "sie", "ihre", "ihren",
+    "nicht", "auch", "sowie", "wie", "als", "aber", "wenn", "dass", "damit",
+    "kannst", "kann", "sollst", "willst", "bringst", "arbeitest", "gerne",
+    "bereich", "erfahrung", "kenntnisse", "aufgaben", "profil", "stelle",
+}
+# Share of German function words above which the body is treated as German.
+# Calibrated on real digests: German postings land around 0.15-0.30, English
+# postings near 0.00-0.02, and English postings that merely mention German as a
+# nice-to-have stay well under this.
+_GERMAN_BODY_THRESHOLD = 0.08
+
+# German gender markers, any bracket style: (m/w/d) (w/m/d) (d/m/w) (gn)
+# (f/m/x) (m/f/x) (F/M/*) (m/w/x) (all genders)
+_RE_GENDER_MARKER = re.compile(
+    r"\(\s*(?:"
+    r"[mwdfxgn](?:\s*/\s*[mwdfxgn*])+"      # m/w/d, f/m/x, F/M/*, m/w/x
+    r"|gn"                                   # (gn) = geschlechtsneutral
+    r"|all\s+genders?"
+    r")\s*\)",
+    re.IGNORECASE,
+)
+
 # If the title contains any of these → almost certainly German-language
 _GERMAN_TITLE_FRAGMENTS = (
     "ki-", "-ki", "ki ", " ki ", "künstlich", "entwickl", "daten",
     "gestütz", "automatisier", "digitalisi", "bereich", "geschlecht",
     "abschluss", "statistik",
+    # German-market employment terms — a title using these is a German posting
+    # aimed at the German system, whatever language the rest of it is in.
+    "praktikum", "praktikant", "werkstudent", "studentische",
+    "ausbildung", "duales", "dualer", "berufserfahren",
 )
 
 # ── Location filter — Germany on-site OR remote that covers Germany ──────────
@@ -224,6 +258,19 @@ _NON_EU_LOCATIONS = (
 )
 
 
+def _onsite_outside_germany(j: dict) -> bool:
+    """True when the body states the role is fully onsite in a non-German city,
+    regardless of what the location field claims."""
+    desc = j.get("description") or ""
+    m = _RE_ONSITE_ELSEWHERE.search(desc)
+    if not m:
+        return False
+    # A German city mentioned in the same sentence means it is a multi-office
+    # posting rather than a relocation demand.
+    window = desc[max(0, m.start() - 120): m.end() + 120].lower()
+    return not any(t in window for t in _GERMANY_TERMS)
+
+
 def _is_attendable_from_germany(j: dict) -> bool:
     """
     Recall-friendly location filter:
@@ -237,7 +284,15 @@ def _is_attendable_from_germany(j: dict) -> bool:
     recognise (e.g. "Some Town, Some Country" with no clear signal) used to
     be dropped. Now it passes through. Recall over precision; the scorer is
     smart enough to read the description.
+
+    One exception to "unknown wins": if the body explicitly says the role is
+    fully onsite in a non-German city, that beats any Germany-looking location
+    field. A real digest carried an Air Apps role listed against Germany whose
+    description read "fully onsite position, based at our office in Lisbon".
     """
+    if _onsite_outside_germany(j):
+        return False
+
     loc  = (j.get("location")    or "").strip().lower()
     desc = (j.get("description") or "").lower()[:2000]
 
@@ -283,6 +338,25 @@ def _is_attendable_from_germany(j: dict) -> bool:
 # Softening phrases — if one appears near a years-of-experience mention, the
 # requirement is a wish, not a wall. German ads inflate requirements; a
 # softened "2-3 years" routinely interviews fresh grads with internships.
+# "Several years of experience" written in words rather than digits. German
+# postings overwhelmingly phrase it this way, which made them invisible to the
+# numeric patterns.
+_RE_EXP_GERMAN_WORDS = re.compile(
+    r"\b("
+    r"mehrj[äa]hrige?[nrs]?|"
+    r"mehrere\s+jahre|"
+    r"langj[äa]hrige?[nrs]?|"
+    r"fundierte\s+(?:berufs)?erfahrung|"
+    r"einschl[äa]gige\s+(?:berufs)?erfahrung|"
+    r"nachgewiesene\s+(?:berufs)?erfahrung|"
+    r"umfangreiche\s+(?:berufs)?erfahrung|"
+    r"several\s+years|"
+    r"multiple\s+years|"
+    r"proven\s+track\s+record\s+of\s+several"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _EXP_SOFTENERS = (
     "ideally", "idealerweise", "preferabl", "preferred",
     "wünschenswert", "wuenschenswert", "von vorteil", "a plus",
@@ -341,14 +415,27 @@ def _no_experience_overload(j: dict) -> bool:
         return any(s in window for s in _EXP_SOFTENERS)
 
     def _violates(n: int, start: int, end: int, hard: bool) -> bool:
-        """Apply the tier rules to one matched mention. True = job must drop."""
+        """Apply the tier rules to one matched mention. True = job must drop.
+
+        2 years used to be kept unless hard-required. The owner reviewed a real
+        digest and named "wants 2 years experience" as a reason he could not
+        apply to any of them, so 2 is now treated like 3: dropped unless the
+        surrounding text softens it ("ideally", "nice to have", "of advantage").
+        """
         if n >= 4:
             return True
-        if n == 3:
+        if n >= 2:
             return not _softened(start, end)
-        if n == 2:
-            return hard and not _softened(start, end)
         return False
+
+    # German multi-year phrases carry NO DIGIT, so every numeric pattern below
+    # misses them and the job reads as junior-friendly. Real examples from a
+    # delivered digest: DKB's "Mehrjährige Berufserfahrung" and paretos'
+    # "Mehrere Jahre Erfahrung". Softeners still apply, so "idealerweise
+    # mehrjährige Erfahrung" survives.
+    for m in _RE_EXP_GERMAN_WORDS.finditer(desc):
+        if not _softened(m.start(), m.end()):
+            return False
 
     # (pattern, hard_requirement, value_extractor) — value from group(1)
     checks = [
@@ -415,6 +502,33 @@ _RE_SENIOR_IN_TITLE = _re_senior.compile(
 _RE_OPTIONAL_SENIOR = _re_senior.compile(r"\(\s*senior\s*\)", _re_senior.IGNORECASE)
 
 
+# Recruiter and agency posts often carry a generic title while the body
+# advertises the actual seniority. Real case: title "Machine Learning Engineer",
+# body headline "Senior AI/ML Engineers - Autonomous Systems". Only the opening
+# of the body is inspected, because "senior stakeholders" or "senior management"
+# appear incidentally further down in plenty of junior-suitable posts.
+_RE_SENIOR_IN_BODY = _re_senior.compile(
+    r"(?:^|\n)\s*(?:[#*\-\s]*)?"
+    r"(?:senior|sr\.?|lead|principal|staff)\s+"
+    r"[a-z/\s]{0,30}(?:engineer|scientist|developer|analyst|architect)s?\b",
+    _re_senior.IGNORECASE,
+)
+_BODY_SENIORITY_SCAN_CHARS = 400
+
+# "Fully onsite in <somewhere not Germany>" defeats a Germany-looking location
+# field. Real case: an Air Apps role listed against Germany that is onsite in
+# Lisbon.
+_RE_ONSITE_ELSEWHERE = re.compile(
+    r"\b(?:fully\s+)?on-?site\s+(?:position|role|job)?[^.]{0,40}?\b"
+    r"(?:in|at|based\s+in)\s+(?:our\s+office\s+in\s+)?"
+    r"(lisbon|porto|madrid|barcelona|paris|london|dublin|amsterdam|zurich|"
+    r"zürich|vienna|wien|warsaw|krakow|prague|budapest|bucharest|milan|rome|"
+    r"stockholm|copenhagen|oslo|helsinki|tallinn|riga|vilnius|athens|lisboa|"
+    r"new\s+york|san\s+francisco|boston|austin|toronto|bangalore|tel\s+aviv)",
+    re.IGNORECASE,
+)
+
+
 def _not_fulltime_senior(j: dict) -> bool:
     """
     Drop senior/lead/principal/manager/architect/director roles.
@@ -447,6 +561,15 @@ def _not_fulltime_senior(j: dict) -> bool:
         if any(q in title_lower for q in junior_qualifiers):
             return True
         return False
+
+    # Title looks fine — check whether the body advertises a senior role. Only
+    # the opening is scanned; "senior stakeholders" deeper in a post is common
+    # and harmless, so a wider scan would kill junior-suitable jobs.
+    head = (j.get("description") or "")[:_BODY_SENIORITY_SCAN_CHARS]
+    if _RE_SENIOR_IN_BODY.search(head):
+        if not any(q in head.lower() for q in ("junior", "entry level", "entry-level",
+                                               "graduate", "trainee", "intern")):
+            return False
 
     return True
 
@@ -521,15 +644,44 @@ def _no_masters_required(j: dict) -> bool:
     return True
 
 
+def _german_share(text: str) -> float:
+    """Rough share of German function words in the text (0.0-1.0).
+
+    Counting common German words is a far better language signal than looking
+    for the string "english": a German posting that ends with "Englischkenntnisse
+    von Vorteil" contains English-ish tokens while being entirely German.
+    Function words ("und", "der", "mit", "für") are used constantly in German
+    prose and essentially never in English prose, so their density separates
+    the two reliably without a language-detection dependency.
+    """
+    words = re.findall(r"[a-zäöüß]+", text.lower())
+    if len(words) < 25:               # too short to judge
+        return 0.0
+    hits = sum(1 for w in words if w in _GERMAN_FUNCTION_WORDS)
+    return hits / len(words)
+
+
 def _is_english_friendly(j: dict) -> bool:
-    """Drop jobs that are clearly German-language unless description confirms English."""
+    """Drop jobs that are clearly German-language unless the posting genuinely
+    confirms an English-speaking team."""
     title_lower = j["title"].lower()
     desc_lower = (j.get("description") or "").lower()
 
-    # Explicit English signal in description → always keep
+    # A German-language body is disqualifying even when the title is English
+    # and even when the word "english" appears somewhere. Four such jobs were
+    # delivered in one digest (DKB, The Quality Group, paretos, amber): English
+    # titles, fully German bodies, each mentioning English only as a required
+    # or nice-to-have language skill.
+    if _german_share(desc_lower) >= _GERMAN_BODY_THRESHOLD:
+        return False
+
+    # Explicit English-team signal → keep. "english" alone is deliberately NOT
+    # enough: "Englischkenntnisse erforderlich" is a German sentence.
     english_signals = (
-        "english", "working language is english", "language: english",
-        "english-speaking", "team language", "our language is english",
+        "working language is english", "language: english", "english-speaking",
+        "team language is english", "our language is english",
+        "all communication in english", "english is our working language",
+        "we work in english", "company language is english",
     )
     if any(s in desc_lower for s in english_signals):
         return True
@@ -541,10 +693,11 @@ def _is_english_friendly(j: dict) -> bool:
     if any(frag in title_lower for frag in _GERMAN_TITLE_FRAGMENTS):
         return False
 
-    # Title has "(m/w/d)" or "(w/m/d)" and NO english signal in description → likely German role
-    if ("(m/w/d)" in title_lower or "(w/m/d)" in title_lower or "(d/m/w)" in title_lower):
-        if "english" not in desc_lower:
-            return False
+    # German gender markers in the title mark a German-market posting. The list
+    # was previously only (m/w/d)/(w/m/d)/(d/m/w); real digests also carried
+    # (gn), (f/m/x) and (F/M/*).
+    if _RE_GENDER_MARKER.search(title_lower) and "english" not in desc_lower:
+        return False
 
     return True
 

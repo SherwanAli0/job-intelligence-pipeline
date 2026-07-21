@@ -298,6 +298,15 @@ def scrape_jobspy() -> list[dict]:
                     results_wanted=40,
                     hours_old=72,
                     country_indeed="Germany",
+                    # WITHOUT this, LinkedIn rows carry only a short snippet —
+                    # the requirements section is never downloaded at all. That
+                    # is why "Around 4+ years" and German C1 demands sailed
+                    # through every filter: the text simply was not there, and
+                    # the scorer was judging LinkedIn jobs half-blind too.
+                    # It costs one extra request per posting, which is why
+                    # JobSpy runs in the background with a timeout and
+                    # late-result recovery.
+                    linkedin_fetch_description=True,
                 )
                 _jobspy_rows_to_jobs(df, results)
                 time.sleep(3)
@@ -369,7 +378,7 @@ def scrape_arbeitnow() -> list[dict]:
                 url = item.get("url", "")
                 description = BeautifulSoup(
                     item.get("description", ""), "html.parser"
-                ).get_text()[:1500]
+                ).get_text()[:5000]
                 # Arbeitnow exposes created_at as Unix timestamp
                 created = item.get("created_at")
                 posted_at = ""
@@ -423,7 +432,7 @@ def scrape_remotive() -> list[dict]:
                 url = item.get("url", "")
                 description = BeautifulSoup(
                     item.get("description", ""), "html.parser"
-                ).get_text()[:1500]
+                ).get_text()[:5000]
                 if title:
                     posted_at = item.get("publication_date", "") or ""
                     results.append(job(title, company, location, url, "Remotive", description, posted_at))
@@ -573,7 +582,7 @@ def _greenhouse_board(slug: str) -> list[dict]:
             title = j.get("title", "")
             location = j.get("location", {}).get("name", "")
             url = j.get("absolute_url", "")
-            description = BeautifulSoup(j.get("content", ""), "html.parser").get_text()[:1500]
+            description = BeautifulSoup(j.get("content", ""), "html.parser").get_text()[:5000]
             posted_at = j.get("updated_at", "") or j.get("first_published", "") or ""
 
             # Only include Germany-based roles (or remote)
@@ -610,7 +619,7 @@ def _lever_board(slug: str) -> list[dict]:
             url = p.get("hostedUrl", "")
             description = BeautifulSoup(
                 p.get("descriptionPlain", "") or p.get("description", ""), "html.parser"
-            ).get_text()[:1500]
+            ).get_text()[:5000]
             # Lever createdAt is epoch ms
             created_ms = p.get("createdAt")
             posted_at = ""
