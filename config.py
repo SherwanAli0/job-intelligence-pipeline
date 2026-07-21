@@ -16,7 +16,7 @@ _CV_SHARED = """
 Name: Sherwan Ali
 Location: Bochum, Germany. Full work authorization (valid German residence permit).
 Availability: B.Sc. Computer Engineering GRADUATE (Üsküdar University, Istanbul, graduated
-July 2026). Available for full-time junior roles from August 2026. Recently completed a
+July 2026). AVAILABLE IMMEDIATELY for full-time junior roles. Recently completed a
 Software and AI internship at iseremo GmbH (Apr–Jun 2026).
 Not enrolled at a German university, so NOT eligible for Werkstudent roles.
 
@@ -44,6 +44,21 @@ Languages: English C1, German B1, Turkish C1, Arabic native, Kurdish native.
 Certifications: IBM AI Engineering Professional Certificate (Coursera, Sep 2025);
 Google Advanced Data Analytics Professional Certificate (Coursera, Mar 2026);
 Databases and SQL for Data Science with Python (Coursera/IBM, Apr 2026).
+
+INFRASTRUCTURE / MLOps (genuine hands-on, not coursework — this is newer and
+widens the role types that fit):
+- AWS: ECS Fargate, S3, SSM Parameter Store, EventBridge, CloudWatch, ECR, IAM.
+  Designed and migrated a production pipeline onto Fargate, including container
+  images, least-privilege IAM roles, scheduled tasks and cost metrics.
+- Docker, Git, GitHub Actions CI/CD, Linux, Fly.io.
+- TREAT AS A REAL STRENGTH for MLOps, ML Platform, AI Infrastructure, Data
+  Engineering and Platform Engineer roles at junior level — these were
+  previously scored as a stretch and should no longer be.
+
+Deployed work (evidence of shipping, not just building):
+- fixyourdataset.fly.dev — live data-leakage auditor from the thesis work.
+- github.com/SherwanAli0 — thesis audit, HalluScope, recommender replication,
+  and the job-hunting pipeline, all public with CI suites.
 """
 
 # ── DATA SCIENTIST framing — leads with statistics, experimentation, analytics ──
@@ -59,11 +74,14 @@ and Google-certified data-analytics tooling (Tableau, regression, statistics).
 
 Key Projects (data-science framing):
 - Reproducibility Audit & Extension of CSRBoost (thesis, solo): rigorous statistical study of
-  an IEEE Access 2025 paper across 15 datasets under a 100-fold evaluation protocol; only
-  42/143 metric cells reproduced as published, so reverse-engineered the true per-method
-  protocol over ~75,000 configurations to reach 143/143, then designed a novel extension that
-  outperformed the published method on 12/15 datasets. Deep work in evaluation methodology,
-  metric integrity, imbalanced-data statistics, and experimental design.
+  an IEEE Access 2025 paper: evaluated 143 reported results across 15 datasets under one
+  standardized protocol and found only 29% reproduced, then identified the undisclosed
+  evaluation choices needed to recover 143/143 — isolating protocol sensitivity as the cause.
+  Designed ERF-CSRBoost, which selects its strategy per dataset on a held-out validation
+  split, beating the published method on 14/15 datasets (mean average precision +0.090) over
+  100-fold cross-validation. Deployed as a live data-leakage auditor at fixyourdataset.fly.dev.
+  Deep work in evaluation methodology, metric integrity, imbalanced-data statistics, and
+  experimental design.
 - FUS Recommender System Replication (4-author team): replicated an IEEE Access 2026 paper on
   MovieLens 100k under 10-fold cross-validation; owned the collaborative-filtering and FUS
   implementations; reproduced the headline ranking and matched MAE to four decimals
@@ -97,10 +115,12 @@ XGBoost, containerized with Docker and automated with GitHub Actions.
 
 Key Projects (ML framing):
 - Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
-  undocumented ML evaluation protocol across 15 datasets, 10 algorithms and ~75,000
-  configurations (920 compute-hours), lifting reproduction from 42/143 to 143/143 metric
-  cells, then engineered a NOVEL method extension that beat the published approach on 12/15
-  datasets. Imbalanced classification, ensemble methods, boosting, rigorous ML evaluation.
+  undocumented ML evaluation protocol across 15 datasets and ~75,000 configurations
+  (920 compute-hours), lifting reproduction from 29% to 143/143 metric cells, then engineered
+  ERF-CSRBoost — a per-dataset strategy selector fitted on a held-out validation split — which
+  beat the published approach on 14/15 datasets (mean average precision +0.090) over 100-fold
+  cross-validation, and SHIPPED it live at fixyourdataset.fly.dev. Imbalanced classification,
+  ensemble methods, boosting, rigorous ML evaluation, model deployment.
 - HalluScope, LLM Hallucination Detection (5-author team): owned the model-generation stage —
   ran LLaMA-3-8B, Qwen2-7B and Gemma-2-9B over 297 prompts, extracted token logits, computed
   per-sentence Shannon entropy; reproduced the central claim across all 9 model-dataset cells
@@ -145,12 +165,16 @@ Key Projects (AI framing):
 - HalluScope, LLM Hallucination Detection (5-author team): ran LLaMA-3-8B, Qwen2-7B, Gemma-2-9B
   over 297 prompts, extracted token logits, computed per-sentence Shannon entropy; reproduced
   the central claim across all 9 model-dataset cells within ~0.02 nats. 12-test CI suite.
-- Job Hunter (solo): agentic tool integrating Greenhouse/Lever/Notion/Gmail REST APIs;
-  processes 50–100 postings/day, scores them 0–100 with Claude structured outputs, emails a
-  daily ranked digest via GitHub Actions. ~EUR 0.02 per run.
+- Job Hunter (solo): production agentic pipeline ingesting 8,000+ postings per run from 28+
+  sources (7 ATS APIs, government and aggregator APIs, RSS), scoring with Claude structured
+  outputs and emailing a ranked digest. Runs as a scheduled AWS ECS Fargate task — chosen
+  after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM
+  secrets, EventBridge scheduling, CloudWatch metrics and a 199-test CI suite. Batch API and
+  prompt caching keep it near $0.07 per run.
 - Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
-  IEEE Access 2025 ML paper to 143/143 metric cells over ~75,000 configurations, then built a
-  novel extension beating the published method on 12/15 datasets.
+  IEEE Access 2025 ML paper to 143/143 metric cells over ~75,000 configurations, then built
+  ERF-CSRBoost, beating the published method on 14/15 datasets (mAP +0.090) and deploying it
+  live at fixyourdataset.fly.dev.
 - FUS Recommender System Replication (4-author team): MovieLens 100k, 10-fold CV, matched MAE
   to four decimals.
 
