@@ -20,7 +20,7 @@ container unchanged.
 | Task role | `jobHunterTaskRole` | app permissions: own S3 prefix + SSM path only |
 | Execution role | `jobHunterExecutionRole` | ECS agent: pull image, write logs |
 | Scheduler role | `jobHunterSchedulerRole` | may run only this task definition |
-| Schedules | `job-hunter-morning` / `-afternoon` | 11:00 and 17:00 **Europe/Berlin** |
+| Schedules | `job-hunter-morning` / `-afternoon` | 10:00 and 16:00 **Europe/Berlin** (digests arrive ~10:30 / ~16:30) |
 | Logs | `/ecs/job-hunter` | 14-day retention |
 
 ## Cost control
