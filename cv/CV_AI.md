@@ -27,7 +27,7 @@ Python, Anthropic API, LangGraph, AWS (ECS Fargate, S3, SSM, EventBridge, CloudW
 Production agentic pipeline: ingests 8,000+ postings per run from 28+ sources (7 ATS APIs, government and aggregator APIs, RSS feeds), scores them 0–100 with Claude structured outputs, and emails a ranked daily digest. Orchestrated as a LangGraph state machine and run as a scheduled ECS Fargate task — chosen after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM secrets and CloudWatch cost metrics. Batch API and prompt caching hold it at **$0.06 per run (measured)**. 208-test CI suite.
 
 **Reproducibility Audit & Extension of CSRBoost** (graduation thesis, solo) · github.com/SherwanAli0/csrboost-audit
-Evaluated 143 reported results from an IEEE Access 2025 paper across 15 datasets: only 29% reproduced. Recovered 143/143 by identifying the undisclosed evaluation choices, then designed ERF-CSRBoost, beating the published method on 14 of 15 datasets (mAP +0.090). Live at fixyourdataset.fly.dev.
+Rebuilt an IEEE Access 2025 imbalanced-classification method and reproduced only 42 of 143 reported numbers (29%); recovered 143/143 within 3% error by identifying the undisclosed evaluation choices. Built ERF-CSRBoost (random-forest ensemble behind CSRBoost's balancing front end): across 20 datasets under 100-fold CV it wins on 17, average precision +0.064, p = 0.00032 (Wilcoxon). Losses reported openly. Live tool: fixyourdataset.fly.dev.
 
 **FUS Recommender System Replication** (4-author team) · github.com/SherwanAli0/Recommender-System-Paper-Replication
 MovieLens 100k, 10-fold cross-validation; matched published MAE to four decimals (0.7025 vs 0.703).

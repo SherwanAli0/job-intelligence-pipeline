@@ -73,15 +73,15 @@ design, cross-validation, metric evaluation, and reproducible reporting — with
 and Google-certified data-analytics tooling (Tableau, regression, statistics).
 
 Key Projects (data-science framing):
-- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rigorous statistical study of
-  an IEEE Access 2025 paper: evaluated 143 reported results across 15 datasets under one
-  standardized protocol and found only 29% reproduced, then identified the undisclosed
-  evaluation choices needed to recover 143/143 — isolating protocol sensitivity as the cause.
-  Designed ERF-CSRBoost, which selects its strategy per dataset on a held-out validation
-  split, beating the published method on 14/15 datasets (mean average precision +0.090) over
-  100-fold cross-validation. Deployed as a live data-leakage auditor at fixyourdataset.fly.dev.
-  Deep work in evaluation methodology, metric integrity, imbalanced-data statistics, and
-  experimental design.
+- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rebuilt an IEEE Access 2025
+  imbalanced-classification method and reproduced only 42/143 reported numbers (29%), then
+  recovered 143/143 within 3% error by identifying the undisclosed evaluation choices.
+  Designed ERF-CSRBoost — CSRBoost's balancing front end with an ensemble-of-random-forests
+  classifier — and evaluated it on 20 datasets (the paper's 15 plus 5 chosen, incl. credit-card
+  fraud and breast-cancer screening) under 100-fold cross-validation: wins on 17, average
+  precision +0.064, p = 0.00032 (Wilcoxon signed-rank). Losses reported openly (loses on
+  FLARE-F, ties a strong baseline, worse G-Mean at the 0.5 threshold). Shipped
+  fixyourdataset.fly.dev, a live data-leakage auditor that splits before balancing.
 - FUS Recommender System Replication (4-author team): replicated an IEEE Access 2026 paper on
   MovieLens 100k under 10-fold cross-validation; owned the collaborative-filtering and FUS
   implementations; reproduced the headline ranking and matched MAE to four decimals
@@ -114,13 +114,15 @@ training, logits/metrics, cross-validation, CI — in Python with PyTorch, sciki
 XGBoost, containerized with Docker and automated with GitHub Actions.
 
 Key Projects (ML framing):
-- Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
-  undocumented ML evaluation protocol across 15 datasets and ~75,000 configurations
-  (920 compute-hours), lifting reproduction from 29% to 143/143 metric cells, then engineered
-  ERF-CSRBoost — a per-dataset strategy selector fitted on a held-out validation split — which
-  beat the published approach on 14/15 datasets (mean average precision +0.090) over 100-fold
-  cross-validation, and SHIPPED it live at fixyourdataset.fly.dev. Imbalanced classification,
-  ensemble methods, boosting, rigorous ML evaluation, model deployment.
+- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rebuilt an IEEE Access 2025
+  imbalanced-classification method and reproduced only 42/143 reported numbers (29%), then
+  recovered 143/143 within 3% error by identifying the undisclosed evaluation choices.
+  Designed ERF-CSRBoost — CSRBoost's balancing front end with an ensemble-of-random-forests
+  classifier — and evaluated it on 20 datasets (the paper's 15 plus 5 chosen, incl. credit-card
+  fraud and breast-cancer screening) under 100-fold cross-validation: wins on 17, average
+  precision +0.064, p = 0.00032 (Wilcoxon signed-rank). Losses reported openly (loses on
+  FLARE-F, ties a strong baseline, worse G-Mean at the 0.5 threshold). Shipped
+  fixyourdataset.fly.dev, a live data-leakage auditor that splits before balancing.
 - HalluScope, LLM Hallucination Detection (5-author team): owned the model-generation stage —
   ran LLaMA-3-8B, Qwen2-7B and Gemma-2-9B over 297 prompts, extracted token logits, computed
   per-sentence Shannon entropy; reproduced the central claim across all 9 model-dataset cells
@@ -171,10 +173,15 @@ Key Projects (AI framing):
   after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM
   secrets, EventBridge scheduling, CloudWatch metrics and a 199-test CI suite. Batch API and
   prompt caching keep it near $0.06 per run (measured, not estimated).
-- Reproducibility Audit & Extension of CSRBoost (thesis, solo): reverse-engineered an
-  IEEE Access 2025 ML paper to 143/143 metric cells over ~75,000 configurations, then built
-  ERF-CSRBoost, beating the published method on 14/15 datasets (mAP +0.090) and deploying it
-  live at fixyourdataset.fly.dev.
+- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rebuilt an IEEE Access 2025
+  imbalanced-classification method and reproduced only 42/143 reported numbers (29%), then
+  recovered 143/143 within 3% error by identifying the undisclosed evaluation choices.
+  Designed ERF-CSRBoost — CSRBoost's balancing front end with an ensemble-of-random-forests
+  classifier — and evaluated it on 20 datasets (the paper's 15 plus 5 chosen, incl. credit-card
+  fraud and breast-cancer screening) under 100-fold cross-validation: wins on 17, average
+  precision +0.064, p = 0.00032 (Wilcoxon signed-rank). Losses reported openly (loses on
+  FLARE-F, ties a strong baseline, worse G-Mean at the 0.5 threshold). Shipped
+  fixyourdataset.fly.dev, a live data-leakage auditor that splits before balancing.
 - FUS Recommender System Replication (4-author team): MovieLens 100k, 10-fold CV, matched MAE
   to four decimals.
 
