@@ -140,3 +140,29 @@ class TestBackgroundScrapers:
         src = inspect.getsource(scrapers.scrape_jobspy)
         assert "google_search_term" not in src
         assert 'site_name=["google"]' not in src
+
+
+class TestJobSpyBudgetIsSurvivable:
+    """Raising results_wanted to 100 returned ZERO LinkedIn/Indeed jobs
+    instead of ~705: JobSpy blew both the timeout and the recovery grace
+    period. linkedin_fetch_description costs one request PER POSTING, so the
+    result count and the runtime are directly coupled."""
+
+    def test_results_wanted_stays_within_what_can_be_fetched(self):
+        import re
+        src = open("scrapers.py", encoding="utf-8").read()
+        m = re.search(r"results_wanted=(\d+)", src)
+        assert m, "results_wanted not found"
+        n = int(m.group(1))
+        assert n <= 50, (
+            f"results_wanted={n}: with linkedin_fetch_description=True this is "
+            f"~{n * 28} description fetches, which overran the timeout at 100"
+        )
+
+    def test_grace_period_covers_a_slow_but_finishing_jobspy(self):
+        import inspect
+        sig = inspect.signature(scrapers._recover_late_scrapers)
+        assert sig.parameters["grace_seconds"].default >= 300, (
+            "a JobSpy that finishes just after the timeout must still be "
+            "recovered; 60s was too tight and its results were discarded"
+        )

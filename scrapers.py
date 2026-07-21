@@ -121,7 +121,7 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
     return box["jobs"], False
 
 
-def _recover_late_scrapers(grace_seconds: int = 60) -> list[dict]:
+def _recover_late_scrapers(grace_seconds: int = 300) -> list[dict]:
     """Collect results from timed-out scrapers that have since finished."""
     recovered: list[dict] = []
     for name, box, t in _PENDING_SCRAPERS:
@@ -295,19 +295,24 @@ def scrape_jobspy() -> list[dict]:
                     site_name=["linkedin", "indeed"],
                     search_term=query,
                     location=LOCATION,
-                    # 40 was chosen when JobSpy blocked the whole pipeline and
-                    # LinkedIn throttling risked the run. It now executes in
-                    # the background with late-result recovery, so a slower
-                    # JobSpy no longer delays the digest — and 40 was the
-                    # binding constraint on coverage: a search matching 800
-                    # postings returned the first 40 and hid the rest.
+                    # TESTED AT 100 AND REVERTED. Raising this to 100 did not
+                    # return more jobs, it returned NONE: JobSpy blew both the
+                    # timeout and the recovery grace period, so LinkedIn and
+                    # Indeed contributed 0 instead of ~705.
                     #
-                    # Deliberately the ONLY coverage variable changed in this
-                    # step. The query rotation (half the list per run) and
-                    # hours_old stay as they are so the next run's job count
-                    # can be attributed to this change alone. LinkedIn throttles
-                    # by IP, so more requests could plausibly return LESS.
-                    results_wanted=100,
+                    # The reason is linkedin_fetch_description=True, which
+                    # costs one extra HTTP request PER POSTING:
+                    #   40  x 28 queries = 1,120 fetches  (~7-10 min, fits)
+                    #   100 x 28 queries = 2,800 fetches  (~25+ min, does not)
+                    #
+                    # So LinkedIn volume is bounded by how many descriptions we
+                    # can fetch, not by this number. Full descriptions are
+                    # non-negotiable — without them the filters cannot see
+                    # requirements at all, which is what let 4+ years and
+                    # German C1 roles through for weeks. Coverage has to come
+                    # from elsewhere (more sources, better queries), not from
+                    # asking LinkedIn for more per query.
+                    results_wanted=40,
                     hours_old=72,
                     country_indeed="Germany",
                     # WITHOUT this, LinkedIn rows carry only a short snippet —
