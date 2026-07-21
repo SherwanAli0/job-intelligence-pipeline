@@ -150,7 +150,20 @@ SONNET_RESCORE_FLOOR = 50
 # batch of jobs to a malformed reply.
 _BATCH_API_MIN_JOBS = 30      # below this, sync calls are simpler and fine
 _BATCH_POLL_SECONDS = 20
-_BATCH_TIMEOUT_SECONDS = 30 * 60  # then cancel + fall back to sync
+# How long to wait on the batch queue before cancelling stragglers and scoring
+# them synchronously.
+#
+# Anthropic's queue is genuinely variable: 1.8 min one evening, 30.6 min the
+# next morning, for the same workload. The expensive outcome is falling back to
+# sync, because those tokens bill at FULL price — one run cost $0.22 instead of
+# the usual $0.07 that way. Waiting costs almost nothing by comparison: the
+# Fargate task is idle-polling, roughly a cent an hour.
+#
+# So the timeout is deliberately generous. It exists only as a backstop against
+# a batch that never returns, not as a latency control. A timeout also now
+# KEEPS whatever finished, so the worst case degrades gradually instead of
+# discarding the whole batch.
+_BATCH_TIMEOUT_SECONDS = int(os.environ.get("BATCH_TIMEOUT_SECONDS", "5400"))  # 90 min
 
 _SCORE_SCHEMA = {
     "type": "object",
@@ -917,6 +930,7 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
         print(f"  [BatchAPI] submitted {len(requests)} requests as {batch.id} (50% token discount)")
 
         waited = 0
+        timed_out = False
         while True:
             time.sleep(_BATCH_POLL_SECONDS)
             waited += _BATCH_POLL_SECONDS
@@ -924,12 +938,26 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
             if batch.processing_status == "ended":
                 break
             if waited >= _BATCH_TIMEOUT_SECONDS:
-                print(f"  [BatchAPI] timeout after {waited}s — cancelling, falling back to sync")
+                # Cancel the stragglers, but HARVEST whatever already finished.
+                # Returning False here used to discard completed work: one real
+                # run had 8 of 15 groups succeed, cancelled all 15, then
+                # re-scored everything synchronously — paying for the batch and
+                # again at full price ($0.22 instead of the usual $0.07).
+                print(f"  [BatchAPI] timeout after {waited}s — cancelling stragglers, "
+                      f"keeping whatever finished")
                 try:
                     _client().messages.batches.cancel(batch.id)
-                except Exception:
-                    pass
-                return False
+                    # Cancellation is not instant; results are only readable
+                    # once the batch reports 'ended'.
+                    for _ in range(15):
+                        time.sleep(4)
+                        batch = _client().messages.batches.retrieve(batch.id)
+                        if batch.processing_status == "ended":
+                            break
+                except Exception as e:
+                    print(f"  [BatchAPI] cancel/settle failed: {e}")
+                timed_out = True
+                break
 
         ok, redo = 0, []
         seen_ids = set()
@@ -957,7 +985,8 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
             _score_batch(grp, model=model, cv_profile=profile)
         for grp, _, _ in groups:
             _finalize_scores(grp)
-        print(f"  [BatchAPI] done after ~{waited}s: {ok}/{len(groups)} groups clean, "
+        print(f"  [BatchAPI] {'timed out' if timed_out else 'done'} after ~{waited}s: "
+              f"{ok}/{len(groups)} groups from the batch (50% off), "
               f"{len(redo)} re-scored synchronously")
         return True
 
