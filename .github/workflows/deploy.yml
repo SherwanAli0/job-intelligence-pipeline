@@ -1,0 +1,107 @@
+name: Deploy to AWS
+
+# Build the container image and register a new ECS task definition revision on
+# every push to main.
+#
+# Why this exists: deploying used to mean running `docker build` and
+# `docker push` by hand from a laptop. That let the repo and production drift
+# apart silently — LangGraph sat committed but undeployed for hours, so the
+# scheduled runs were still executing the previous code. Now main IS what runs.
+#
+# No AWS keys are stored anywhere. GitHub mints a short-lived OIDC token for
+# each run, and AWS exchanges it for temporary credentials via a role whose
+# trust policy accepts only this repository's main branch. Nothing to leak,
+# nothing to rotate.
+
+on:
+  push:
+    branches: [main]
+    # Docs and CV text cannot change what runs, so they should not trigger a
+    # five-minute image build.
+    paths-ignore:
+      - "**.md"
+      - "cv/**"
+      - "run_stats.jsonl"
+      - "seen_jobs.json"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+permissions:
+  id-token: write      # required to request the OIDC token
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  ECR_REPOSITORY: job-hunter
+  TASK_FAMILY: job-hunter
+
+jobs:
+  test:
+    name: Tests must pass before anything is deployed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install -r requirements.txt pytest
+      - run: pytest tests/ -q
+        env:
+          ANTHROPIC_API_KEY: sk-test-dummy
+
+  deploy:
+    name: Build, push, and register task definition
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Assume the deploy role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::278371786270:role/job-hunter-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          # Tag with the commit SHA as well as latest, so a bad deploy can be
+          # rolled back to an exact revision rather than "whatever latest was".
+          IMAGE="$REGISTRY/$ECR_REPOSITORY"
+          docker build -t "$IMAGE:$GITHUB_SHA" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"
+          echo "image=$IMAGE:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Register a new task definition revision
+        run: |
+          # Take the live definition, swap in the new image, strip the
+          # server-managed fields, and register it. The EventBridge schedule
+          # targets the family (not a fixed revision), so the next scheduled
+          # run picks this up automatically.
+          aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query taskDefinition > current.json
+          python - <<'PY'
+          import json
+          d = json.load(open("current.json"))
+          for k in ("taskDefinitionArn", "revision", "status", "requiresAttributes",
+                    "compatibilities", "registeredAt", "registeredBy", "deregisteredAt"):
+              d.pop(k, None)
+          d["containerDefinitions"][0]["image"] = "${{ steps.build.outputs.image }}"
+          json.dump(d, open("new.json", "w"))
+          PY
+          REV=$(aws ecs register-task-definition --cli-input-json file://new.json \
+                  --query 'taskDefinition.revision' --output text)
+          echo "Registered $TASK_FAMILY:$REV -> ${{ steps.build.outputs.image }}"
+          echo "### Deployed \`$TASK_FAMILY:$REV\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: \`${{ steps.build.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
