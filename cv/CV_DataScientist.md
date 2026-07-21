@@ -6,11 +6,12 @@ github.com/SherwanAli0 · linkedin.com/in/sherwan-ali · German residence permit
 > Use this version for: **Data Scientist, Data Analyst, BI Analyst, Analytics Engineer, Quantitative Analyst** roles.
 
 ## PROFILE
-Data-focused Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with strong statistical and experimentation grounding. Comfortable across the full analysis loop — hypothesis, study design, cross-validation, metric evaluation and reproducible reporting — with SQL, Python and Google-certified data-analytics tooling (Tableau, regression, statistics). English C1, German B1. Available full-time from 08.2026.
+Data-focused Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with strong statistical and experimentation grounding. Comfortable across the full analysis loop — hypothesis, study design, cross-validation, metric evaluation and reproducible reporting — with SQL, Python and Google-certified data-analytics tooling (Tableau, regression, statistics). English C1, German B1. Available immediately.
 
 ## PROJECTS
 **Reproducibility Audit & Extension of CSRBoost** (graduation thesis, solo) · github.com/SherwanAli0/csrboost-audit
-Python, scikit-learn, imbalanced-learn, NumPy, Pandas. A rigorous statistical study of an IEEE Access 2025 paper across 15 datasets under a 100-fold evaluation protocol; only 42/143 metric cells reproduced as published, so reverse-engineered the true per-method protocol over ~75,000 configurations to reach 143/143, then designed a novel extension that outperformed the published method on 12/15 datasets. Deep work in **evaluation methodology, metric integrity, imbalanced-data statistics and experimental design**.
+Python, scikit-learn, imbalanced-learn, LightGBM, pandas, NumPy; Docker, Fly.io.
+Rebuilt CSRBoost (IEEE Access 2025) and evaluated 143 reported results across 15 datasets under one standardized protocol: only 29% reproduced. Identified the undisclosed evaluation choices needed to recover 143 of 143, isolating protocol sensitivity as the cause. Then designed **ERF-CSRBoost**, which selects its strategy per dataset on a held-out validation split, and **beat the published method on 14 of 15 datasets** (mean average precision +0.090) over 100-fold cross-validation. Deployed part of the work as a live data-leakage auditor at **fixyourdataset.fly.dev**.
 
 **FUS Recommender System Replication** (4-author team) · github.com/SherwanAli0/Recommender-System-Paper-Replication
 Python, NumPy, scikit-learn, GitHub Actions. Replicated an IEEE Access 2026 paper on MovieLens 100k under 10-fold cross-validation; owned the collaborative-filtering and FUS implementations; reproduced the headline ranking and matched MAE to four decimals (0.7025 vs 0.703). Recommender systems, offline evaluation, statistical validation.
@@ -19,7 +20,8 @@ Python, NumPy, scikit-learn, GitHub Actions. Replicated an IEEE Access 2026 pape
 Python, PyTorch, spaCy. Quantitative evaluation study — computed per-sentence Shannon entropy over model outputs and matched published values to ~0.02 nats across 9 model-dataset cells. Measurement, metrics, statistical comparison.
 
 **Job Hunter** (solo) · github.com/SherwanAli0/job-hunter
-Python + SQL data pipeline that ingests, dedups, scores and ranks 50–100 job postings/day and reports analytics on the funnel; GitHub Actions CI/CD.
+Python, Anthropic API, LangGraph, AWS (ECS Fargate, S3, SSM, EventBridge, CloudWatch, ECR, IAM), Docker, GitHub Actions CI/CD.
+Production agentic pipeline: ingests 8,000+ postings per run from 28+ sources (7 ATS APIs, government and aggregator APIs, RSS feeds), scores them 0–100 with Claude structured outputs, and emails a ranked daily digest. Orchestrated as a LangGraph state machine and run as a scheduled ECS Fargate task — chosen after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM secrets and CloudWatch cost metrics. Batch API and prompt caching hold it at **$0.06 per run (measured)**. 208-test CI suite.
 
 ## EXPERIENCE
 **Software and AI Intern — iseremo GmbH, Düsseldorf** · 04.2026 – 06.2026

@@ -672,7 +672,15 @@ def _is_english_friendly(j: dict) -> bool:
     # delivered in one digest (DKB, The Quality Group, paretos, amber): English
     # titles, fully German bodies, each mentioning English only as a required
     # or nice-to-have language skill.
-    if _german_share(desc_lower) >= _GERMAN_BODY_THRESHOLD:
+    share = _german_share(desc_lower)
+    if share >= _GERMAN_BODY_THRESHOLD:
+        # Borderline cases are the ones that would be wrongly killed if the
+        # threshold is too low. Recording them makes over-filtering visible in
+        # the logs instead of silent: a genuinely German posting scores 0.15+,
+        # so anything in the 0.08-0.12 band deserves a look.
+        if share < _GERMAN_BODY_THRESHOLD * 1.5:
+            print(f"  [German filter] borderline {share:.2f}: "
+                  f"{(j.get('title') or '')[:70]}")
         return False
 
     # Explicit English-team signal → keep. "english" alone is deliberately NOT

@@ -6,11 +6,12 @@ github.com/SherwanAli0 · linkedin.com/in/sherwan-ali · German residence permit
 > Use this version for: **ML Engineer, Applied Scientist, MLOps, Deep Learning, Computer Vision, NLP, Research Engineer** roles.
 
 ## PROFILE
-Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with hands-on model training, evaluation and reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data, training, logits/metrics, cross-validation, CI — in Python with PyTorch, scikit-learn and XGBoost, containerized with Docker and automated with GitHub Actions. English C1, German B1. Available full-time from 08.2026.
+Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with hands-on model training, evaluation and reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data, training, logits/metrics, cross-validation, CI — in Python with PyTorch, scikit-learn and XGBoost, containerized with Docker and automated with GitHub Actions. English C1, German B1. Available immediately.
 
 ## PROJECTS
 **Reproducibility Audit & Extension of CSRBoost** (graduation thesis, solo) · github.com/SherwanAli0/csrboost-audit
-Python, scikit-learn, imbalanced-learn, NumPy, Pandas. Reverse-engineered an undocumented ML evaluation protocol across 15 datasets, 10 algorithms and ~75,000 configurations (920 compute-hours), lifting reproduction from 42/143 to 143/143 metric cells — then **engineered a novel method extension that outperformed the published approach on 12/15 datasets**. Imbalanced classification, ensemble/boosting methods, rigorous ML evaluation.
+Python, scikit-learn, imbalanced-learn, LightGBM, pandas, NumPy; Docker, Fly.io.
+Rebuilt CSRBoost (IEEE Access 2025) and evaluated 143 reported results across 15 datasets under one standardized protocol: only 29% reproduced. Identified the undisclosed evaluation choices needed to recover 143 of 143, isolating protocol sensitivity as the cause. Then designed **ERF-CSRBoost**, which selects its strategy per dataset on a held-out validation split, and **beat the published method on 14 of 15 datasets** (mean average precision +0.090) over 100-fold cross-validation. Deployed part of the work as a live data-leakage auditor at **fixyourdataset.fly.dev**.
 
 **HalluScope — LLM Hallucination Detection** (5-author team) · github.com/SherwanAli0/HalluScope
 Python, PyTorch, Transformers, spaCy. Owned the model-generation stage: ran LLaMA-3-8B, Qwen2-7B and Gemma-2-9B over 297 prompts, extracted token logits, computed per-sentence Shannon entropy; reproduced the central claim across all 9 model-dataset cells within ~0.02 nats. 12-test CI suite.
@@ -19,7 +20,8 @@ Python, PyTorch, Transformers, spaCy. Owned the model-generation stage: ran LLaM
 Python, NumPy, scikit-learn, GitHub Actions. Implemented collaborative-filtering and FUS models on MovieLens 100k under 10-fold cross-validation; reproduced the headline ranking and matched MAE to four decimals (0.7025 vs 0.703). 12-test CI suite.
 
 **Job Hunter** (solo) · github.com/SherwanAli0/job-hunter
-Production-style Python ML-scoring service: batching, retries, two-stage model routing (Haiku → Sonnet), structured outputs, CI/CD.
+Python, Anthropic API, LangGraph, AWS (ECS Fargate, S3, SSM, EventBridge, CloudWatch, ECR, IAM), Docker, GitHub Actions CI/CD.
+Production agentic pipeline: ingests 8,000+ postings per run from 28+ sources (7 ATS APIs, government and aggregator APIs, RSS feeds), scores them 0–100 with Claude structured outputs, and emails a ranked daily digest. Orchestrated as a LangGraph state machine and run as a scheduled ECS Fargate task — chosen after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM secrets and CloudWatch cost metrics. Batch API and prompt caching hold it at **$0.06 per run (measured)**. 208-test CI suite.
 
 ## EXPERIENCE
 **Software and AI Intern — iseremo GmbH, Düsseldorf** · 04.2026 – 06.2026

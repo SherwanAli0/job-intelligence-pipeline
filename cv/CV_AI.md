@@ -6,7 +6,7 @@ github.com/SherwanAli0 · linkedin.com/in/sherwan-ali · German residence permit
 > Use this version for: **AI Engineer, LLM Engineer, GenAI, Applied AI, AI Agent, AI/Software Engineer** roles.
 
 ## PROFILE
-Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) who recently built and shipped LLM features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker, prompt and system-prompt versioning — and builds agentic tools of his own. Strong Python, PyTorch, and open-source-LLM (LLaMA / Qwen / Gemma) foundations. English C1, German B1. Available full-time from 08.2026.
+Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) who recently built and shipped LLM features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker, prompt and system-prompt versioning — and builds agentic tools of his own. Strong Python, PyTorch, and open-source-LLM (LLaMA / Qwen / Gemma) foundations. English C1, German B1. Available immediately.
 
 ## EXPERIENCE
 **Software and AI Intern — iseremo GmbH, Düsseldorf** · 04.2026 – 06.2026
@@ -23,10 +23,11 @@ Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final gr
 Python, PyTorch, Transformers, spaCy. Ran LLaMA-3-8B, Qwen2-7B and Gemma-2-9B over 297 prompts, extracted token logits, computed per-sentence Shannon entropy; reproduced the central claim across all 9 model-dataset cells within ~0.02 nats. 12-test CI suite.
 
 **Job Hunter** (solo) · github.com/SherwanAli0/job-hunter
-Python, Anthropic API, REST APIs (Greenhouse, Lever, Notion, Gmail), GitHub Actions CI/CD. Agentic tool: processes 50–100 postings/day, scores them 0–100 with Claude structured outputs, emails a daily ranked digest. ~€0.02 per run.
+Python, Anthropic API, LangGraph, AWS (ECS Fargate, S3, SSM, EventBridge, CloudWatch, ECR, IAM), Docker, GitHub Actions CI/CD.
+Production agentic pipeline: ingests 8,000+ postings per run from 28+ sources (7 ATS APIs, government and aggregator APIs, RSS feeds), scores them 0–100 with Claude structured outputs, and emails a ranked daily digest. Orchestrated as a LangGraph state machine and run as a scheduled ECS Fargate task — chosen after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM secrets and CloudWatch cost metrics. Batch API and prompt caching hold it at **$0.06 per run (measured)**. 208-test CI suite.
 
 **Reproducibility Audit & Extension of CSRBoost** (graduation thesis, solo) · github.com/SherwanAli0/csrboost-audit
-Reverse-engineered an IEEE Access 2025 ML paper to 143/143 metric cells over ~75,000 configurations, then designed a novel extension that beat the published method on 12/15 datasets.
+Evaluated 143 reported results from an IEEE Access 2025 paper across 15 datasets: only 29% reproduced. Recovered 143/143 by identifying the undisclosed evaluation choices, then designed ERF-CSRBoost, beating the published method on 14 of 15 datasets (mAP +0.090). Live at fixyourdataset.fly.dev.
 
 **FUS Recommender System Replication** (4-author team) · github.com/SherwanAli0/Recommender-System-Paper-Replication
 MovieLens 100k, 10-fold cross-validation; matched published MAE to four decimals (0.7025 vs 0.703).
