@@ -227,3 +227,36 @@ class TestTwoPhaseDescriptionFetching:
         jobs, timed_out = scrapers._run_scraper_guarded(scrape_jobspy)
         assert timed_out is True
         assert [j["id"] for j in jobs] == ["a", "b"], "partial results must survive a timeout"
+
+
+class TestBackgroundPathSalvage:
+    """The partial-results fix was first applied only to the guarded path —
+    but scrape_jobspy runs on the BACKGROUND path, which still discarded
+    everything on grace expiry. Result: three consecutive production runs with
+    linkedin=0, indeed=0, a dead-source warning in the digest, and the fix
+    sitting green in the test suite the whole time. These tests pin the path
+    that actually runs."""
+
+    def test_jobspy_partials_are_salvaged(self):
+        scrapers._JOBSPY_PARTIAL.clear()
+        scrapers._JOBSPY_PARTIAL.extend([{"id": "a"}, {"id": "b"}])
+        assert [j["id"] for j in scrapers._salvage_background("scrape_jobspy")] == ["a", "b"]
+
+    def test_other_background_scrapers_return_empty(self):
+        scrapers._JOBSPY_PARTIAL.clear()
+        scrapers._JOBSPY_PARTIAL.append({"id": "x"})
+        assert scrapers._salvage_background("scrape_web_search") == []
+
+    def test_salvage_is_a_snapshot_not_the_live_list(self):
+        scrapers._JOBSPY_PARTIAL.clear()
+        scrapers._JOBSPY_PARTIAL.append({"id": "a"})
+        snap = scrapers._salvage_background("scrape_jobspy")
+        scrapers._JOBSPY_PARTIAL.append({"id": "late"})
+        assert len(snap) == 1, "the thread may still be appending; the copy must not grow"
+
+    def test_scrape_all_uses_the_salvage_helper(self):
+        src = open("scrapers.py", encoding="utf-8").read()
+        collect = src.split("# Collect the background sources")[1].split("_recover_late_scrapers")[0]
+        assert "_salvage_background(" in collect, (
+            "the background collection loop must salvage, not skip"
+        )

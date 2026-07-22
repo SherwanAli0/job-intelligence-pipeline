@@ -102,6 +102,17 @@ _PENDING_SCRAPERS: list = []
 # Jobs JobSpy has collected so far this run. Read by the timeout handler so a
 # slow LinkedIn scrape yields partial results instead of nothing at all.
 _JOBSPY_PARTIAL: list = []
+
+
+def _salvage_background(name: str) -> list[dict]:
+    """What a still-running background scraper has accumulated so far.
+
+    Snapshot, not handoff: the thread may still be appending, so copy under
+    the GIL and let the daemon die with the process. Only JobSpy publishes
+    partial progress today; anything else returns empty and is skipped."""
+    if name == "scrape_jobspy":
+        return list(_JOBSPY_PARTIAL)
+    return []
 # [fetched, needed, skipped_on_title] accumulated across per-query enrichment
 _JOBSPY_DESC_STATS: list = [0, 0, 0]
 
@@ -2654,7 +2665,19 @@ def scrape_all() -> list[dict]:
         t.join(BACKGROUND_JOIN_SECONDS)
         SCRAPER_TIMINGS[name] = round(time.time() - t0, 1)
         if t.is_alive():
-            print(f"  [{name}] still running after the grace period — skipped this run")
+            # Salvage what the scraper accumulated instead of discarding it.
+            # This exact gap produced three consecutive zero-LinkedIn runs:
+            # the partial-results fix had been applied to the guarded path,
+            # but scrape_jobspy runs on THIS path, which still threw away
+            # everything on grace expiry. JobSpy enriches per query, so the
+            # salvaged jobs already carry descriptions and filter normally.
+            partial = _salvage_background(name)
+            if partial:
+                print(f"  [{name}] still running — salvaging {len(partial)} jobs "
+                      f"collected so far instead of skipping the source")
+                all_jobs.extend(partial)
+            else:
+                print(f"  [{name}] still running after the grace period — skipped this run")
         else:
             print(f"  [{name}] collected {len(box['jobs'])} jobs from background")
             all_jobs.extend(box["jobs"])
