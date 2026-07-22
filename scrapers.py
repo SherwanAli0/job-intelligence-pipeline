@@ -17,6 +17,7 @@ Sources:
 
 import hashlib
 import os
+import re
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -319,12 +320,36 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False) -> None:
         need = need[:_JOBSPY_DESC_CAP]
 
     def _fetch(j):
-        text = _fetch_full_description(j.get("url", ""))
+        url = j.get("url", "")
+        text = _fetch_full_description(url)
+        if not text and "linkedin.com" in url:
+            # LinkedIn softly throttles bursts by serving empty pages rather
+            # than a status code. One paced retry recovers most of them.
+            time.sleep(1.0)
+            text = _fetch_full_description(url)
         if len(text) > len(j.get("description") or ""):
             j["description"] = text[:5000]
         return [j] if text else []
 
-    fetched = _parallel_collect(need, _fetch, "JobSpy-desc") if need else []
+    # LinkedIn drops concurrent description requests (measured: 5/5 fetched
+    # sequentially, 38/200 at 6 workers), so its URLs go through a slow lane —
+    # low concurrency plus pacing — while every other host keeps the full pool.
+    li = [j for j in need if "linkedin.com" in (j.get("url") or "")]
+    other = [j for j in need if j not in li]
+    fetched = []
+    if other:
+        fetched += _parallel_collect(other, _fetch, "desc")
+    if li:
+        global SCRAPE_WORKERS
+        saved = SCRAPE_WORKERS
+        SCRAPE_WORKERS = 2
+        try:
+            def _fetch_paced(j):
+                time.sleep(0.5)
+                return _fetch(j)
+            fetched += _parallel_collect(li, _fetch_paced, "desc-linkedin")
+        finally:
+            SCRAPE_WORKERS = saved
 
     if quiet:
         _JOBSPY_DESC_STATS[0] += len(fetched); _JOBSPY_DESC_STATS[1] += len(need)
@@ -2606,6 +2631,114 @@ def scrape_xing() -> list[dict]:
     return results
 
 
+# ── LinkedIn guest API (direct, server-side filtered) ─────────────────────────
+# LinkedIn serves logged-out job search through a public guest endpoint that
+# accepts filters JobSpy does not expose — crucially f_E (experience level) and
+# f_TPR (time range). That changes the economics completely: LinkedIn
+# rate-limits at roughly 10 pages (~250 results) per IP, and JobSpy's keyword
+# queries spend that budget downloading senior roles we immediately discard.
+# With f_E=2,3 (Entry level + Associate) the filtering happens SERVER-SIDE,
+# so every card in the budget is already in the junior band.
+#
+# A few broad queries then beat many narrow ones: 5 queries x 10 pages x 25
+# cards = up to 1,250 pre-filtered candidates per run, where 29 narrow JobSpy
+# queries yielded ~400 mixed-seniority rows. Fargate assigns a fresh public IP
+# per task, so the per-IP budget resets every run.
+#
+# Verified live before building: HTTP 200 with f_E=2 returns genuine
+# entry-level German postings with dates and companies.
+
+_LI_GUEST_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+_LI_GUEST_QUERIES = (
+    "data scientist", "data analyst", "machine learning",
+    "ai engineer", "data engineer",
+)
+_LI_GUEST_PAGES = 10          # LinkedIn throttles around page 10 per IP
+_LI_GUEST_PAGE_SLEEP = 1.5    # pace like a human; stop instantly on 429
+_LI_ID_RE = re.compile(r"/jobs/view/(?:[^/?]*-)?(\d{6,})")
+
+
+def _li_canonical_url(href: str) -> str:
+    """Normalize any LinkedIn job link to https://www.linkedin.com/jobs/view/<id>.
+
+    Guest cards link with locale hosts and tracking params
+    (de.linkedin.com/jobs/view/data-scientist-...-4432582958?position=3...),
+    while JobSpy uses the bare form. Same posting must produce the same id or
+    cross-source dedup treats them as two jobs."""
+    m = _LI_ID_RE.search(href or "")
+    return f"https://www.linkedin.com/jobs/view/{m.group(1)}" if m else (href or "")
+
+
+def scrape_linkedin_guest() -> list[dict]:
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    throttled = False
+
+    for query in _LI_GUEST_QUERIES:
+        if throttled:
+            break
+        for page in range(_LI_GUEST_PAGES):
+            try:
+                r = requests.get(
+                    _LI_GUEST_URL,
+                    params={
+                        "keywords": query,
+                        "location": "Germany",
+                        "f_TPR": "r259200",   # last 72h, matching the pipeline window
+                        "f_E": "2,3",         # Entry level + Associate — the junior band
+                        "start": page * 25,
+                    },
+                    headers=HEADERS, timeout=15,
+                )
+                if r.status_code == 429:
+                    # Per-IP budget exhausted. Keep what we have; pushing on
+                    # just makes LinkedIn block harder.
+                    print(f"  [LinkedIn-Guest] 429 at '{query}' page {page + 1} — "
+                          f"stopping with {len(results)} jobs")
+                    throttled = True
+                    break
+                if r.status_code != 200:
+                    break
+
+                soup = BeautifulSoup(r.text, "html.parser")
+                cards = soup.select("li")
+                if len(cards) < 5:
+                    break                      # end of results for this query
+
+                for c in cards:
+                    a = c.select_one("a.base-card__full-link") or c.select_one("a")
+                    t = c.select_one(".base-search-card__title")
+                    co = c.select_one(".base-search-card__subtitle")
+                    loc = c.select_one(".job-search-card__location")
+                    tm = c.select_one("time")
+                    url = _li_canonical_url(a.get("href", "") if a else "")
+                    if not url or not t or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    results.append(job(
+                        title=t.get_text(strip=True),
+                        company=co.get_text(strip=True) if co else "LinkedIn",
+                        location=loc.get_text(strip=True) if loc else "Germany",
+                        url=url,
+                        source="linkedin",     # same source label as JobSpy's rows:
+                                               # the dead-source alarm and parity check
+                                               # track LinkedIn coverage as a whole
+                        description="",
+                        posted_at=(tm.get("datetime") or "") if tm else "",
+                    ))
+                time.sleep(_LI_GUEST_PAGE_SLEEP)
+            except Exception as e:
+                print(f"  [LinkedIn-Guest] '{query}' page {page + 1} failed: {e}")
+                break
+
+    # Same two-phase enrichment as JobSpy: title-screen first, then parallel
+    # description fetches for the plausible subset only.
+    _enrich_jobspy_descriptions(results)
+    print(f"  [LinkedIn-Guest] {len(results)} entry-level jobs "
+          f"across {len(_LI_GUEST_QUERIES)} broad queries")
+    return results
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def scrape_all() -> list[dict]:
@@ -2633,6 +2766,7 @@ def scrape_all() -> list[dict]:
         scrape_recruitee,          # Limehome and other EU startups
         scrape_germantechjobs,     # germantechjobs.de RSS — German tech aggregator
         scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
+        scrape_linkedin_guest,     # LinkedIn guest API — server-side entry-level filter
         scrape_xing,               # XING GraphQL — German SME / recruiter-native market
         scrape_berlinstartupjobs,  # berlinstartupjobs.com RSS (best-effort, Cloudflare-intermittent)
         scrape_join,               # join.com (best-effort, no confirmed public endpoint)
