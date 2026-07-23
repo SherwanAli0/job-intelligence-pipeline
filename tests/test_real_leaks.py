@@ -222,3 +222,71 @@ class TestTwoYearsIsNowExcluded:
     def test_one_year_still_survives(self):
         assert main._no_experience_overload(
             _job("Engineer", "1 year of experience with Python is enough."))
+
+
+class TestDigestRepeats:
+    """The owner received 'AI & Data Engineer @ RWE AG' on consecutive days.
+    seen_jobs.json remembers URLs, but Adzuna mints a new tracking URL for the
+    same posting on every scrape, so URL memory cannot stop the repeat. Digest
+    memory is therefore keyed on normalized (company, title) as well."""
+
+    def test_same_job_different_url_produces_the_same_digest_key(self):
+        a = _job("AI & Data Engineer d/f/m", "x")
+        a["company"] = "RWE AG"
+        b = dict(a, url="https://adzuna.de/land/ad/999?tracking=DIFFERENT")
+        assert main._digest_key(a) == main._digest_key(b)
+
+    def test_gender_marker_and_legal_form_do_not_change_the_key(self):
+        a = _job("AI & Data Engineer (m/w/d)", "x"); a["company"] = "RWE AG"
+        b = _job("AI & Data Engineer", "x"); b["company"] = "RWE"
+        assert main._digest_key(a) == main._digest_key(b)
+
+    def test_different_roles_at_the_same_company_keep_distinct_keys(self):
+        a = _job("Data Engineer", "x"); a["company"] = "RWE AG"
+        b = _job("Data Scientist", "x"); b["company"] = "RWE AG"
+        assert main._digest_key(a) != main._digest_key(b)
+
+
+class TestFreshnessCap:
+    """13 of 14 jobs in a real digest were more than a day old; one was six
+    days old. Running twice daily exists to apply FAST, so known-stale
+    postings never reach the digest."""
+
+    def _aged(self, hours):
+        from datetime import datetime, timedelta, timezone
+        ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        j = _job("Data Scientist", "x")
+        j["posted_at"] = ts
+        return j
+
+    def test_six_day_old_posting_is_dropped(self):
+        assert not main._is_fresh_enough(self._aged(6 * 24))
+
+    def test_thirty_hour_old_posting_is_dropped(self):
+        assert not main._is_fresh_enough(self._aged(30))
+
+    def test_recent_posting_survives(self):
+        assert main._is_fresh_enough(self._aged(5))
+
+    def test_unknown_age_is_kept_not_guessed(self):
+        j = _job("Data Scientist", "x")
+        j["posted_at"] = ""
+        assert main._is_fresh_enough(j)
+
+
+class TestWorkingStudentEnglishPhrasing:
+    def test_english_working_student_title_is_disqualified(self):
+        """Real digest: 'Working Student (f/m/d) Python & AI Automation
+        @ Innomotics'. The filter knew 'Werkstudent' but not its English
+        translation, and the owner cannot take these roles at all."""
+        j = _job("Working Student (f/m/d) Python & AI Automation", """
+            Support our Market Intelligence team. Our working language is
+            English. You are enrolled at a university.
+        """)
+        dq, _r, cat = scorer._hard_disqualify(j)
+        assert dq and cat == "werkstudent"
+
+    def test_german_werkstudent_still_disqualified(self):
+        j = _job("Werkstudent Data Analytics", "Unterstütze unser Team.")
+        dq, _r, cat = scorer._hard_disqualify(j)
+        assert dq and cat == "werkstudent"

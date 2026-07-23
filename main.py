@@ -709,6 +709,53 @@ def _is_english_friendly(j: dict) -> bool:
 
     return True
 
+# ── Digest memory by company+title, not just URL ─────────────────────────────
+# seen_jobs.json remembers URLs (ids), but some sources mint a NEW url for the
+# same posting on every scrape — Adzuna's redirect links carry per-request
+# tracking tokens — so "RWE AG / AI & Data Engineer" was emailed on consecutive
+# days as a "new" job. Once a job has been in a digest, its normalized
+# (company, title) is remembered here and it never appears again, whatever URL
+# or source it arrives through next time.
+DIGESTED_FILE = Path("digested_keys.json")
+_DIGESTED_RETENTION_DAYS = 30
+
+
+def _digest_key(j: dict) -> str:
+    return f"{_normalize_company(j.get('company',''))}::{_normalize(j.get('title',''))}"
+
+
+def load_digested() -> dict[str, str]:
+    raw = storage.read_text(DIGESTED_FILE.name)
+    if raw:
+        try:
+            return dict(json.loads(raw))
+        except Exception:
+            return {}
+    return {}
+
+
+def save_digested(d: dict[str, str]) -> None:
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=_DIGESTED_RETENTION_DAYS)).isoformat()
+    kept = {k: v for k, v in d.items() if str(v) >= cutoff}
+    storage.write_text(DIGESTED_FILE.name, json.dumps(dict(sorted(kept.items())), indent=2))
+
+
+# ── Freshness cap for the digest ─────────────────────────────────────────────
+# The point of running twice a day is applying FAST. A posting the pipeline
+# discovers 6 days after it went up has hundreds of applicants already, so
+# jobs with a KNOWN posting age beyond this never reach the digest. Unknown
+# ages are kept — several boards omit dates, and absent evidence is not age.
+_MAX_POSTING_AGE_HOURS = 24
+
+
+def _is_fresh_enough(j: dict) -> bool:
+    age_days = _job_age_days(j)
+    if age_days is None:
+        return True
+    return age_days * 24 <= _MAX_POSTING_AGE_HOURS
+
+
 SEEN_FILE = Path("seen_jobs.json")
 # Prune ids not re-seen for this long. Postings that vanished 60+ days ago can
 # only reappear as genuine reposts, which deserve a fresh look anyway (the
@@ -973,6 +1020,13 @@ def node_filter(state: dict) -> dict:
         print(f"After {label}: {len(kept)}")
         return kept
 
+    # Already emailed under another URL? (Adzuna re-mints links daily.)
+    digested = load_digested()
+    new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in digested,
+                             "Already-digested filter (company+title)")
+    # Stale postings never reach the digest; the whole point is applying fast.
+    new_jobs = _apply_filter(new_jobs, _is_fresh_enough,
+                             f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
     new_jobs = _apply_filter(new_jobs, _is_english_friendly, "English filter")
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
@@ -1077,7 +1131,14 @@ def node_persist(state: dict) -> dict:
         today = _date.today().isoformat()
         seen.update({j["id"]: today for j in all_jobs})
         save_seen(seen)
-        print("\nDone. seen_jobs.json updated.")
+        # Remember what was actually EMAILED by company+title, so the same
+        # posting can never return under a fresh tracking URL or via another
+        # source. Near-misses count too — shown is shown.
+        digested = load_digested()
+        digested.update({_digest_key(j): today
+                         for j in state.get("top", []) + state.get("near", [])})
+        save_digested(digested)
+        print("\nDone. seen_jobs.json + digested_keys.json updated.")
     else:
         # B2 guard: a failed send must not bury the day's matches.
         print("\nEmail delivery FAILED - seen_jobs.json NOT updated so today's "

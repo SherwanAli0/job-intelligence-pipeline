@@ -417,7 +417,10 @@ def scrape_jobspy() -> list[dict]:
                     # requests, spread across a thread pool, so the result cap
                     # can be raised instead of lowered.
                     results_wanted=100,
-                    hours_old=72,
+                    # 24h window: the owner runs twice daily precisely to apply
+                    # fast, and postings older than a day were crowding out
+                    # fresh ones (a digest arrived with 13/14 jobs >24h old).
+                    hours_old=24,
                     country_indeed="Germany",
                     # WITHOUT this, LinkedIn rows carry only a short snippet —
                     # the requirements section is never downloaded at all. That
@@ -2684,7 +2687,7 @@ def scrape_linkedin_guest() -> list[dict]:
                     params={
                         "keywords": query,
                         "location": "Germany",
-                        "f_TPR": "r259200",   # last 72h, matching the pipeline window
+                        "f_TPR": "r86400",    # last 24h — apply-fast is the whole point
                         "f_E": "2,3",         # Entry level + Associate — the junior band
                         "start": page * 25,
                     },

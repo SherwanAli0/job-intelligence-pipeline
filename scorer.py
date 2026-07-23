@@ -417,7 +417,11 @@ from filters import (
 # Werkstudent is a German-law student-employment status; you must be enrolled
 # at a German university to work as one. Drop these unconditionally.
 _RE_WERKSTUDENT_TITLE = re.compile(
-    r"\b(werkstudent|werkstudentin|werk-student|student\s+assistant|student\s+helper|"
+    # "working student" is the English phrasing of the same German-law
+    # employment form — a real digest carried "Working Student (f/m/d) Python
+    # & AI Automation @ Innomotics" straight past this filter.
+    r"\b(werkstudent|werkstudentin|werk-student|working\s+student|"
+    r"student\s+assistant|student\s+helper|"
     r"hiwi|studentische[rn]?\s+(mitarbeiter|hilfskraft))\b",
     re.IGNORECASE,
 )
