@@ -10,3 +10,4 @@ applied_jobs.json
 # transient task ids from manual runs
 aws/.*-run
 aws/.*-task
+shown_jobs.jsonl

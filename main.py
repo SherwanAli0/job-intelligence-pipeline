@@ -78,6 +78,9 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "Recruitee":        74,
     # Tier 2 — government / aggregator job boards
     "Arbeitsagentur":   60,
+    "GetInIT":          58,
+    "Absolventa":       56,
+    "HiringCafe":       42,
     "Arbeitnow":        55,
     "Remotive":         50,
     # Tier 3 — HN, search
@@ -741,6 +744,48 @@ def save_digested(d: dict[str, str]) -> None:
     storage.write_text(DIGESTED_FILE.name, json.dumps(dict(sorted(kept.items())), indent=2))
 
 
+# ── O2: shown-jobs log — the join data the tracker's promise depends on ──────
+# track.py's docstring promises "after ~30 applications you KNOW which tracks/
+# channels actually convert", but nothing recorded WHAT was shown with which
+# features: digested_keys.json is only company::title→date. This log captures
+# every digested job with track/source/score-band/age, so `track.py stats` can
+# compute applied-per-shown and interview-per-applied by source and track.
+# Gitignored and S3-side like the other state files.
+SHOWN_FILE = Path("shown_jobs.jsonl")
+
+
+def _shown_record(j: dict, band: str, shown_at: str) -> dict:
+    import hashlib as _hl
+    url = (j.get("url") or "").strip()
+    return {
+        "id": j.get("id", ""),
+        # track.py keys applied jobs by md5(url) — record it so the join works
+        # even though pipeline ids hash url+title+company.
+        "url_hash": _hl.md5(url.lower().encode()).hexdigest() if url else "",
+        "key": _digest_key(j),
+        "title": (j.get("title") or "")[:120],
+        "company": (j.get("company") or "")[:80],
+        "source": j.get("source", ""),
+        "track": j.get("_track", "?"),
+        "score": j.get("score", 0),
+        "band": band,                      # "top" or "near"
+        "age_days": _job_age_days(j),
+        "shown_at": shown_at,
+    }
+
+
+def _record_shown(top: list[dict], near: list[dict]) -> None:
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        for j in top:
+            storage.append_line(SHOWN_FILE.name, json.dumps(_shown_record(j, "top", ts), ensure_ascii=False))
+        for j in near:
+            storage.append_line(SHOWN_FILE.name, json.dumps(_shown_record(j, "near", ts), ensure_ascii=False))
+    except Exception as e:
+        print(f"  [Shown] could not record shown jobs: {e}")
+
+
 # ── Freshness cap for the digest ─────────────────────────────────────────────
 # The point of running twice a day is applying FAST. A posting the pipeline
 # discovers 6 days after it went up has hundreds of applicants already, so
@@ -1138,6 +1183,8 @@ def node_persist(state: dict) -> dict:
         digested.update({_digest_key(j): today
                          for j in state.get("top", []) + state.get("near", [])})
         save_digested(digested)
+        # O2: log what was shown, with features, for the conversion join
+        _record_shown(state.get("top", []), state.get("near", []))
         print("\nDone. seen_jobs.json + digested_keys.json updated.")
     else:
         # B2 guard: a failed send must not bury the day's matches.
@@ -1169,6 +1216,7 @@ def node_persist(state: dict) -> dict:
             "phases": state.get("phases", {}),
             "scrapers": dict(sorted(_scraper_timings().items(), key=lambda x: -x[1])[:10]),
             "llm_cost_usd": round(llm_cost, 4),
+            "batch_means": getattr(_sc, "SCORE_BATCH_MEANS", []),
             "tokens": {k: v for k, v in token_usage.items() if k != "by_model"},
         })
 

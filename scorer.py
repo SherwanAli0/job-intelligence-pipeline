@@ -129,6 +129,11 @@ def _classify_track(j: dict) -> str:
 
 BATCH_SIZE = 10
 
+# Mean Haiku score per batch from the last run — a drift signal for
+# run_stats.jsonl. If batch means trend up or down over weeks with a stable
+# job mix, the judge is drifting, not the market.
+SCORE_BATCH_MEANS: list = []
+
 # Two-stage scoring (budget mode):
 #   Stage 2 — Haiku scores everything that survives the pre-screen (cheap bulk)
 #   Stage 3 — Sonnet re-scores only the finalists Haiku rates >= the floor,
@@ -670,6 +675,19 @@ SCORING SCALE — be calibrated, not generous
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
 - 0-39: Wrong field, wrong stack, wrong seniority, or wrong language requirement.
 
+CALIBRATION ANCHORS — score every job RELATIVE TO THESE THREE, not relative
+to the other jobs in this batch. A batch full of weak jobs must not inflate a
+mediocre one; a batch full of strong jobs must not deflate a good one.
+- ANCHOR 75: "Junior Machine Learning Engineer, Berlin. Python, PyTorch,
+  scikit-learn. 0-2 years experience. English-speaking team, German nice to
+  have. Bachelor's required." → 75. Clean junior fit, minor unknowns.
+- ANCHOR 45: "Data Engineer (m/w/d), Hamburg. Airflow, dbt, Snowflake.
+  2 years experience required. German und Englisch fließend." → 45. Adjacent
+  stack, experience bar at the edge, German requirement ambiguous.
+- ANCHOR 20: "Senior Data Scientist, Munich. 5+ years production ML,
+  team leadership. Verhandlungssicheres Deutsch." → 20. Wrong seniority and
+  hard German requirement; field match alone cannot lift it.
+
 ═══════════════════════════════════════════════════════════════
 WORK AUTHORIZATION (highest priority, applied before any other cap)
 ═══════════════════════════════════════════════════════════════
@@ -1048,9 +1066,19 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
         return groups
 
     def _make_groups(pool: list[dict], model: str) -> list[tuple[list[dict], str, str]]:
+        import random
         out = []
         for track, group in _by_track(pool).items():
             profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
+            # P2 debias: batches used to form in stable scrape order, so a
+            # job's neighbours were always the same source's postings — and a
+            # pointwise judge's absolute score is measurably contaminated by
+            # its batch context (arXiv:2506.22316, 2406.07791). Shuffling
+            # breaks the systematic pairing; a fresh seed per run means any
+            # residual composition effect averages out across runs instead of
+            # biasing the same jobs the same way every time.
+            group = list(group)
+            random.shuffle(group)
             for i in range(0, len(group), BATCH_SIZE):
                 out.append((group[i : i + BATCH_SIZE], model, profile))
         return out
@@ -1068,6 +1096,12 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
             time.sleep(1)
             print(f"  Scored {done}/{len(to_score)}")
     scored = [j for grp, _, _ in groups for j in grp]
+
+    SCORE_BATCH_MEANS.clear()
+    for grp, _, _ in groups:
+        vals = [j.get("score", 0) for j in grp]
+        if vals:
+            SCORE_BATCH_MEANS.append(round(sum(vals) / len(vals), 1))
 
     # ── Stage 3: Sonnet re-score of finalists (budget mode), per-track profile ─
     # Only jobs Haiku rates >= SONNET_RESCORE_FLOOR get the expensive second

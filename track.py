@@ -162,6 +162,85 @@ def followup_draft(job: dict) -> str:
     )
 
 
+def conversion_stats() -> dict:
+    """
+    Join what the pipeline SHOWED (shown_jobs.jsonl, written at digest time
+    with track/source/band) against what the owner APPLIED to and what came
+    of it. This is the join the docstring's promise — 'after ~30 applications
+    you KNOW which channels convert' — actually requires.
+
+    Applied entries are keyed by md5(url); shown records carry that same hash
+    alongside the pipeline id, so the join is a set lookup, with company+title
+    as fallback for applications logged with a slightly different URL.
+    """
+    try:
+        import storage
+        raw = storage.read_text("shown_jobs.jsonl")
+    except Exception:
+        raw = None
+    if not raw:
+        return {}
+
+    shown = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if line:
+            try:
+                shown.append(json.loads(line))
+            except Exception:
+                pass
+    if not shown:
+        return {}
+
+    applied = load_applied()
+    applied_hashes = set(applied.keys())
+    good_statuses = {"interview", "offer"}
+    applied_norm = {}
+    for k, v in applied.items():
+        ct = f"{(v.get('company') or '').lower().strip()}::{(v.get('title') or '').lower().strip()}"
+        applied_norm[ct] = v
+
+    per = {}
+    seen_ids = set()
+    for s in shown:
+        sid = s.get("id") or s.get("url_hash")
+        if sid in seen_ids:               # a job may be shown in several digests
+            continue
+        seen_ids.add(sid)
+        for dim, val in (("source", s.get("source") or "?"),
+                         ("track", s.get("track") or "?")):
+            d = per.setdefault(dim, {}).setdefault(val, {"shown": 0, "applied": 0, "interviews": 0})
+            d["shown"] += 1
+            rec = None
+            if s.get("url_hash") in applied_hashes:
+                rec = applied[s["url_hash"]]
+            else:
+                ct = f"{(s.get('company') or '').lower().strip()}::{(s.get('title') or '').lower().strip()}"
+                rec = applied_norm.get(ct)
+            if rec:
+                d["applied"] += 1
+                if rec.get("status") in good_statuses:
+                    d["interviews"] += 1
+    return per
+
+
+def _print_conversion() -> None:
+    per = conversion_stats()
+    if not per:
+        print("\n(no shown-jobs history yet — the conversion table appears "
+              "after the pipeline has digested jobs with the O2 logging live)")
+        return
+    for dim in ("track", "source"):
+        rows = sorted((per.get(dim) or {}).items(), key=lambda x: -x[1]["shown"])
+        if not rows:
+            continue
+        print(f"\nConversion by {dim} (shown → applied → interview/offer):")
+        for name, d in rows[:12]:
+            rate = f"{d['applied']}/{d['shown']}"
+            print(f"  {name:18s} shown={d['shown']:4d}  applied={d['applied']:3d} ({rate})"
+                  f"  interviews={d['interviews']}")
+
+
 def _cli() -> int:
     args = sys.argv[1:]
     if not args:
@@ -187,6 +266,7 @@ def _cli() -> int:
             print(f"\n{len(fu)} need follow-up (>{FOLLOWUP_DAYS}d, no response):")
             for j in fu:
                 print(f"  {j['days']:3d}d  {j.get('title','')[:45]:45s} @ {j.get('company','')}")
+        _print_conversion()
     else:
         print(__doc__)
         return 1

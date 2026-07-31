@@ -16,6 +16,7 @@ Sources:
 """
 
 import hashlib
+import json
 import os
 import re
 import time
@@ -2634,6 +2635,261 @@ def scrape_xing() -> list[dict]:
     return results
 
 
+# ── Shared: JSON-LD JobPosting extractor ─────────────────────────────────────
+# Many German boards embed a schema.org JobPosting block in each posting page.
+# Pages often carry several ld+json blocks (BreadcrumbList, ItemList, ...), so
+# the parser must select @type == JobPosting specifically.
+
+def _parse_jsonld_jobposting(html: str) -> dict | None:
+    for m in re.finditer(r'<script type="application/ld\+json">(.*?)</script>', html, re.S):
+        try:
+            d = json.loads(m.group(1))
+        except Exception:
+            continue
+        for item in (d if isinstance(d, list) else [d]):
+            if isinstance(item, dict) and item.get("@type") == "JobPosting":
+                return item
+    return None
+
+
+def _jsonld_location(d: dict) -> str:
+    locs = d.get("jobLocation") or []
+    if isinstance(locs, dict):
+        locs = [locs]
+    cities = []
+    for l in locs:
+        addr = (l or {}).get("address") or {}
+        c = addr.get("addressLocality") or addr.get("addressRegion")
+        if c:
+            cities.append(str(c))
+    return ", ".join(cities[:3]) or "Germany"
+
+
+# ── Absolventa (D2) — German graduate/trainee board via sitemap + JSON-LD ────
+# Germany's dedicated graduate-entry board: trainee programmes and
+# Direkteinstieg roles that ATS APIs never surface. sitemap-stellen.xml lists
+# ~9,100 posting URLs (verified live); slugs are descriptive, so a vocabulary
+# prefilter keeps the fetch volume to the data/AI subset before any page is
+# requested. Detail pages carry a clean JSON-LD JobPosting (verified).
+_ABSOLVENTA_SITEMAP = "https://www.absolventa.de/sitemap-stellen.xml"
+_ABSOLVENTA_VOCAB = re.compile(
+    r"data|analyst|machine|scientist|kuenstlich|artificial|intelligen|python"
+    r"|-ki-|informatik|software|developer|entwickler",
+    re.IGNORECASE,
+)
+# The board is full of retail/gastro/sales juniors; exclude by slug before
+# spending a fetch. Praktikum/Werkstudent are ineligible for the owner anyway.
+_ABSOLVENTA_EXCLUDE = re.compile(
+    r"praktik|werkstudent|schueler|ausbildung|verkauf|verkaeuf|bedienung"
+    r"|vertrieb|gastro|filial|lager|kurier",
+    re.IGNORECASE,
+)
+_ABSOLVENTA_CAP = 100
+
+
+def _absolventa_page(url: str) -> list[dict]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        d = _parse_jsonld_jobposting(r.text)
+        if not d:
+            return []
+        title = (d.get("title") or "").strip()
+        if not title:
+            return []
+        desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text(separator="\n")
+        org = d.get("hiringOrganization") or {}
+        return [job(
+            title=title,
+            company=(org.get("name") or "Absolventa").strip(),
+            location=_jsonld_location(d),
+            url=url,
+            source="Absolventa",
+            description=desc,
+            posted_at=d.get("datePosted") or "",
+        )]
+    except Exception:
+        return []
+
+
+def scrape_absolventa() -> list[dict]:
+    try:
+        r = requests.get(_ABSOLVENTA_SITEMAP, headers=HEADERS, timeout=30)
+        if r.status_code != 200:
+            print(f"  [Absolventa] sitemap HTTP {r.status_code}")
+            return []
+        urls = re.findall(r"<loc>(.*?)</loc>", r.text)
+        candidates = []
+        for u in urls:
+            slug = u.rsplit("/", 1)[-1]
+            if _ABSOLVENTA_VOCAB.search(slug) and not _ABSOLVENTA_EXCLUDE.search(slug):
+                candidates.append(u)
+        picked = candidates[:_ABSOLVENTA_CAP]
+        results = _parallel_collect(picked, _absolventa_page, "Absolventa")
+        print(f"  [Absolventa] {len(results)} jobs from {len(picked)} slug-matched pages "
+              f"({len(candidates)} matched of {len(urls)} in sitemap)")
+        return results
+    except Exception as e:
+        print(f"  [Absolventa] failed: {e}")
+        return []
+
+
+# ── get-in-IT (D1) — German entry-level IT board via sitemap + __NEXT_DATA__ ─
+# A board of junior/graduate IT roles in Germany, largely SMEs without a
+# Greenhouse/Personio presence. Landing-page pagination is broken (verified:
+# ?page=2 returns page 1's jobs), so the sitemap's ~1,200 individual posting
+# URLs are the real index. Detail pages embed the posting as
+# __NEXT_DATA__ props.initialState.jobJob.job (verified live).
+_GETINIT_SITEMAP = "https://www.get-in-it.de/sitemap.xml"
+_GETINIT_CAP = 80
+_NEXT_DATA_RE = re.compile(
+    r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', re.S)
+
+
+def _getinit_page(url: str) -> list[dict]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        m = _NEXT_DATA_RE.search(r.text)
+        if not m:
+            return []
+        data = json.loads(m.group(1))
+        j = (((data.get("props") or {}).get("initialState") or {})
+             .get("jobJob") or {}).get("job") or {}
+        header = j.get("header") or {}
+        title = (header.get("title") or "").strip()
+        if not title:
+            return []
+        desc = BeautifulSoup(j.get("content") or "", "html.parser").get_text(separator="\n")
+        info = j.get("jobInfo") or {}
+        # The board tags target degrees; surfacing them lets the existing
+        # Masters filter see e.g. "Master/Diplom, Promotion" requirements.
+        degrees = ", ".join(info.get("degrees") or [])
+        if degrees:
+            desc += f"\nAbschluss: {degrees}"
+        return [job(
+            title=title,
+            company=(header.get("companyName") or "get in IT").strip(),
+            location=", ".join((header.get("locations") or [])[:3]) or "Germany",
+            url=url,
+            source="GetInIT",
+            description=desc,
+        )]
+    except Exception:
+        return []
+
+
+def scrape_getinit() -> list[dict]:
+    try:
+        r = requests.get(_GETINIT_SITEMAP, headers=HEADERS, timeout=30)
+        if r.status_code != 200:
+            print(f"  [GetInIT] sitemap HTTP {r.status_code}")
+            return []
+        # Pair each job loc with its lastmod so fresh postings are fetched first.
+        entries = re.findall(r"<loc>(.*?)</loc>\s*(?:<lastmod>(.*?)</lastmod>)?", r.text)
+        jobs_urls = sorted(
+            (u for u, _lm in entries if "/jobsuche/p" in u),
+            key=lambda u: dict(entries).get(u) or "",
+            reverse=True,
+        )
+        picked = jobs_urls[:_GETINIT_CAP]
+        results = _parallel_collect(picked, _getinit_page, "GetInIT")
+        print(f"  [GetInIT] {len(results)} jobs from {len(picked)} pages "
+              f"({len(jobs_urls)} in sitemap)")
+        return results
+    except Exception as e:
+        print(f"  [GetInIT] failed: {e}")
+        return []
+
+
+# ── hiring.cafe (G1) — one aggregated feed over 40+ ATS platforms ────────────
+# hiring.cafe indexes ATS boards directly, including platforms this repo has
+# no client for (Teamtailor, iCIMS, Avature, Dover, OracleCloud...). Its
+# Next.js data route serves the search server-side filtered: Germany +
+# seniorityLevel "Entry Level" cut a 12,011-hit query to ~3,000 junior-band
+# hits (verified live). Unofficial API: the buildId changes on every deploy,
+# so it is re-bootstrapped from the homepage each run, and any breakage lands
+# in the existing dead-source alarm.
+_HIRINGCAFE_QUERIES = ("data", "machine learning", "artificial intelligence", "analyst")
+_HIRINGCAFE_BUILDID_RE = re.compile(r'"buildId":"([^"]+)"')
+_HIRINGCAFE_GERMANY = {
+    "formatted_address": "Germany", "types": ["country"],
+    "geometry": {"location": {"lat": 51.2, "lon": 6.7}},
+    "id": "user_country",
+    "address_components": [{"long_name": "Germany", "short_name": "DE", "types": ["country"]}],
+    "options": {"flexible_regions": ["anywhere_in_continent", "anywhere_in_world"]},
+}
+
+
+def scrape_hiringcafe() -> list[dict]:
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    try:
+        import urllib.parse
+        home = requests.get("https://hiringcafe.com", headers=HEADERS, timeout=20)
+        m = _HIRINGCAFE_BUILDID_RE.search(home.text)
+        if not m:
+            print("  [HiringCafe] buildId not found on homepage — site redeployed with a new layout?")
+            return []
+        build_id = m.group(1)
+
+        for query in _HIRINGCAFE_QUERIES:
+            state = json.dumps({
+                "searchQuery": query,
+                "locations": [_HIRINGCAFE_GERMANY],
+                "seniorityLevel": ["Entry Level"],
+            })
+            url = (f"https://hiringcafe.com/_next/data/{build_id}/index.json"
+                   f"?searchState={urllib.parse.quote(state)}")
+            r = requests.get(url, headers={**HEADERS, "x-nextjs-data": "1"}, timeout=25)
+            if r.status_code != 200:
+                print(f"  [HiringCafe] '{query}' HTTP {r.status_code}")
+                continue
+            hits = (r.json().get("pageProps") or {}).get("ssrHits") or []
+            for h in hits:
+                v5 = h.get("v5_processed_job_data") or {}
+                countries = v5.get("workplace_countries") or []
+                if countries and "DE" not in countries:
+                    continue
+                apply_url = (h.get("apply_url") or "").strip()
+                if not apply_url or apply_url in seen_urls:
+                    continue
+                seen_urls.add(apply_url)
+                title = (v5.get("core_job_title")
+                         or (h.get("job_information") or {}).get("title") or "").strip()
+                if not title:
+                    continue
+                cities = v5.get("workplace_cities") or []
+                langs = v5.get("language_requirements") or []
+                # Compose a description from the structured fields; the real
+                # posting sits on the target ATS behind apply_url and the
+                # language requirement matters most for downstream filters.
+                desc_bits = [
+                    f"Seniority: {v5.get('seniority_level', '')}",
+                    f"Language requirements: {', '.join(langs)}" if langs else "",
+                    f"Company sector: {v5.get('company_sector_and_industry', '')}",
+                    str(v5.get("company_tagline") or ""),
+                ]
+                results.append(job(
+                    title=title,
+                    company=(v5.get("company_name") or "HiringCafe").strip(),
+                    location=", ".join(str(c) for c in cities[:3]) or "Germany",
+                    url=apply_url,
+                    source="HiringCafe",
+                    description="\n".join(b for b in desc_bits if b),
+                    posted_at=v5.get("estimated_publish_date") or "",
+                    apply_url=apply_url,
+                ))
+            time.sleep(1)
+    except Exception as e:
+        print(f"  [HiringCafe] failed: {e}")
+    print(f"  [HiringCafe] {len(results)} entry-level DE jobs "
+          f"across {len(_HIRINGCAFE_QUERIES)} queries")
+    return results
+
+
 # ── LinkedIn guest API (direct, server-side filtered) ─────────────────────────
 # LinkedIn serves logged-out job search through a public guest endpoint that
 # accepts filters JobSpy does not expose — crucially f_E (experience level) and
@@ -2770,6 +3026,9 @@ def scrape_all() -> list[dict]:
         scrape_germantechjobs,     # germantechjobs.de RSS — German tech aggregator
         scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
         scrape_linkedin_guest,     # LinkedIn guest API — server-side entry-level filter
+        scrape_hiringcafe,         # hiring.cafe — 40+ ATS platforms, entry-level filtered
+        scrape_absolventa,         # Absolventa — German graduate/trainee board
+        scrape_getinit,            # get-in-IT — German entry-level IT board
         scrape_xing,               # XING GraphQL — German SME / recruiter-native market
         scrape_berlinstartupjobs,  # berlinstartupjobs.com RSS (best-effort, Cloudflare-intermittent)
         scrape_join,               # join.com (best-effort, no confirmed public endpoint)

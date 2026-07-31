@@ -137,3 +137,79 @@ class TestApplicationKit:
     def test_env_facts_win(self, monkeypatch):
         monkeypatch.setenv("APPKIT_FACTS", "- Fact one")
         assert ak._load_facts() == "- Fact one"
+
+
+class TestShownJobsLoop:
+    """O2: the conversion join the tracker's own docstring promises. Shown
+    records must carry BOTH the pipeline id and md5(url) — track.py keys
+    applications by url hash alone, so without it the join never matches."""
+
+    def _shown(self, **over):
+        import main
+        j = {"id": "pid1", "url": "https://example.com/Job1", "title": "Junior DS",
+             "company": "Acme", "source": "Greenhouse", "_track": "DS",
+             "score": 72, "posted_at": "", "location": "", "description": ""}
+        j.update(over)
+        return main._shown_record(j, "top", "2026-07-31T10:00:00+00:00")
+
+    def test_record_carries_both_join_keys(self):
+        import hashlib
+        r = self._shown()
+        assert r["id"] == "pid1"
+        assert r["url_hash"] == hashlib.md5(b"https://example.com/job1").hexdigest()
+        assert r["track"] == "DS" and r["band"] == "top" and r["source"] == "Greenhouse"
+
+    def test_conversion_join_by_url_hash(self, tmp_path, monkeypatch):
+        import json, hashlib, importlib
+        import storage, track, main
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(storage, "BUCKET", "")          # local-file mode
+        monkeypatch.setattr(track, "_sync_secret", lambda d: None)
+
+        url = "https://example.com/ds-job"
+        rec = main._shown_record(
+            {"id": "p1", "url": url, "title": "Junior DS", "company": "Acme",
+             "source": "Greenhouse", "_track": "DS", "score": 70, "posted_at": ""},
+            "top", "2026-07-31T10:00:00+00:00")
+        (tmp_path / "shown_jobs.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+
+        track.mark_applied(url, "Junior DS", "Acme")
+        track.set_status(url, "interview")
+
+        per = track.conversion_stats()
+        g = per["source"]["Greenhouse"]
+        assert g == {"shown": 1, "applied": 1, "interviews": 1}
+        assert per["track"]["DS"]["applied"] == 1
+
+    def test_shown_but_never_applied_counts_shown_only(self, tmp_path, monkeypatch):
+        import json
+        import storage, track, main
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(storage, "BUCKET", "")
+        rec = main._shown_record(
+            {"id": "p2", "url": "https://example.com/x", "title": "DA", "company": "B",
+             "source": "linkedin", "_track": "DA", "score": 55, "posted_at": ""},
+            "near", "2026-07-31T10:00:00+00:00")
+        (tmp_path / "shown_jobs.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+        per = track.conversion_stats()
+        assert per["source"]["linkedin"] == {"shown": 1, "applied": 0, "interviews": 0}
+
+    def test_duplicate_shown_entries_counted_once(self, tmp_path, monkeypatch):
+        import json
+        import storage, track, main
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(storage, "BUCKET", "")
+        rec = main._shown_record(
+            {"id": "p3", "url": "https://example.com/y", "title": "ML", "company": "C",
+             "source": "XING", "_track": "ML", "score": 60, "posted_at": ""},
+            "top", "2026-07-31T10:00:00+00:00")
+        lines = json.dumps(rec) + "\n" + json.dumps(rec) + "\n"
+        (tmp_path / "shown_jobs.jsonl").write_text(lines, encoding="utf-8")
+        per = track.conversion_stats()
+        assert per["source"]["XING"]["shown"] == 1
+
+    def test_no_history_is_clean(self, tmp_path, monkeypatch):
+        import storage, track
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(storage, "BUCKET", "")
+        assert track.conversion_stats() == {}
