@@ -681,7 +681,6 @@ ASHBY_SLUGS = [
     "blacksemiconductor", # Black Semiconductor — 25 jobs, Aachen chips
     "axelera",         # Axelera AI — 19 jobs, AI hardware
     "deepjudge",       # DeepJudge — 19 jobs, legal AI search
-    "adaptive-ml",     # Adaptive ML — 18 jobs, LLM
     "kestra",          # Kestra — 18 jobs, data orchestration
     "hawk",            # Hawk AI — 17 jobs, Munich AML/fraud ML
     "lemon-markets",   # lemon.markets — 16 jobs, Berlin trading API
