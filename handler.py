@@ -89,4 +89,9 @@ if __name__ == "__main__":
     # quietly does not apply is worse than having none.
     _dry = "--dry-run" in sys.argv or bool(os.environ.get("DRY_RUN"))
     outcome = _run(dry_run=_dry)
-    sys.exit(0 if outcome["status"] == "ok" else 1)
+    # "skipped" means the overlap guard correctly declined to start a second
+    # concurrent hunt (a manual click while the scheduled run was mid-flight).
+    # That is the system working, not a failure — exiting 1 for it made GitHub
+    # send a red failure email for correct behaviour, which teaches the owner
+    # to ignore red emails. Red must mean genuinely broken.
+    sys.exit(0 if outcome["status"] in ("ok", "skipped") else 1)

@@ -80,4 +80,9 @@ jobs:
                    --query 'tasks[0].containers[0].exitCode' --output text)
           echo "Task finished with exit code: $EXIT"
           echo "Exit code: \`$EXIT\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$EXIT" != "0" ]; then
+            echo "NOTE: if you clicked Run while a scheduled hunt was mid-flight on an" >> "$GITHUB_STEP_SUMMARY"
+            echo "older image, the overlap guard declines the second run - that digest" >> "$GITHUB_STEP_SUMMARY"
+            echo "arrives from the already-running hunt instead." >> "$GITHUB_STEP_SUMMARY"
+          fi
           [ "$EXIT" = "0" ]

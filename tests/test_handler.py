@@ -75,3 +75,14 @@ class TestOutcome:
 
         monkeypatch.setattr(main, "main", _exits)
         assert handler.lambda_handler({}, None)["status"] == "ok"
+
+
+class TestClaimSkipIsNotAFailure:
+    def test_skipped_outcome_exits_zero(self):
+        """The overlap guard declining a second concurrent hunt is correct
+        behaviour. A real user clicked Run while the scheduled hunt was
+        mid-flight and received a red failure email for it — red must be
+        reserved for genuinely broken runs."""
+        src = open(handler.__file__, encoding="utf-8").read()
+        main_block = src.split('if __name__ == "__main__":')[1]
+        assert '"skipped"' in main_block, "claim-skip must exit 0, not 1"
