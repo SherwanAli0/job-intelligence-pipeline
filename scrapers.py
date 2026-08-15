@@ -21,6 +21,7 @@ import os
 import re
 import time
 import traceback
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -1040,6 +1041,13 @@ def scrape_arbeitsagentur() -> list[dict]:
 
 # Companies using Workday — format: (tenant, site, display_name)
 WORKDAY_TENANTS = [
+    # ── Bonn commute belt (2026-08-15 regional sweep, verified live) ─────────
+    # Koblenz is 32-47 min from Bonn Hbf, and these two are the densest
+    # Werkstudent employers found anywhere in the belt: a "Werkstudent" search
+    # returned 14 and 8 open roles respectively, including Werkstudent
+    # Mathematik, Werkstudent IT and Werkstudent Testautomatisierung.
+    ("debeka", "Karriere", "Debeka"),
+    ("cgm", "cgm", "CompuGroup Medical"),
     ("bmwgroup", "BMW_Group_External", "BMW Group"),
     ("siemens", "siemens_career", "Siemens"),
     ("bosch", "bosch_external", "Bosch"),
@@ -3106,6 +3114,197 @@ def scrape_linkedin_guest() -> list[dict]:
     return results
 
 
+# ── Stellenwerk — the university job boards of Bonn, Köln and Düsseldorf ─────
+# The single best-matched source in the pipeline: stellenwerk.de/bonn-rhein-sieg
+# is the joint board of the University of Bonn and Hochschule Bonn-Rhein-Sieg,
+# i.e. the board the owner's own university runs for its own students. Werkstudent
+# and HiWi roles posted here are aimed at exactly his situation and many never
+# reach LinkedIn or Indeed.
+#
+# Access is sitemap + JSON-LD on the detail page. NOTE: the site also exposes a
+# convenient /jobs-feed JSON endpoint, and robots.txt explicitly disallows it,
+# so this deliberately does NOT use it. The sitemap path is permitted and
+# carries the same postings.
+_STELLENWERK_SITEMAP = "https://www.stellenwerk.de/sitemap.xml"
+_STELLENWERK_CITIES = ("bonn-rhein-sieg", "koeln", "duesseldorf")
+# /{city}/{slug}-{YYMMDD}-{id} — the trailing id is the dedup key, because
+# roughly a quarter of postings are cross-listed under several cities.
+_STELLENWERK_URL_RE = re.compile(
+    r"stellenwerk\.de/(?:" + "|".join(_STELLENWERK_CITIES) + r")/[^/]+-(\d{6})-(\d+)$"
+)
+_STELLENWERK_CAP = 70
+
+
+def _stellenwerk_page(url: str) -> list[dict]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        # The response carries no charset, so requests falls back to
+        # ISO-8859-1 and every umlaut arrives as mojibake ("KÃ¶ln"). Company
+        # names and locations are full of them, and a mangled company name
+        # breaks the cross-source dedup key.
+        d = _parse_jsonld_jobposting(r.content.decode("utf-8", "replace"))
+        if not d:
+            return []
+        title = (d.get("title") or "").strip()
+        if not title:
+            return []
+        desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text(separator="\n")
+        org = d.get("hiringOrganization") or {}
+        return [job(
+            title=title,
+            company=(org.get("name") if isinstance(org, dict) else str(org)) or "Stellenwerk",
+            location=_jsonld_location(d),
+            url=url,
+            source="Stellenwerk",
+            description=desc,
+            posted_at=str(d.get("datePosted") or ""),
+        )]
+    except Exception:
+        return []
+
+
+def scrape_stellenwerk() -> list[dict]:
+    try:
+        r = requests.get(_STELLENWERK_SITEMAP, headers=HEADERS, timeout=30)
+        if r.status_code != 200:
+            print(f"  [Stellenwerk] sitemap HTTP {r.status_code}")
+            return []
+        urls = re.findall(r"<loc>(.*?)</loc>", r.text)
+
+        seen_ids: set[str] = set()
+        picked: list[str] = []
+        for u in urls:
+            m = _STELLENWERK_URL_RE.search(u)
+            if not m:
+                continue
+            job_id = m.group(2)
+            if job_id in seen_ids:
+                continue
+            slug = u.rsplit("/", 1)[-1]
+            # The board is mostly retail, tutoring and events; the slug carries
+            # enough signal to skip those without spending a request.
+            if not (_STELLENWERK_STUDENT.search(slug) and _STELLENWERK_VOCAB.search(slug)):
+                continue
+            seen_ids.add(job_id)
+            picked.append(u)
+
+        picked = picked[:_STELLENWERK_CAP]
+        results = _parallel_collect(picked, _stellenwerk_page, "Stellenwerk")
+        print(f"  [Stellenwerk] {len(results)} jobs from {len(picked)} slug-matched pages")
+        return results
+    except Exception as e:
+        print(f"  [Stellenwerk] failed: {e}")
+        return []
+
+
+_STELLENWERK_STUDENT = re.compile(
+    r"werkstud|studentische|studierende|hilfskraft|hiwi|working-student|student",
+    re.IGNORECASE,
+)
+_STELLENWERK_VOCAB = re.compile(
+    r"data|analyt|analys|informatik|software|entwickl|python|\bki\b|machine"
+    r"|intelligen|statistic|statistik|\bit\b|digital|cloud|\bdev|web|technical",
+    re.IGNORECASE,
+)
+
+
+# ── Fraunhofer + DLR (SAP SuccessFactors RMK) ────────────────────────────────
+# Two of the strongest AI/ML research employers inside the commute belt run the
+# SAME job platform, so one scraper serves both:
+#   * Fraunhofer IAIS / FKIE — Sankt Augustin and Wachtberg, both ~20-30 min
+#     from Bonn, and among the largest AI research institutes in Germany
+#   * DLR — Köln-Porz and Bonn
+# Their studentische-Hilfskraft roles ("Agentic AI", "Robotics and Autonomous
+# Systems") are precisely on target and are not reliably syndicated elsewhere.
+#
+# The city AND postal code sit in the URL path, so regional filtering costs no
+# extra requests. There is NO JSON-LD on these pages (checked), and the CSS
+# classes are unreliable — .jobTitle resolves to the "Jetzt bewerben" button —
+# so the og:title and meta-description tags are the trustworthy fields.
+_RMK_SITES = (
+    ("https://jobs.fraunhofer.de", "Fraunhofer"),
+    ("https://jobs.dlr.de", "DLR"),
+)
+_RMK_REGION = re.compile(
+    r"/job/(Sankt-Augustin|Bonn|K%C3%B6ln|Koeln|Wachtberg|Siegburg|Troisdorf"
+    r"|Br%C3%BChl|Euskirchen|Leverkusen|Remagen|Koblenz|D%C3%BCsseldorf)",
+    re.IGNORECASE,
+)
+_RMK_STUDENT = re.compile(
+    r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr",
+    re.IGNORECASE,
+)
+# Match the city by NAME. Splitting the URL path on dashes instead produced
+# locations like "Wachtberg STUDENTISCHE", because the title follows the city
+# in the same path segment with no separator to key on.
+_RMK_CITY_RE = re.compile(
+    r"/job/(Sankt Augustin|Bonn|Köln|Koeln|Wachtberg|Siegburg|Troisdorf|Brühl"
+    r"|Euskirchen|Leverkusen|Remagen|Koblenz|Düsseldorf|Neuss|Hennef)",
+    re.IGNORECASE,
+)
+_RMK_CAP = 40
+
+
+def _rmk_page(url: str, source: str) -> list[dict]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        og = soup.find("meta", property="og:title")
+        title = (og.get("content") or "").strip() if og else ""
+        meta = soup.find("meta", attrs={"name": "description"})
+        meta_txt = (meta.get("content") or "").strip() if meta else ""
+        if not title:
+            title = meta_txt
+        if not title:
+            return []
+
+        # meta description is "{City} {Title}, {PLZ}" on Fraunhofer and bare
+        # title on DLR, so the URL path is the dependable city source.
+        m = _RMK_CITY_RE.search(urllib.parse.unquote(url).replace("-", " "))
+        location = f"{m.group(1)}, Germany" if m else "Deutschland"
+
+        body = soup.select_one(".jobdescription") or soup.select_one("#content") or soup.body
+        desc = body.get_text(separator="\n", strip=True) if body else ""
+        if meta_txt and meta_txt not in desc:
+            desc = f"{meta_txt}\n{desc}"
+
+        return [job(
+            title=title,
+            company=source,
+            location=location,
+            url=url,
+            source=source,
+            description=desc,
+        )]
+    except Exception:
+        return []
+
+
+def scrape_research_institutes() -> list[dict]:
+    results: list[dict] = []
+    for host, source in _RMK_SITES:
+        try:
+            r = requests.get(f"{host}/sitemap.xml", headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                print(f"  [{source}] sitemap HTTP {r.status_code}")
+                continue
+            urls = [u for u in re.findall(r"<loc>(.*?)</loc>", r.text) if "/job/" in u]
+            picked = [u for u in urls
+                      if _RMK_REGION.search(u) and _RMK_STUDENT.search(u)][:_RMK_CAP]
+            got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
+            results.extend(got)
+            print(f"  [{source}] {len(got)} regional student roles "
+                  f"from {len(urls)} postings")
+        except Exception as e:
+            print(f"  [{source}] failed: {e}")
+    return results
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def scrape_all() -> list[dict]:
@@ -3120,6 +3319,8 @@ def scrape_all() -> list[dict]:
         # The function is kept defined in case we want it back with cleaning.
         # scrape_hn_who_is_hiring,
         scrape_arbeitsagentur,     # Official German employment agency API
+        scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
+        scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
         scrape_amazon,             # Amazon Jobs API (Germany filter at API level)
         scrape_personio,           # German Mittelstand + AI startups (20 companies)
         scrape_smartrecruiters,    # Bosch, Continental, Visa, Roland Berger

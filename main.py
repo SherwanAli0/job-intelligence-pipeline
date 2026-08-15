@@ -77,6 +77,12 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "Amazon":           76,
     "Recruitee":        74,
     # Tier 2 — government / aggregator job boards
+    # Stellenwerk and the research institutes outrank the aggregators: they are
+    # the university's own board and the employers' own postings, so the text
+    # is first-hand and the roles are aimed at exactly this candidate.
+    "Stellenwerk":      72,
+    "Fraunhofer":       70,
+    "DLR":              70,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -775,6 +781,10 @@ _COMMUTABLE_FROM_BONN = (
     "köln", "cologne", "koeln", "porz", "deutz", "hürth", "huerth",
     "brühl", "bruehl", "wesseling", "cologne bonn airport", "köln/bonn",
     "siegburg", "sankt augustin", "st. augustin", "troisdorf", "hennef",
+    # Wachtberg, Meckenheim, Rheinbach and Alfter are Bonn's immediate
+    # hinterland (15-25 min). Wachtberg matters specifically: Fraunhofer FHR
+    # and FKIE are there, and they post student research roles constantly.
+    "wachtberg", "meckenheim", "rheinbach", "alfter", "swisttal",
     "königswinter", "koenigswinter", "bad honnef", "unkel", "linz am rhein",
     "remagen", "andernach", "koblenz",
     "euskirchen", "leverkusen", "bergisch gladbach", "dormagen", "neuss",

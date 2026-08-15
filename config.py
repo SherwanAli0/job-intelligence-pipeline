@@ -270,6 +270,12 @@ MAX_RESULTS = BAND_A_MAX + BAND_B_MAX + BAND_C_MAX
 # Location filter (_is_attendable_from_germany) drops anything that isn't
 # Germany on-site / hybrid / EU-wide remote, so US-only roles auto-drop.
 GREENHOUSE_SLUGS = [
+    # ── Bonn commute belt (added from the 2026-08-15 regional sweep) ─────────
+    # Every slug below was verified live: HTTP 200 AND real postings AND the
+    # right company. That last check matters — boards-api "metro" returns 200
+    # with genuine jobs belonging to Unity One, a security firm in Idaho, not
+    # METRO Düsseldorf, so it is deliberately NOT here.
+    "trivago",         # 10 jobs, Düsseldorf — incl. Data Scientist, AI Search & Ranking
     # ── German tech / e-commerce (original list)
     # NOTE (health sweep): zalando, deepl, deliveryhero, cognigy, biontech,
     # mangopay, personio all 404'd on Greenhouse (migrated ATS). Relocated
@@ -445,6 +451,13 @@ LEVER_SLUGS = [
 # These are companies that 404 on Greenhouse — Personio catches them.
 # Verified: each returned 200 OK with > 0 positions.
 PERSONIO_SLUGS = [
+    # ── Bonn commute belt (2026-08-15 regional sweep, all verified live) ─────
+    # Personio is honest about bad slugs: a nonexistent one 307-redirects
+    # rather than returning an empty 200, so a live 200 with <position> rows
+    # is real proof.
+    "auxmoney-gmbh",       # 15, Düsseldorf fintech — runs Werkstudent Data Analytics
+    "sipgate",             # 7, Düsseldorf — telephony/cloud, student roles
+    "metro-markets-gmbh",  # 5, Düsseldorf — METRO's marketplace tech arm
     "1komma5grad",     # 352 positions, solar/energy AI
     "westwing",        # 61, e-commerce
     "vivid",           # 19, Berlin fintech
@@ -561,6 +574,11 @@ WORKDAY_CXS_TENANTS = [
 # The scraper pre-filters to AI/ML/data-relevant titles since Bosch alone has
 # 4641 active jobs (across all functions). Only relevant ones reach Claude.
 SMARTRECRUITERS_SLUGS = [
+    # WARNING for anyone adding to this list: SmartRecruiters answers HTTP 200
+    # with {"totalFound": 0} for slugs that do not exist, so a 200 alone proves
+    # nothing. Henkel, Uniper, Ceconomy and MediaMarktSaturn were all rejected
+    # on that basis during the 2026-08-15 sweep. Assert totalFound > 0.
+    "METROMAKRO",      # 1613 jobs — METRO/METRO.digital, Düsseldorf tech org
     "BoschGroup",      # 4641 total jobs, ~947 in Germany
     "deliveryhero",    # 1087 jobs — relocated from Greenhouse (404 there)
     "Continental",     # 1188 jobs
