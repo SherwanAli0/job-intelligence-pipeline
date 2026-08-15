@@ -144,17 +144,103 @@ class TestResearchInstitutes:
         assert "https://jobs.dlr.de" in hosts
 
 
+BWI_HTML = """
+<html><head>
+<script type="application/ld+json">{
+  "@context":"https://schema.org","@type":"JobPosting",
+  "title":"Werkstudent Communications &amp; Marketing (m/w/d)",
+  "description":"<p>Kurzer Teaser.</p>",
+  "datePosted":"2026-01-29",
+  "hiringOrganization":{"@type":"Organization","name":"BWI GmbH"},
+  "jobLocation":{"@type":"Place","address":{"@type":"PostalAddress",
+                 "addressLocality":"Bonn","postalCode":"53117"}}
+}</script>
+</head><body><main>Als primärer Digitalisierungspartner der Bundeswehr erbringen
+wir IT-Services. Du unterstützt unser Team mit Python und Reporting.</main></body></html>
+"""
+
+
+class TestBWI:
+    def _patch(self, monkeypatch):
+        class R:
+            status_code = 200
+            content = BWI_HTML.encode("utf-8")
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **kw: R())
+
+    def test_parses_jsonld_and_appends_the_body(self, monkeypatch):
+        """The JSON-LD description is only a ~200-char teaser, too thin for
+        the scorer, so the rendered body must be appended."""
+        self._patch(monkeypatch)
+        out = scrapers._bwi_page("https://www.bwi.de/.../werkstudent-x-65390")
+        assert len(out) == 1
+        j = out[0]
+        assert j["company"] == "BWI GmbH"
+        assert j["source"] == "BWI"
+        assert "Bonn" in j["location"]
+        assert "Digitalisierungspartner" in j["description"]
+
+    def test_html_entities_in_the_title_are_decoded(self, monkeypatch):
+        self._patch(monkeypatch)
+        title = scrapers._bwi_page("https://www.bwi.de/x-1")[0]["title"]
+        assert "&" in title and "&amp;" not in title
+
+    def test_student_url_screen(self):
+        assert scrapers._BWI_STUDENT_URL.search("werkstudent-devclient-management-65390")
+        assert not scrapers._BWI_STUDENT_URL.search("senior-cloud-architect-65391")
+
+
+class TestLongLivedSourceFreshness:
+    """BWI's open Werkstudent roles carry datePosted values three to six months
+    old and are still accepting applications; Fraunhofer and DLR publish no
+    date at all. The 24h cap was built for aggregator repeats, and applying it
+    to employers' own boards deleted exactly the roles worth having."""
+
+    def _aged(self, source, days):
+        from datetime import datetime, timedelta, timezone
+        return {
+            "title": "Werkstudent Data", "company": "X", "location": "Bonn",
+            "url": "u", "source": source, "description": "d",
+            "posted_at": (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
+        }
+
+    def test_an_old_but_open_bwi_role_survives(self):
+        import main
+        assert main._is_fresh_enough(self._aged("BWI", 120))
+
+    def test_fraunhofer_and_dlr_and_stellenwerk_are_exempt_too(self):
+        import main
+        for src in ("Fraunhofer", "DLR", "Stellenwerk"):
+            assert main._is_fresh_enough(self._aged(src, 90)), src
+
+    def test_aggregators_still_obey_the_24h_cap(self):
+        """The exemption must stay narrow: the repeat problem it was built for
+        is an aggregator problem, and aggregators keep the strict rule."""
+        import main
+        for src in ("Adzuna", "linkedin", "HiringCafe", "Arbeitsagentur"):
+            assert not main._is_fresh_enough(self._aged(src, 6)), src
+
+    def test_a_fresh_aggregator_job_still_passes(self):
+        import main
+        assert main._is_fresh_enough(self._aged("linkedin", 0))
+
+
 class TestWiring:
     def test_new_scrapers_run_in_scrape_all(self):
         import inspect
         src = inspect.getsource(scrapers.scrape_all)
         assert "scrape_stellenwerk" in src
         assert "scrape_research_institutes" in src
+        assert "scrape_bwi" in src
 
     def test_source_priorities_registered(self):
         import main
-        for src in ("Stellenwerk", "Fraunhofer", "DLR"):
+        for src in ("Stellenwerk", "Fraunhofer", "DLR", "BWI"):
             assert src in main._SOURCE_PRIORITY, src
+
+    def test_bonn_region_personio_boards_configured(self):
+        from config import PERSONIO_SLUGS
+        for slug in ("comma-soft", "aktion-mensch", "high-office-it-gmbh"):
+            assert slug in PERSONIO_SLUGS, slug
 
     def test_wachtberg_counts_as_commutable(self):
         """Fraunhofer FHR and FKIE are in Wachtberg, 15-25 min from Bonn."""

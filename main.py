@@ -83,6 +83,7 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "Stellenwerk":      72,
     "Fraunhofer":       70,
     "DLR":              70,
+    "BWI":              70,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -926,8 +927,28 @@ def _record_shown(top: list[dict], near: list[dict]) -> None:
 # ages are kept — several boards omit dates, and absent evidence is not age.
 _MAX_POSTING_AGE_HOURS = 24
 
+# ...with one exception, for a reason the aggregator-era rule did not foresee.
+#
+# The 24h cap was built to stop two specific failures: the same job arriving on
+# consecutive days because an aggregator re-minted its URL, and six-day-old
+# listings with hundreds of applicants already. Both are aggregator behaviours.
+#
+# The sources below are employers' and universities' OWN boards, where a
+# posting stays up until the role is filled. BWI's open Werkstudent roles carry
+# datePosted values three to six months old and are still live and accepting
+# applications; Fraunhofer and DLR publish no date at all. Applying the cap to
+# them deletes the best-matched roles in the region — the entire point of
+# adding these sources — while protecting against a problem they do not have.
+#
+# Showing a still-open role once is safe: digested_keys.json guarantees he
+# never sees the same company+title twice, so there is no repeat risk here.
+# Aggregators keep the strict 24h rule.
+_LONG_LIVED_SOURCES = frozenset({"BWI", "Fraunhofer", "DLR", "Stellenwerk"})
+
 
 def _is_fresh_enough(j: dict) -> bool:
+    if j.get("source") in _LONG_LIVED_SOURCES:
+        return True
     age_days = _job_age_days(j)
     if age_days is None:
         return True

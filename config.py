@@ -458,6 +458,16 @@ PERSONIO_SLUGS = [
     "auxmoney-gmbh",       # 15, Düsseldorf fintech — runs Werkstudent Data Analytics
     "sipgate",             # 7, Düsseldorf — telephony/cloud, student roles
     "metro-markets-gmbh",  # 5, Düsseldorf — METRO's marketplace tech arm
+    # Bonn itself — small boards, but they are the employers a Bonn student can
+    # cycle to, and none of them syndicate reliably to the aggregators.
+    "comma-soft",          # 20, Bonn — GenAI / MLOps / data platform consultancy
+    "aktion-mensch",       # 8, Bonn — 4 live Werkstudent roles incl. IT Service Desk
+    "high-office-it-gmbh", # 19, Bonn — IT services, several Werkstudent
+    "haeger-consulting",   # 14, Bonn Bad Godesberg — data engineering
+    "linkbroker",          # 3, Bonn-Ramersdorf — Werkstudent in Development/IT
+    "eitco-gmbh",          # 1, Bonn — IT consultancy
+    "i22",                 # 1, Bonn — digital agency
+    "envelio",             # 13, Köln — energy-grid AI
     "1komma5grad",     # 352 positions, solar/energy AI
     "westwing",        # 61, e-commerce
     "vivid",           # 19, Berlin fintech
@@ -696,6 +706,7 @@ ASHBY_SLUGS = [
 
 # ── Recruitee ATS slugs (https://{slug}.recruitee.com/api/offers) ─────────────
 RECRUITEE_SLUGS = [
+    "benutagmbh",    # 14 jobs, Bonn — 5 Werkstudent roles live
     "limehome",      # 16 jobs, Munich hospitality
     "personio",      # 1 job
     # ── Discovery sweep batch (verified live) ──

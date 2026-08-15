@@ -11,3 +11,8 @@ applied_jobs.json
 aws/.*-run
 aws/.*-task
 shown_jobs.jsonl
+
+# Stray scrape debris from probing sources by hand
+uk.html
+zz.tmp
+*.tmp

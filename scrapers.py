@@ -16,6 +16,7 @@ Sources:
 """
 
 import hashlib
+import html as _html
 import json
 import os
 import re
@@ -3305,6 +3306,80 @@ def scrape_research_institutes() -> list[dict]:
     return results
 
 
+# ── BWI GmbH — the Bundeswehr's IT company, headquartered in Bonn ────────────
+# The densest single Werkstudent employer found in the Bonn region: 16 open
+# student roles at one company, in Bonn, Meckenheim and Koblenz, covering
+# DevClient management, IT project work, testing and the Cyber Innovation Hub.
+#
+# TYPO3 site. The jobs sitemap URL carries a rotating cHash cache token, so it
+# is discovered from the sitemap index on every run rather than hardcoded.
+# robots.txt disallows "/*cHash" in general but then explicitly re-allows
+# "/sitemap.xml?sitemap=*&cHash=*", which is exactly the path used here.
+_BWI_SITEMAP_INDEX = "https://www.bwi.de/sitemap.xml"
+_BWI_STUDENT_URL = re.compile(r"werkstudent|studentische|hilfskraft", re.IGNORECASE)
+_BWI_CAP = 30
+
+
+def _bwi_page(url: str) -> list[dict]:
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            return []
+        html = r.content.decode("utf-8", "replace")
+        d = _parse_jsonld_jobposting(html)
+        if not d:
+            return []
+        # Titles arrive with raw HTML entities ("Communications &amp; Marketing").
+        title = _html.unescape((d.get("title") or "").strip())
+        if not title:
+            return []
+        # The JSON-LD description is only a ~200-char teaser, which is too thin
+        # for the scorer to judge a role on, so the rendered body is appended.
+        desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text(separator="\n")
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        main = soup.select_one("main") or soup.body
+        if main:
+            body = main.get_text(separator="\n", strip=True)
+            if len(body) > len(desc):
+                desc = f"{desc}\n{body}" if desc else body
+        return [job(
+            title=title,
+            company="BWI GmbH",
+            location=_jsonld_location(d),
+            url=url,
+            source="BWI",
+            description=desc,
+            posted_at=str(d.get("datePosted") or ""),
+        )]
+    except Exception:
+        return []
+
+
+def scrape_bwi() -> list[dict]:
+    try:
+        idx = requests.get(_BWI_SITEMAP_INDEX, headers=HEADERS, timeout=25)
+        if idx.status_code != 200:
+            print(f"  [BWI] sitemap index HTTP {idx.status_code}")
+            return []
+        subs = [s.replace("&amp;", "&") for s in re.findall(r"<loc>(.*?)</loc>", idx.text)]
+        jobs_sitemap = next((s for s in subs if "sitemap=jobs" in s), "")
+        if not jobs_sitemap:
+            print("  [BWI] no jobs sitemap in the index — site restructured?")
+            return []
+
+        sm = requests.get(jobs_sitemap, headers=HEADERS, timeout=25)
+        urls = [u.replace("&amp;", "&") for u in re.findall(r"<loc>(.*?)</loc>", sm.text)]
+        picked = [u for u in urls if _BWI_STUDENT_URL.search(u)][:_BWI_CAP]
+        results = _parallel_collect(picked, _bwi_page, "BWI")
+        print(f"  [BWI] {len(results)} student roles from {len(urls)} postings")
+        return results
+    except Exception as e:
+        print(f"  [BWI] failed: {e}")
+        return []
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def scrape_all() -> list[dict]:
@@ -3321,6 +3396,7 @@ def scrape_all() -> list[dict]:
         scrape_arbeitsagentur,     # Official German employment agency API
         scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
         scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
+        scrape_bwi,                # BWI GmbH — Bundeswehr IT, Bonn/Meckenheim
         scrape_amazon,             # Amazon Jobs API (Germany filter at API level)
         scrape_personio,           # German Mittelstand + AI startups (20 companies)
         scrape_smartrecruiters,    # Bosch, Continental, Visa, Roland Berger
