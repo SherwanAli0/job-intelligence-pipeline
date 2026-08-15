@@ -1049,6 +1049,7 @@ WORKDAY_TENANTS = [
     # Mathematik, Werkstudent IT and Werkstudent Testautomatisierung.
     ("debeka", "Karriere", "Debeka"),
     ("cgm", "cgm", "CompuGroup Medical"),
+    ("covestro", "cov_external", "Covestro"),   # Leverkusen/Dormagen Werkstudent roles
     ("bmwgroup", "BMW_Group_External", "BMW Group"),
     ("siemens", "siemens_career", "Siemens"),
     ("bosch", "bosch_external", "Bosch"),
@@ -3403,7 +3404,17 @@ def scrape_all() -> list[dict]:
         scrape_workday_cxs,        # NVIDIA, Adobe, Salesforce, AstraZeneca, Pfizer, Sanofi, Intel, Philips, etc. (15 tenants)
         scrape_adzuna,             # Aggregator — Mercedes, BMW, Allianz, DB, P&G, Unilever, etc. (needs ADZUNA_APP_ID/KEY)
         scrape_workday,            # Legacy HTML scraper — kept for any URL it still works on
-        scrape_successfactors,     # VW, Adidas, Porsche, etc.
+        # scrape_successfactors DISABLED 2026-08-16 — silent zero.
+        # career4.successfactors.com/career?company=X&resultType=XML now returns
+        # a ~3.5KB HTML error page with HTTP 200 for ALL SEVEN configured
+        # companies (volkswagen, adidas, porsche, henkel, munichre, tuigroup,
+        # eon-energy), verified individually. The parser finds no rows and
+        # reports success, so it has been costing scrape time for nothing.
+        # These employers moved to SuccessFactors Career Site Builder, which
+        # serves {host}/search/?q= plus a real sitemap.xml — a different
+        # scraper, not a URL swap. The RMK-style pattern in
+        # scrape_research_institutes is the closest working template.
+        # scrape_successfactors,   # VW, Adidas, Porsche, etc.
         scrape_greenhouse,         # Zalando, DeepL, Delivery Hero, 108 companies
         scrape_lever,              # Mistral, Qonto, MoonPay, Neon, TrustYou, Nuri
         scrape_ashby,              # Perplexity, Deepgram, Ramp, Supabase, Linear, etc.

@@ -276,6 +276,8 @@ GREENHOUSE_SLUGS = [
     # with genuine jobs belonging to Unity One, a security firm in Idaho, not
     # METRO Düsseldorf, so it is deliberately NOT here.
     "trivago",         # 10 jobs, Düsseldorf — incl. Data Scientist, AI Search & Ranking
+    "dept",            # 233 jobs, 5 in the Köln area
+    "valtech",         # 143 jobs, 6 in the Köln area
     # ── German tech / e-commerce (original list)
     # NOTE (health sweep): zalando, deepl, deliveryhero, cognigy, biontech,
     # mangopay, personio all 404'd on Greenhouse (migrated ATS). Relocated
@@ -468,6 +470,15 @@ PERSONIO_SLUGS = [
     "eitco-gmbh",          # 1, Bonn — IT consultancy
     "i22",                 # 1, Bonn — digital agency
     "envelio",             # 13, Köln — energy-grid AI
+    # Köln
+    # NOTE: Personio slugs "dumont" and "circuly" return HTTP 200 with jobs and
+    # look like the Köln companies of those names. They are blank-name demo
+    # boards (no office set / "Pioneers Club"), so they are NOT here.
+    "gesis",               # 12, Köln + Mannheim — Leibniz institute, 4 HiWi posts
+    "appsfactory-gmbh",    # 25, Köln office — Werkstudent roles
+    "areto",               # 7, Köln — data/BI consultancy (Databricks, Snowflake)
+    "vytal",               # 2, Köln
+    "foodforecast",        # 2, Köln — AI food-waste startup
     "1komma5grad",     # 352 positions, solar/energy AI
     "westwing",        # 61, e-commerce
     "vivid",           # 19, Berlin fintech
@@ -589,6 +600,11 @@ SMARTRECRUITERS_SLUGS = [
     # nothing. Henkel, Uniper, Ceconomy and MediaMarktSaturn were all rejected
     # on that basis during the 2026-08-15 sweep. Assert totalFound > 0.
     "METROMAKRO",      # 1613 jobs — METRO/METRO.digital, Düsseldorf tech org
+    # Köln — the densest Werkstudent employers found in the whole sweep.
+    "BarmeniaGothaerAG",        # 425 jobs, 17 Werkstudent (11 Köln) incl. KI-Automatisierung
+    "StrerSECoKGaAStrerGruppe", # 235 — Ströer, incl. Werkstudent CRM-Datenanalyse Köln
+    "Bertelsmann-Jobs",         # 909 — Bertelsmann/RTL Deutschland, Köln Picassoplatz
+    "JobTeaser",                # 7 — Köln Friesenplatz
     "BoschGroup",      # 4641 total jobs, ~947 in Germany
     "deliveryhero",    # 1087 jobs — relocated from Greenhouse (404 there)
     "Continental",     # 1188 jobs
@@ -636,6 +652,7 @@ COMPANY_PAGES = [
 # Verified: each returned 200 OK with > 0 jobs at time of addition.
 ASHBY_SLUGS = [
     "deepl",         # 24 jobs — relocated from Greenhouse (404 there), Cologne LLM/MT
+    "sosafe",        # 24 jobs, 15 in Cologne — security-awareness scale-up, Köln HQ
     "ramp",          # 121 jobs, fintech
     "deepgram",      # 61 jobs, speech AI — direct AI/ML fit
     "perplexity",    # 59 jobs, frontier AI lab
@@ -707,6 +724,9 @@ ASHBY_SLUGS = [
 # ── Recruitee ATS slugs (https://{slug}.recruitee.com/api/offers) ─────────────
 RECRUITEE_SLUGS = [
     "benutagmbh",    # 14 jobs, Bonn — 5 Werkstudent roles live
+    "currenta",      # 40, Leverkusen Chempark — 2 Werkstudent live
+    "trustedshops",  # 24, Köln
+    "inovex",        # 20, Köln office — runs "Werkstudent:in Data & AI"
     "limehome",      # 16 jobs, Munich hospitality
     "personio",      # 1 job
     # ── Discovery sweep batch (verified live) ──
