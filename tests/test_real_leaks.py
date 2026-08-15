@@ -337,21 +337,93 @@ class TestGermanMarketIsNotGermanLanguage:
         """, location="Bonn, Germany")
         assert main._is_english_friendly(j)
 
-    def test_german_body_is_still_dropped_however_it_is_titled(self):
+    def test_german_bodied_student_ad_now_survives_too(self):
+        """Superseded on 2026-08-15. This case used to assert a drop: a German
+        BODY was disqualifying however the ad was titled. The first live run
+        of Werkstudent mode showed that rule killed 62 of 76 reachable student
+        roles and produced an empty digest, so for student roles the ad's
+        language is no longer evidence of anything. See
+        TestGermanLanguageStudentAdsAreAllowed for the replacement rule."""
         j = _job("Werkstudent Data Science (m/w/d)", """
             Du unterstützt unser Team bei der Entwicklung von Datenprodukten
             und arbeitest mit uns an der Auswertung von Kundendaten. Du bist
             eingeschrieben an einer Hochschule und hast bereits erste
             Kenntnisse in Python sowie Freude an der Arbeit mit Daten.
         """, location="Köln, Germany")
+        assert main._is_english_friendly(j)
+
+    def test_german_bodied_FULL_TIME_ad_is_still_dropped(self):
+        """The rule above is scoped to student roles. For everything else a
+        German body is still disqualifying, exactly as before."""
+        j = _job("Data Scientist (m/w/d)", """
+            Du unterstützt unser Team bei der Entwicklung von Datenprodukten
+            und arbeitest mit uns an der Auswertung von Kundendaten. Du hast
+            ein abgeschlossenes Studium und bereits erste Kenntnisse in
+            Python sowie Freude an der Arbeit mit Daten.
+        """, location="Köln, Germany")
         assert not main._is_english_friendly(j)
 
-    def test_short_stub_description_cannot_claim_to_be_english(self):
-        """_reads_as_english demands positive evidence, so a two-line stub
-        with a gender marker is still dropped rather than assumed fine."""
+    def test_short_stub_student_ad_is_kept_for_the_scorer_to_judge(self):
+        """A two-line stub carries no language evidence either way. Under the
+        student rule that is not grounds for a silent drop; the scorer sees it
+        and the explicit-C1 check still applies."""
         j = _job("Werkstudent Data Science (m/w/d)", "Werkstudent gesucht.",
                  location="Köln, Germany")
+        assert main._is_english_friendly(j)
+
+    def test_short_stub_NON_student_ad_still_cannot_claim_english(self):
+        """_reads_as_english demands positive evidence, so a two-line stub
+        with a gender marker is still dropped for non-student roles."""
+        j = _job("Data Scientist (m/w/d)", "Data Scientist gesucht.",
+                 location="Köln, Germany")
         assert not main._is_english_friendly(j)
+
+
+class TestGermanLanguageStudentAdsAreAllowed:
+    """The 2026-08-15 run produced an EMPTY digest: the ad-language filter
+    killed 62 of the 76 student roles within reach of Bonn. German Werkstudent
+    ads are written in German as a matter of course, so filtering on the
+    language of the advertisement deleted the market. Only an explicit demand
+    for fluent German is disqualifying now."""
+
+    _GERMAN_BODY = """
+        Als Werkstudent unterstützt du unser Data-Team bei der Entwicklung
+        von Auswertungen und Dashboards. Du arbeitest mit Python und SQL und
+        wertest Produktdaten aus. Du bist an einer Hochschule immatrikuliert
+        und hast bis zu 20 Stunden pro Woche Zeit. Wir bieten flexible
+        Arbeitszeiten passend zu deinem Stundenplan und ein junges Team.
+    """
+
+    def test_german_language_werkstudent_ad_survives(self):
+        j = _job("Werkstudent Data Analytics (m/w/d)", self._GERMAN_BODY,
+                 location="Köln, Germany")
+        assert main._is_english_friendly(j)
+        assert _survives_pipeline(j)
+
+    def test_german_werkstudent_ad_demanding_c1_still_drops(self):
+        j = _job("Werkstudent Data Analytics (m/w/d)", self._GERMAN_BODY + """
+            Voraussetzung: verhandlungssicheres Deutsch auf C1-Niveau.
+        """, location="Köln, Germany")
+        assert not _survives_pipeline(j)
+
+    def test_german_language_FULL_TIME_ad_still_drops(self):
+        """The exemption is scoped to student roles. A German-language
+        full-time ad must still be filtered exactly as before."""
+        j = _job("Data Analyst (m/w/d)", """
+            Für unser Data-Team suchen wir eine Datenanalystin oder einen
+            Datenanalysten. Du entwickelst Auswertungen und Dashboards mit
+            Python und SQL und arbeitest eng mit den Fachbereichen zusammen.
+            Wir bieten flexible Arbeitszeiten und ein junges Team.
+        """, location="Köln, Germany")
+        assert not main._is_english_friendly(j)
+
+    def test_english_student_ad_is_unaffected(self):
+        j = _job("Working Student Data Science", """
+            Support our data team 20 hours per week alongside your studies.
+            You are enrolled at a university. Python and SQL. Our working
+            language is English and hours are flexible around lectures.
+        """, location="Bonn, Germany")
+        assert _survives_pipeline(j)
 
 
 class TestCommutableFromBonn:

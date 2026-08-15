@@ -113,6 +113,14 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
   safe: it caught the spots where the old assumption had leaked into unrelated
   code, including a language filter that treated the word "Werkstudent" itself
   as evidence that a posting was written in German.
+- **Measurement outranks intuition.** The first live run of that new target
+  returned an empty digest, and the per-filter drop counters said why: the
+  ad-language filter had removed 62 of the 76 reachable student roles. The
+  German student market advertises in German, so the language of the
+  advertisement had stopped being evidence about the job. The filter now
+  applies only the explicit language *requirement* to student roles. A funnel
+  that reports what each stage killed turns a silent empty inbox into a
+  one-line diagnosis.
 
 ## Repo tour
 
@@ -128,7 +136,7 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
 | [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
 | [health_check.py](health_check.py) | Monthly board-rot detector |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
-| [tests/](tests/) | 270 offline tests, run on every push |
+| [tests/](tests/) | 276 offline tests, run on every push |
 
 ## Run your own
 

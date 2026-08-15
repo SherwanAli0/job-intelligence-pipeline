@@ -23,7 +23,7 @@ import storage
 from config import MAX_RESULTS, MIN_SCORE
 from notifier import add_to_notion, send_email
 from scrapers import scrape_all
-from scorer import score_jobs, _classify_track
+from scorer import score_jobs, _classify_track, _requires_fluent_german
 
 # ── A1 diversity quotas — guaranteed minimum digest slots per track ───────────
 # The market skews AI-heavy (a recent run scored 93 AI vs 4 ML), so a pure
@@ -214,7 +214,7 @@ _GERMAN_TITLE_FRAGMENTS = (
 )
 
 # ── Location filter — Germany on-site OR remote that covers Germany ──────────
-# Sherwan lives in Bochum (NRW) and pays German taxes. He needs jobs he can
+# Sherwan studies in Bonn (NRW) and pays German taxes. He needs jobs he can
 # actually do FROM Germany — F2F/hybrid in Germany, OR a remote role that
 # explicitly allows Germany-based hires. A Poland F2F job is useless even
 # though Poland is in the EU; a "Spain HQ, fully remote in EU" job IS useful
@@ -690,9 +690,24 @@ def _reads_as_english(text: str) -> bool:
 
 def _is_english_friendly(j: dict) -> bool:
     """Drop jobs that are clearly German-language unless the posting genuinely
-    confirms an English-speaking team."""
+    confirms an English-speaking team.
+
+    STUDENT ROLES ARE EXEMPT from the ad-language test. Measured on the
+    2026-08-15 run: of 76 student roles within commuting distance of Bonn,
+    this filter killed 62 (82%), and the digest came out empty. The German
+    Werkstudent market is simply advertised in German, far more so than the
+    full-time market was.
+
+    The language of the advertisement is not the language of the job. What
+    actually locks him out at B1 is an explicit demand for fluent/business/
+    C1 German, so for student roles that explicit demand is the only test
+    applied — _requires_fluent_german, the same check the scorer uses.
+    """
     title_lower = j["title"].lower()
     desc_lower = (j.get("description") or "").lower()
+
+    if _is_student_role(j):
+        return not _requires_fluent_german(desc_lower)
 
     # A German-language body is disqualifying even when the title is English
     # and even when the word "english" appears somewhere. Four such jobs were
