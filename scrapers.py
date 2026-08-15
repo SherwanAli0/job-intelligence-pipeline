@@ -794,6 +794,8 @@ ARBEITSAGENTUR_REMOTE_QUERIES = [
     "Werkstudent Machine Learning",
     "Werkstudent Softwareentwicklung",
     "Working Student Data",
+    "Praktikum Data Science",
+    "Praktikum Machine Learning",
 ]
 
 ARBEITSAGENTUR_QUERIES = [
@@ -817,6 +819,13 @@ ARBEITSAGENTUR_QUERIES = [
     "Werkstudent Python",
     "Studentische Hilfskraft Informatik",
     "Studentische Hilfskraft Data",
+    # Internships (added 2026-08-16)
+    "Praktikum Data Science",
+    "Praktikum Künstliche Intelligenz",
+    "Praktikum Machine Learning",
+    "Praktikum Informatik",
+    "Praktikum Datenanalyse",
+    "Pflichtpraktikum Informatik",
 ]
 
 # ── Arbeitsagentur enrichment (idea 3 + idea 1-lite) ─────────────────────────
@@ -2021,6 +2030,9 @@ _ADZUNA_QUERIES = (
     "Working Student AI",
     "Studentische Hilfskraft Data",
     "Studentische Hilfskraft Informatik",
+    "Praktikum Data Science",
+    "Praktikum Informatik",
+    "Internship Data Science",
 )
 
 
@@ -2637,6 +2649,7 @@ _XING_QUERIES = (
     "Werkstudent Künstliche Intelligenz", "Werkstudent Data Analyst",
     "Werkstudent Business Intelligence", "Werkstudent Informatik",
     "Werkstudent Python", "Studentische Hilfskraft Informatik",
+    "Praktikum Data Science", "Praktikum Informatik",
 )
 
 _XING_DESC_CAP = 60  # max job-page description fetches per run
@@ -2776,13 +2789,14 @@ _ABSOLVENTA_VOCAB = re.compile(
 # Absolventa mixes graduate-entry and student jobs in one sitemap, and the
 # owner is only eligible for (and only wants) the student half.
 _ABSOLVENTA_STUDENT = re.compile(
-    r"werkstudent|working-student|studentische|studentenjob|hiwi",
+    r"werkstudent|working-student|studentische|studentenjob|hiwi"
+    r"|praktik|internship|praxissemester",
     re.IGNORECASE,
 )
 # The board is full of retail/gastro/sales roles; exclude by slug before
 # spending a fetch. Praktikum/Ausbildung are the wrong employment form.
 _ABSOLVENTA_EXCLUDE = re.compile(
-    r"praktik|schueler|ausbildung|verkauf|verkaeuf|bedienung"
+    r"schueler|ausbildung|verkauf|verkaeuf|bedienung"
     r"|vertrieb|gastro|filial|lager|kurier",
     re.IGNORECASE,
 )
@@ -2918,7 +2932,8 @@ def scrape_getinit() -> list[dict]:
 # silently lost eligible roles. Unofficial API: the buildId changes on every
 # deploy, so it is re-bootstrapped from the homepage each run, and any
 # breakage lands in the existing dead-source alarm.
-_HIRINGCAFE_QUERIES = ("werkstudent", "working student", "studentische hilfskraft")
+_HIRINGCAFE_QUERIES = ("werkstudent", "working student",
+                       "studentische hilfskraft", "praktikum", "internship")
 _HIRINGCAFE_BUILDID_RE = re.compile(r'"buildId":"([^"]+)"')
 _HIRINGCAFE_GERMANY = {
     "formatted_address": "Germany", "types": ["country"],
@@ -3015,6 +3030,8 @@ _LI_GUEST_QUERIES = (
     "werkstudent künstliche intelligenz", "werkstudent informatik",
     "working student data", "working student AI",
     "studentische hilfskraft informatik",
+    "praktikum data science", "praktikum machine learning",
+    "internship data science germany",
 )
 _LI_GUEST_PAGES = 10          # LinkedIn throttles around page 10 per IP
 _LI_GUEST_PAGE_SLEEP = 1.5    # pace like a human; stop instantly on 429
@@ -3202,7 +3219,8 @@ def scrape_stellenwerk() -> list[dict]:
 
 
 _STELLENWERK_STUDENT = re.compile(
-    r"werkstud|studentische|studierende|hilfskraft|hiwi|working-student|student",
+    r"werkstud|studentische|studierende|hilfskraft|hiwi|working-student|student"
+    r"|praktik|internship|praxissemester",
     re.IGNORECASE,
 )
 _STELLENWERK_VOCAB = re.compile(
@@ -3235,7 +3253,8 @@ _RMK_REGION = re.compile(
     re.IGNORECASE,
 )
 _RMK_STUDENT = re.compile(
-    r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr",
+    r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr"
+    r"|Praktik|Internship|Praxissemester",
     re.IGNORECASE,
 )
 # Match the city by NAME. Splitting the URL path on dashes instead produced
@@ -3317,7 +3336,8 @@ def scrape_research_institutes() -> list[dict]:
 # robots.txt disallows "/*cHash" in general but then explicitly re-allows
 # "/sitemap.xml?sitemap=*&cHash=*", which is exactly the path used here.
 _BWI_SITEMAP_INDEX = "https://www.bwi.de/sitemap.xml"
-_BWI_STUDENT_URL = re.compile(r"werkstudent|studentische|hilfskraft", re.IGNORECASE)
+_BWI_STUDENT_URL = re.compile(
+    r"werkstudent|studentische|hilfskraft|praktik|internship", re.IGNORECASE)
 _BWI_CAP = 30
 
 

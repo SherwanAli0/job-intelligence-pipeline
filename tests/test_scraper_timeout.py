@@ -190,13 +190,13 @@ class TestTwoPhaseDescriptionFetching:
         jobs = [
             {"title": "Werkstudent Data Science", "url": "u1", "description": ""},
             {"title": "Senior ML Engineer", "url": "u2", "description": ""},
-            {"title": "Praktikum Data Analytics", "url": "u3", "description": ""},
-            {"title": "Working Student AI (m/w/d)", "url": "u4", "description": ""},
+            {"title": "Masterarbeit Machine Learning", "url": "u3", "description": ""},
+            {"title": "Praktikum Data Analytics", "url": "u4", "description": ""},
         ]
         scrapers._enrich_jobspy_descriptions(jobs)
-        # Inverted by the Bonn pivot: Werkstudent titles are now the target and
-        # DO deserve a request; Praktikum and senior titles still do not.
-        assert set(fetched) == {"u1", "u4"}, "senior and Praktikum must not cost a request"
+        # Werkstudent AND internship titles are both targets now (2026-08-16),
+        # so both deserve a request. Senior titles and thesis positions do not.
+        assert set(fetched) == {"u1", "u4"}, "senior and thesis must not cost a request"
         assert len(jobs[0]["description"]) > 400
         assert jobs[1]["description"] == ""
 

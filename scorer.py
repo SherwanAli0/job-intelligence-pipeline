@@ -622,7 +622,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
-    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting Werkstudent / working-student roles ONLY — up to 20h/week alongside his studies. Full-time roles, internships/Praktikum, and thesis positions are all WRONG employment forms now, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
+    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting STUDENT employment only: Werkstudent / working-student roles (up to 20h/week alongside his studies) AND internships (Praktikum, Pflichtpraktikum, Praxissemester, internship). Full-time permanent roles and thesis positions are the WRONG employment form, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
 
 CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
 {cv_profile}
@@ -630,7 +630,7 @@ CANDIDATE PROFILE (this profile is already framed for the track of the jobs in t
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
 ═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Werkstudent role, English-OK, commutable from Bonn or DE-remote, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
+- 85-100: Excellent fit. Real shot at interview. Werkstudent or internship, English-OK, commutable from Bonn or DE-remote, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
@@ -673,13 +673,16 @@ HARD CAPS — these set a MAXIMUM score the role can receive.
 Apply the LOWEST applicable cap. Boosts cannot exceed the cap.
 ═══════════════════════════════════════════════════════════════
 
-CAP AT 15 if the role is NOT a Werkstudent/working-student role:
-- Full-time or part-time regular employment, internship/Praktikum,
-  Ausbildung, trainee/graduate programme, thesis (Abschlussarbeit/
-  Bachelorarbeit/Masterarbeit), PhD, or freelance. The ONLY acceptable
-  employment form is Werkstudent / working student / studentische
-  Hilfskraft (HiWi). If the ad never signals a student role, assume it is
-  full-time and apply this cap.
+CAP AT 15 if the role is NOT student employment:
+- Full-time or part-time regular employment, Ausbildung, trainee/graduate
+  programme, thesis (Abschlussarbeit/Bachelorarbeit/Masterarbeit), PhD,
+  or freelance. ACCEPTABLE forms are: Werkstudent / working student /
+  studentische Hilfskraft (HiWi), AND internships (Praktikum,
+  Pflichtpraktikum, Praxissemester, internship).
+- Do NOT apply this cap merely because the ad is vague about hours. The
+  pre-filter already guarantees every job you see signalled a student
+  role or an internship somewhere in its text. Only apply it when the ad
+  EXPLICITLY states a form from the excluded list above.
 
 CAP AT 20 if ANY of these are true:
 - Role requires fluent/business/native German (C1+), even if the JD is written in English. Look for: "fluent German", "verhandlungssicheres Deutsch", "Mandatory: English and German", "business-fluent German", "German native". Sherwan is B1.
@@ -708,8 +711,11 @@ favour AI roles over data-analyst or data-science roles. All four tracks below
 start at the SAME score.
 ═══════════════════════════════════════════════════════════════
 
-All tiers assume the role IS a Werkstudent/working-student role — anything
-else is already capped at 15 above.
+All tiers assume the role IS student employment — a Werkstudent/working-
+student role or an internship. Anything else is already capped at 15.
+Werkstudent and internship are scored EQUALLY: judge on the work, the
+location and the language, not on which of the two forms it is. A paid
+internship in the commute belt is as good as a Werkstudent role.
 
 TIER 1 (start at 80, then apply caps and adjustments) — Werkstudent in ANY
 of the 4 tracks:
@@ -803,7 +809,7 @@ PENALTIES — subtractive, applied AFTER caps and boosts
 
 -15: Ad restricts to students of a DIFFERENT field ("enrolled in business administration / mechanical engineering / law") with no computer-science/AI/data option listed
 
--10: Ad demands more than 20h/week during the lecture period, or full-time availability
+-10: Ad demands more than 20h/week during the lecture period. NOTE: this does NOT apply to internships, which are commonly full-time for a fixed block and can be taken in the semester break or as a Pflichtpraktikum
 
 -10: Role description shows clear professional-level expectations despite the student title (e.g. "ownership of large systems", "on-call", "drive technical roadmap")
 

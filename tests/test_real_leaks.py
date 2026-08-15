@@ -92,12 +92,31 @@ class TestGermanLanguageBodies:
         """)
         assert not _survives_pipeline(j)
 
-    def test_lidl_german_internship(self):
+    def test_lidl_german_internship_now_survives(self):
+        """This fixture has flipped twice, and both flips were deliberate.
+
+        It was pinned as a leak when the pipeline hunted full-time junior
+        roles: a German-language Praktikum was wrong on both counts. Two later
+        decisions reversed that — internships became targets (2026-08-16), and
+        German-language STUDENT ads stopped being filtered on ad language
+        (they are the bulk of the market; only an explicit C1 demand
+        disqualifies). Nothing here demands fluent German, so it now belongs
+        in the digest and the scorer judges the BWL/VWL study-field mismatch.
+        """
         j = _job("Praktikum Data Analytics", """
             Als Teil unseres Lidl Plus international Teams arbeitest du an
             unserem digitalen Vorteilsprogramm. Ab August für 6 Monate.
             Studium im Bereich BWL, VWL, Mathematik / Statistik.
             Pflichtpraktikum: 1.000 € p.M. Erste Erfahrungen mit SQL, Python.
+        """)
+        assert _survives_pipeline(j)
+
+    def test_a_german_internship_demanding_c1_is_still_dropped(self):
+        """The boundary that still holds: ad language is fine, an explicit
+        fluent-German requirement is not."""
+        j = _job("Praktikum Data Analytics", """
+            Als Teil unseres Teams arbeitest du an unserem Programm.
+            Voraussetzung: verhandlungssicheres Deutsch auf C1-Niveau.
         """)
         assert not _survives_pipeline(j)
 
@@ -424,6 +443,105 @@ class TestGermanLanguageStudentAdsAreAllowed:
             language is English and hours are flexible around lectures.
         """, location="Bonn, Germany")
         assert _survives_pipeline(j)
+
+
+class TestInternshipsAreTargetsToo:
+    """Added 2026-08-16 on request. Internships sit alongside Werkstudent as a
+    valid employment form; only full-time permanent roles, Ausbildung and
+    thesis positions are excluded now."""
+
+    def test_german_praktikum_counts(self):
+        assert main._is_student_role(
+            _job("Praktikum Data Science (m/w/d)", "x", location="Köln"))
+
+    def test_praktikant_counts(self):
+        assert main._is_student_role(
+            _job("Praktikant (m/w/d) Machine Learning", "x", location="Bonn"))
+
+    def test_english_internship_counts(self):
+        assert main._is_student_role(
+            _job("Data Science Internship", "x", location="Bonn"))
+
+    def test_praxissemester_counts(self):
+        assert main._is_student_role(
+            _job("Praxissemester Data Analytics", "x", location="Bonn"))
+
+    def test_internship_named_only_in_the_body_counts(self):
+        assert main._is_student_role(_job("Data Analytics Support", """
+            This is a 6-month internship for enrolled students, starting in
+            October. You will work with Python and SQL.
+        """, location="Bonn"))
+
+    def test_the_word_international_is_not_an_internship(self):
+        """'intern' needs a word boundary: 'international', 'internal' and
+        'Internet' appear in a large share of tech postings and would
+        otherwise drag every full-time role back into scope."""
+        assert not main._is_student_role(_job("Data Analyst International", """
+            Full-time permanent role reporting to our internal analytics team.
+            You will use our internal tooling and the Internet of Things stack.
+        """, location="Köln"))
+
+    def test_full_time_role_still_excluded(self):
+        assert not main._is_student_role(
+            _job("Junior Data Scientist", "Full-time, 40h per week, permanent.",
+                 location="Köln"))
+
+    def test_thesis_positions_remain_out_of_scope(self):
+        """Not asked for, and a different kind of search."""
+        from filters import title_is_worth_fetching
+        assert not title_is_worth_fetching("Masterarbeit Machine Learning")
+        assert not title_is_worth_fetching("Abschlussarbeit Data Science")
+
+    def test_ausbildung_remains_out_of_scope(self):
+        from filters import title_is_worth_fetching
+        assert not title_is_worth_fetching("Ausbildung Fachinformatiker")
+
+    def test_unpaid_internships_are_still_disqualified(self):
+        """Including internships must not open the door to unpaid ones."""
+        dq, _r, cat = scorer._hard_disqualify(_job("Praktikum AI Research", """
+            This is an unpaid internship for six months. You are enrolled at a
+            university.
+        """, location="Bonn"))
+        assert dq and cat == "unpaid"
+
+    def test_hiwi_alternative_actually_matches(self):
+        """Regression: this alternative was written into the file as a literal
+        backspace byte (a generator script emitted \\b inside a non-raw Python
+        string), so it read as 'hiwi<BS>' and could never match anything."""
+        assert main._is_student_role(_job("HiWi Stelle Informatik", "x",
+                                          location="Bonn"))
+
+
+class TestBonnRegionIsRecognisedAsGermany:
+    """The pipeline could not recognise its own home region.
+
+    GERMANY_TERMS listed Berlin, Munich, Köln and the big states, but not
+    Bonn. A posting whose location field reads just "Bonn", "Bonn-Rhein-Sieg",
+    "Sankt Augustin" or "Koblenz" — exactly how Stellenwerk, Fraunhofer, BWI
+    and Debeka write it — matched nothing and was hard-disqualified by the
+    scorer as being outside Germany, after surviving every other filter.
+    """
+
+    def _dq(self, location):
+        return scorer._hard_disqualify({
+            "title": "Werkstudent Data Science", "company": "X",
+            "location": location, "url": "u",
+            "description": "Enrolled student, English-speaking team.",
+        })
+
+    @pytest.mark.parametrize("location", [
+        "Bonn", "Bonn-Rhein-Sieg", "Sankt Augustin", "Siegburg", "Troisdorf",
+        "Wachtberg", "Koblenz", "Leverkusen", "Hürth", "Neuss",
+    ])
+    def test_commute_belt_cities_are_germany(self, location):
+        dq, _reason, cat = self._dq(location)
+        assert not dq, f"{location} disqualified as {cat}"
+
+    @pytest.mark.parametrize("location", ["Warsaw, Poland", "Austin, Texas"])
+    def test_genuinely_foreign_locations_still_dropped(self, location):
+        """The fix must not turn the location check into a no-op."""
+        dq, _reason, cat = self._dq(location)
+        assert dq and cat == "location"
 
 
 class TestCommutableFromBonn:

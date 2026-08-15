@@ -94,8 +94,8 @@ class TestAbsolventaPage:
         role. Absolventa mixes graduate-entry and student jobs in one sitemap
         and only the student half is eligible now."""
         keep = "10-s-werkstudent-data-science-m-w-d"
+        keep_praktikum = "11-s-praktikum-data-science"   # internships added 2026-08-16
         drop_fulltime = "10-b-junior-data-scientist-m-w-d"
-        drop_praktikum = "11-s-praktikum-data-science"
         drop_sales = "12-s-werkstudent-verkaeufer-m-w-d"
 
         def picked(slug):
@@ -104,8 +104,8 @@ class TestAbsolventaPage:
                         and not scrapers._ABSOLVENTA_EXCLUDE.search(slug))
 
         assert picked(keep)
+        assert picked(keep_praktikum), "internships are targets since 2026-08-16"
         assert not picked(drop_fulltime), "full-time graduate role is off-target now"
-        assert not picked(drop_praktikum), "Praktikum is the wrong employment form"
         assert not picked(drop_sales), "student role, wrong field"
 
     def test_studentische_hilfskraft_slug_is_picked(self):

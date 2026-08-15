@@ -32,12 +32,12 @@ _RE_TITLE_HARD_SENIOR = re.compile(
 )
 # Employment forms that are never the target. Since the Werkstudent pivot
 # (owner enrolled at Uni Bonn from 10/2026), werkstudent/studentische/HiWi
-# titles are the TARGET and must NOT appear here; internships, thesis work,
+# titles are the TARGET and must NOT appear here. Internships joined them
+# on 2026-08-16, so praktikum/praktikant/intern came out too. Thesis work,
 # Ausbildung and academia remain out of scope.
 _RE_TITLE_INELIGIBLE = re.compile(
-    r"\b(praktikum|praktikant\w*|"
-    r"ausbildung|dual(es|er)|abschlussarbeit|masterarbeit|bachelorarbeit|"
-    r"intern(ship)?|thesis|postdoc\w*|professor\w*)\b",
+    r"\b(ausbildung|dual(es|er)|abschlussarbeit|masterarbeit|bachelorarbeit|"
+    r"thesis|postdoc\w*|professor\w*)\b",
     re.IGNORECASE,
 )
 _RE_TITLE_JUNIOR_OK = re.compile(
@@ -77,6 +77,19 @@ GERMANY_TERMS = (
     "frankfurt", "cologne", "köln", "düsseldorf", "bochum", "dortmund",
     "essen", "stuttgart", "leipzig", "nrw", "bavaria", "bayern",
     "saxony", "sachsen", "hessen", "baden-württemberg",
+    # The Bonn commute belt. These were MISSING, and the omission was
+    # expensive: a posting whose location field reads just "Bonn",
+    # "Bonn-Rhein-Sieg", "Sankt Augustin" or "Koblenz" — which is how
+    # Stellenwerk, Fraunhofer, BWI and Debeka all write it — matched no
+    # Germany term at all and was hard-disqualified by the scorer as being
+    # outside Germany. The pipeline's own home region was the one region it
+    # could not recognise.
+    "bonn", "rhein-sieg", "sankt augustin", "st. augustin", "siegburg",
+    "troisdorf", "hennef", "königswinter", "bad honnef", "wachtberg",
+    "meckenheim", "rheinbach", "alfter", "bornheim", "swisttal",
+    "koblenz", "andernach", "remagen", "neuwied", "euskirchen",
+    "leverkusen", "bergisch gladbach", "brühl", "wesseling", "hürth",
+    "dormagen", "neuss", "rheinland-pfalz", "nordrhein-westfalen",
     # formerly scorer-only:
     "dach", "german market", "german office", "german team",
 )

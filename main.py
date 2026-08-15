@@ -833,10 +833,19 @@ def _is_commutable_or_remote(j: dict) -> bool:
     return True                         # unknown → let the scorer judge
 
 
-# Student-role requirement: the ONLY employment form being hunted.
+# Student-role requirement: Werkstudent-class roles AND internships.
+# Still excluded: full-time posts, Ausbildung, and thesis positions
+# (Abschlussarbeit / Masterarbeit), which are a different search.
 _RE_STUDENT_ROLE = re.compile(
     r"werkstudent\w*|working\s+student|studentische\w*\s+(hilfskraft|mitarbeiter\w*)"
-    r"|student\s+(assistant|employee|job)|studentenjob|hiwi",
+    r"|student\s+(assistant|employee|job)|studentenjob|hiwi\b"
+    # Internships added on request (2026-08-16). German ads say Praktikum
+    # / Praktikant; Pflichtpraktikum and Praxissemester are the university-
+    # mandated variants an M.Sc. student is a natural fit for. "intern"
+    # needs the \b guard or it matches "international", "internal" and
+    # "Internet", which appear in a large share of tech postings.
+    r"|praktikum|praktikant\w*|praxissemester"
+    r"|\binterns?\b|internship\w*",
     re.IGNORECASE,
 )
 
