@@ -90,13 +90,26 @@ class TestAbsolventaPage:
         assert j["posted_at"] == "2026-07-30"
 
     def test_slug_vocabulary(self):
-        keep = "10-b-junior-data-scientist-m-w-d"
+        """Post-pivot the slug must look like BOTH a data role AND a student
+        role. Absolventa mixes graduate-entry and student jobs in one sitemap
+        and only the student half is eligible now."""
+        keep = "10-s-werkstudent-data-science-m-w-d"
+        drop_fulltime = "10-b-junior-data-scientist-m-w-d"
         drop_praktikum = "11-s-praktikum-data-science"
-        drop_sales = "12-b-junior-verkaeufer-m-w-d"
-        assert scrapers._ABSOLVENTA_VOCAB.search(keep)
-        assert scrapers._ABSOLVENTA_EXCLUDE.search(drop_praktikum)
-        assert not (scrapers._ABSOLVENTA_VOCAB.search(drop_sales)
-                    and not scrapers._ABSOLVENTA_EXCLUDE.search(drop_sales))
+        drop_sales = "12-s-werkstudent-verkaeufer-m-w-d"
+
+        def picked(slug):
+            return bool(scrapers._ABSOLVENTA_VOCAB.search(slug)
+                        and scrapers._ABSOLVENTA_STUDENT.search(slug)
+                        and not scrapers._ABSOLVENTA_EXCLUDE.search(slug))
+
+        assert picked(keep)
+        assert not picked(drop_fulltime), "full-time graduate role is off-target now"
+        assert not picked(drop_praktikum), "Praktikum is the wrong employment form"
+        assert not picked(drop_sales), "student role, wrong field"
+
+    def test_studentische_hilfskraft_slug_is_picked(self):
+        assert scrapers._ABSOLVENTA_STUDENT.search("13-s-studentische-hilfskraft-informatik")
 
 
 class TestGetInItPage:

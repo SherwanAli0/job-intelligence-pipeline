@@ -202,7 +202,14 @@ _GERMAN_TITLE_FRAGMENTS = (
     "abschluss", "statistik",
     # German-market employment terms — a title using these is a German posting
     # aimed at the German system, whatever language the rest of it is in.
-    "praktikum", "praktikant", "werkstudent", "studentische",
+    #
+    # "werkstudent" and "studentische" were REMOVED here in the Bonn pivot.
+    # They are German-law employment terms that appear in the title of
+    # essentially every target role, including ones whose body is written
+    # entirely in English, so treating them as language evidence silently
+    # deleted most of the market. The body-language test (_german_share)
+    # remains the real language signal.
+    "praktikum", "praktikant",
     "ausbildung", "duales", "dualer", "berufserfahren",
 )
 
@@ -602,6 +609,12 @@ _MASTERS_SOFTENING = (
 # Exclusion contexts — these contain the trigger phrase but aren't degree
 # requirements at all. If detected in the surrounding window, skip the match.
 _MASTERS_EXCLUSION_CONTEXTS = (
+    # Werkstudent ads describe ENROLLMENT ("enrolled in a Bachelor's or
+    # Master's programme"), which is the owner's exact situation from 10/2026,
+    # not a completed-degree requirement.
+    "enrolled", "immatrikuliert", "eingeschrieben", "studium", "studying",
+    "student of", "study programme", "study program", "degree program",
+    "bachelor's or master", "bachelor or master", "bachelor- oder master",
     "scrum master", "master data", "master class", "masterclass",
     "master branch", "master node", "master/slave", "master plan",
     "master key", "headmaster", "grandmaster", "master of ceremonies",
@@ -664,6 +677,17 @@ def _german_share(text: str) -> float:
     return hits / len(words)
 
 
+def _reads_as_english(text: str) -> bool:
+    """Long enough to judge AND almost free of German function words.
+
+    Deliberately stricter than 'not German': it demands positive evidence, so
+    a two-line stub description can never qualify.
+    """
+    if len(re.findall(r"[a-zäöüß]+", text)) < 25:
+        return False
+    return _german_share(text) < _GERMAN_BODY_THRESHOLD / 2
+
+
 def _is_english_friendly(j: dict) -> bool:
     """Drop jobs that are clearly German-language unless the posting genuinely
     confirms an English-speaking team."""
@@ -707,10 +731,94 @@ def _is_english_friendly(j: dict) -> bool:
     # German gender markers in the title mark a German-market posting. The list
     # was previously only (m/w/d)/(w/m/d)/(d/m/w); real digests also carried
     # (gn), (f/m/x) and (F/M/*).
-    if _RE_GENDER_MARKER.search(title_lower) and "english" not in desc_lower:
+    #
+    # German-MARKET is not the same as German-LANGUAGE, and the distinction
+    # started to matter with the Werkstudent pivot: German employers put
+    # (m/w/d) on nearly every student ad, including ones whose body is written
+    # entirely in English. So the marker only disqualifies when the body does
+    # not independently read as English.
+    if (_RE_GENDER_MARKER.search(title_lower)
+            and "english" not in desc_lower
+            and not _reads_as_english(desc_lower)):
         return False
 
     return True
+
+
+# ── Werkstudent mode: student roles only, commutable from Bonn or DE-remote ──
+# The owner starts an M.Sc. at the University of Bonn in October 2026. The
+# pipeline now hunts EXCLUSIVELY for Werkstudent-class roles that are workable
+# alongside those studies.
+#
+# "Commutable" is an EXPLICIT list of places within roughly one hour by train
+# from Bonn Hbf, not a blanket NRW match — NRW includes Bielefeld and Münster
+# at 2+ hours. Anchors verified by rail time: Köln ~19-26 min, Koblenz ~32-47,
+# Düsseldorf ~35-57; Aachen checked and EXCLUDED at 1h11+. The rest are the
+# stations on those same lines.
+_COMMUTABLE_FROM_BONN = (
+    "bonn", "bad godesberg", "beuel", "bornheim",
+    "köln", "cologne", "koeln", "porz", "deutz", "hürth", "huerth",
+    "brühl", "bruehl", "wesseling", "cologne bonn airport", "köln/bonn",
+    "siegburg", "sankt augustin", "st. augustin", "troisdorf", "hennef",
+    "königswinter", "koenigswinter", "bad honnef", "unkel", "linz am rhein",
+    "remagen", "andernach", "koblenz",
+    "euskirchen", "leverkusen", "bergisch gladbach", "dormagen", "neuss",
+    "düsseldorf", "duesseldorf", "dusseldorf",
+)
+
+# German cities that are definitely NOT commutable from Bonn alongside studies.
+# On-site/hybrid roles here are dropped unless the posting is genuinely remote.
+_NON_COMMUTABLE_DE_CITIES = (
+    "berlin", "münchen", "munich", "muenchen", "hamburg", "frankfurt",
+    "stuttgart", "leipzig", "dresden", "nürnberg", "nuremberg", "hannover",
+    "karlsruhe", "mannheim", "heidelberg", "münster", "muenster", "bielefeld",
+    "dortmund", "essen", "duisburg", "wuppertal", "aachen", "bremen", "kiel",
+    "freiburg", "augsburg", "regensburg", "ulm", "kassel", "erfurt", "jena",
+    "braunschweig", "wolfsburg", "ingolstadt", "darmstadt", "wiesbaden",
+    "mainz", "saarbrücken", "rostock", "magdeburg", "potsdam",
+)
+
+# Full-remote signals (German market phrasings included). Deliberately does
+# NOT count plain "hybrid" or "remote möglich": hybrid still requires office
+# days, which only works if the office is commutable.
+_DE_REMOTE_SIGNALS = (
+    "100% remote", "100 % remote", "fully remote", "vollständig remote",
+    "komplett remote", "deutschlandweit", "remote in germany",
+    "remote within germany", "remote (germany", "germany-remote",
+    "remote-first", "remote first", "work from anywhere in germany",
+    "bundesweit remote", "remote deutschland", "ortsunabhängig",
+)
+
+
+def _is_commutable_or_remote(j: dict) -> bool:
+    """Keep only: on-site/hybrid within ~1h of Bonn, or genuinely DE-remote.
+    Unknown location is kept — absence of evidence is not Berlin."""
+    loc = (j.get("location") or "").lower()
+    desc = (j.get("description") or "").lower()
+
+    if any(c in loc for c in _COMMUTABLE_FROM_BONN):
+        return True
+    if any(sig in loc or sig in desc for sig in _DE_REMOTE_SIGNALS):
+        return True
+    if "remote" in loc and not any(c in loc for c in _NON_COMMUTABLE_DE_CITIES):
+        return True                     # location field itself says remote
+    if any(c in loc for c in _NON_COMMUTABLE_DE_CITIES):
+        return False                    # on-site elsewhere in Germany
+    return True                         # unknown → let the scorer judge
+
+
+# Student-role requirement: the ONLY employment form being hunted.
+_RE_STUDENT_ROLE = re.compile(
+    r"werkstudent\w*|working\s+student|studentische\w*\s+(hilfskraft|mitarbeiter\w*)"
+    r"|student\s+(assistant|employee|job)|studentenjob|hiwi",
+    re.IGNORECASE,
+)
+
+
+def _is_student_role(j: dict) -> bool:
+    blob = f"{j.get('title') or ''} {(j.get('description') or '')[:3000]}"
+    return bool(_RE_STUDENT_ROLE.search(blob))
+
 
 # ── Digest memory by company+title, not just URL ─────────────────────────────
 # seen_jobs.json remembers URLs (ids), but some sources mint a NEW url for the
@@ -1072,7 +1180,11 @@ def node_filter(state: dict) -> dict:
     # Stale postings never reach the digest; the whole point is applying fast.
     new_jobs = _apply_filter(new_jobs, _is_fresh_enough,
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
+    new_jobs = _apply_filter(new_jobs, _is_student_role,
+                             "Student-role filter (Werkstudent only)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
+    new_jobs = _apply_filter(new_jobs, _is_commutable_or_remote,
+                             "Commute filter (<=1h from Bonn or DE-remote)")
     new_jobs = _apply_filter(new_jobs, _is_english_friendly, "English filter")
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
     new_jobs = _apply_filter(new_jobs, _not_fulltime_senior, "Senior-title filter")

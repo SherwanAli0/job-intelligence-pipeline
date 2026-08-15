@@ -14,11 +14,22 @@
 # guardrails: language, location, work authorization, availability).
 _CV_SHARED = """
 Name: Sherwan Ali
-Location: Bochum, Germany. Full work authorization (valid German residence permit).
-Availability: B.Sc. Computer Engineering GRADUATE (Üsküdar University, Istanbul, graduated
-July 2026). AVAILABLE IMMEDIATELY for full-time junior roles. Recently completed a
-Software and AI internship at iseremo GmbH (Apr–Jun 2026).
-Not enrolled at a German university, so NOT eligible for Werkstudent roles.
+Location: Bonn, Germany (moving for the M.Sc.). Full work authorization (valid German residence permit).
+Status: M.Sc. Artificial Intelligence student at the UNIVERSITY OF BONN (from October 2026);
+B.Sc. Computer Engineering (Üsküdar University, graduated July 2026, grade 1.8). Recently
+completed a Software and AI internship at iseremo GmbH (Apr–Jun 2026).
+ENROLLED at a German university → FULLY ELIGIBLE for Werkstudent (working student) roles,
+up to 20h/week during the semester, more during semester breaks.
+
+TARGET (exclusive — this is the ONLY thing being searched for):
+Werkstudent / working-student / studentische Hilfskraft roles in AI, ML, Data Science or
+Data Analytics. NOT full-time roles, NOT internships/Praktikum, NOT thesis positions.
+LOCATION: on-site/hybrid must be within ~1 hour of Bonn by train: Bonn, Köln/Cologne,
+Siegburg, Sankt Augustin, Troisdorf, Hennef, Brühl, Wesseling, Hürth, Bornheim,
+Königswinter, Bad Honnef, Remagen, Andernach, Koblenz, Euskirchen, Leverkusen,
+Bergisch Gladbach, Dormagen, Neuss, Düsseldorf — OR remote within Germany.
+On-site roles anywhere else (Berlin, Munich, Hamburg, Aachen, Dortmund, Essen...) are NOT
+attendable alongside studies in Bonn — score them 0-15 unless genuinely Germany-remote.
 
 LANGUAGE REQUIREMENT (critical for scoring):
 - English: C1. STRONGLY prefer English-first roles or English-speaking teams.
@@ -30,8 +41,9 @@ LANGUAGE REQUIREMENT (critical for scoring):
 LOCATION AND WORK AUTHORIZATION (critical for scoring):
 - Authorized to work in Germany only. NOT authorized for the US, UK, or other non-EU countries.
 - PENALISE or REJECT roles that are US-only, US-remote-only, require US/UK or other non-EU work
-  authorization, or are onsite outside Germany with no Germany or EU-remote option.
-- Roles in Germany, or remote within Germany or the EU, are a fit.
+  authorization, or are onsite outside Germany with no Germany-remote option.
+- Werkstudent status requires enrolment in Germany, so only German employers (or roles
+  genuinely remote within Germany) are a fit.
 
 Education:
 - B.Sc. Computer Engineering, Üsküdar University, Istanbul (graduated July 2026). Programme
@@ -63,9 +75,8 @@ Deployed work (evidence of shipping, not just building):
 
 # ── DATA SCIENTIST framing — leads with statistics, experimentation, analytics ──
 CV_PROFILE_DS = _CV_SHARED + """
-Target roles: Junior Data Scientist, Data Scientist, Associate Data Scientist, Data Analyst,
-Business Intelligence Analyst, Analytics Engineer, Quantitative Analyst, Working Student is NOT
-applicable (graduate).
+Target roles: Werkstudent Data Science, Werkstudent Data Analytics, Werkstudent Business
+Intelligence, Working Student Data, studentische Hilfskraft Datenanalyse.
 
 Profile: Data-focused Computer Engineering graduate with strong statistical and
 experimentation grounding. Comfortable across the full analysis loop — hypothesis, study
@@ -104,9 +115,8 @@ Technical Skills (data-science emphasis):
 
 # ── MACHINE LEARNING framing — leads with modelling, training, ML engineering ──
 CV_PROFILE_ML = _CV_SHARED + """
-Target roles: Junior Machine Learning Engineer, ML Engineer, Applied Scientist, Applied ML
-Engineer, MLOps Engineer, Deep Learning Engineer, Computer Vision Engineer, NLP Engineer,
-Research Engineer (ML).
+Target roles: Werkstudent Machine Learning, Werkstudent MLOps, Working Student ML/Deep
+Learning, studentische Hilfskraft Machine Learning, research assistant (ML, paid).
 
 Profile: Machine Learning engineer/graduate with hands-on model training, evaluation and
 reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data,
@@ -144,8 +154,8 @@ Technical Skills (ML emphasis):
 
 # ── AI / LLM framing (latest current focus) — leads with iseremo LLM/agent work ──
 CV_PROFILE_AI = _CV_SHARED + """
-Target roles: Junior AI Engineer, AI Engineer, LLM Engineer, GenAI Engineer, Applied AI
-Engineer, AI Agent Engineer, AI/Software Engineer, Forward Deployed / AI Solutions Engineer.
+Target roles: Werkstudent AI/LLM, Working Student AI Engineering, Werkstudent Künstliche
+Intelligenz (English-friendly), studentische Hilfskraft AI/GenAI.
 
 Profile: AI/LLM-focused Computer Engineering graduate who recently built and shipped LLM
 features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker,
@@ -205,82 +215,32 @@ CV_PROFILE = CV_PROFILE_AI
 # every day. The first 16 are interleaved 4×4 (AI, ML, DS, DA, repeat) so any
 # prefix stays balanced. Post-scrape filters drop the off-targets.
 SEARCH_QUERIES = [
-    # ── TOP 16: interleaved AI / ML / Data Scientist / Data Analyst ──────────
-    # Junior tier
-    "Junior AI Engineer Germany",
-    "Junior Machine Learning Engineer Germany",
-    "Junior Data Scientist Germany",
-    "Junior Data Analyst Germany",
-    # Entry-level tier
-    "Entry Level AI Engineer Germany",
-    "Entry Level Machine Learning Engineer Germany",
-    "Entry Level Data Scientist Germany",
-    "Entry Level Data Analyst Germany",
-    # Graduate tier
-    "Graduate AI Engineer Germany",
-    "Graduate ML Engineer Germany",
-    "Graduate Data Scientist Germany",
-    "Graduate Data Analyst Germany",
-    # No-seniority tier (English-confirmed)
-    "AI Engineer Germany English",
-    "Machine Learning Engineer Germany English",
-    "Data Scientist Germany English",
-    "Data Analyst Germany English",
-
-    # ── AI / LLM / GenAI depth (Sherwan's iseremo stack) ─────────────────────
-    "LLM Engineer Germany",
-    "GenAI Engineer Germany",
-    "Generative AI Engineer Germany",
-    "AI Agent Engineer Germany",
-    "Applied AI Engineer Germany",
-    "AI Software Engineer Germany",
-
-    # ── ML / Machine Learning depth ──────────────────────────────────────────
-    "MLOps Engineer Germany",
-    "Computer Vision Engineer Germany",
-    "NLP Engineer Germany",
-    "Deep Learning Engineer Germany",
-    "Applied Scientist Germany",
-    "Machine Learning Researcher Germany",
-
-    # ── Data Science depth ───────────────────────────────────────────────────
-    "Associate Data Scientist Germany",
-    "Data Science Analyst Germany",
-    "Product Data Scientist Germany",
-    "Quantitative Analyst Germany English",
-
-    # ── Data Analyst / Analytics depth ───────────────────────────────────────
-    "Business Intelligence Analyst Germany English",
-    "BI Analyst Germany English",
-    "Data Analytics Germany English",
-    "Junior Business Analyst Germany English",
-    "Analytics Engineer Germany",
-    "Reporting Analyst Germany English",
-
-    # ── Internships — one per track ──────────────────────────────────────────
-    "AI Internship Germany",
-    "Machine Learning Internship Germany",
-    "Data Science Internship Germany",
-    "Data Analyst Internship Germany",
-
-    # ── City / region anchors — balanced across tracks ───────────────────────
-    "AI Engineer Berlin English",
-    "Machine Learning Engineer Berlin English",
-    "Data Scientist Berlin English",
-    "Data Analyst Berlin English",
-    "Data Scientist Munich English",
-    "Data Analyst Munich English",
-    "AI Engineer NRW English",
-    "Data Analyst NRW English",
-    "Data Scientist Düsseldorf English",
-    "Data Analyst Hamburg English",
-    "AI Engineer Frankfurt English",
-
-    # ── Remote-EU phrasings — one per track ──────────────────────────────────
-    "Remote AI Engineer Germany",
-    "Remote Machine Learning Engineer EU",
-    "Remote Data Scientist Germany",
-    "Remote Data Analyst Germany English",
+    # Werkstudent-only mode (owner starts M.Sc. AI at Uni Bonn 10/2026).
+    # Balanced across the four tracks, German and English phrasings.
+    "Werkstudent Data Science",
+    "Werkstudent Machine Learning",
+    "Werkstudent Künstliche Intelligenz",
+    "Werkstudent Data Analyst",
+    "Werkstudent AI",
+    "Werkstudent Datenanalyse",
+    "Werkstudent Python",
+    "Werkstudent Business Intelligence",
+    "Werkstudent Data Engineering",
+    "Working Student Data Science",
+    "Working Student Machine Learning",
+    "Working Student AI",
+    "Working Student Data Analytics",
+    "Werkstudent Softwareentwicklung KI",
+    "studentische Hilfskraft Data Science",
+    "studentische Hilfskraft Machine Learning",
+    "Werkstudent LLM",
+    "Werkstudent NLP",
+    "Werkstudent Computer Vision",
+    "Werkstudent Deep Learning",
+    "Werkstudent SQL",
+    "Werkstudent Tableau",
+    "Working Student GenAI",
+    "Werkstudent MLOps",
 ]
 
 LOCATION = "Germany"

@@ -188,13 +188,15 @@ class TestTwoPhaseDescriptionFetching:
         monkeypatch.setattr(scrapers, "_fetch_full_description",
                             lambda url: fetched.append(url) or ("x" * 900))
         jobs = [
-            {"title": "Junior Data Scientist", "url": "u1", "description": ""},
+            {"title": "Werkstudent Data Science", "url": "u1", "description": ""},
             {"title": "Senior ML Engineer", "url": "u2", "description": ""},
-            {"title": "Werkstudent Data (m/w/d)", "url": "u3", "description": ""},
-            {"title": "Data Analyst", "url": "u4", "description": ""},
+            {"title": "Praktikum Data Analytics", "url": "u3", "description": ""},
+            {"title": "Working Student AI (m/w/d)", "url": "u4", "description": ""},
         ]
         scrapers._enrich_jobspy_descriptions(jobs)
-        assert set(fetched) == {"u1", "u4"}, "senior and Werkstudent must not cost a request"
+        # Inverted by the Bonn pivot: Werkstudent titles are now the target and
+        # DO deserve a request; Praktikum and senior titles still do not.
+        assert set(fetched) == {"u1", "u4"}, "senior and Praktikum must not cost a request"
         assert len(jobs[0]["description"]) > 400
         assert jobs[1]["description"] == ""
 

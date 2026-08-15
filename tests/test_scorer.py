@@ -123,9 +123,27 @@ class TestHardDisqualify:
             description="You have verhandlungssicheres Deutsch (C1) and English."))
         assert dq
 
-    def test_werkstudent_dropped(self):
+    def test_werkstudent_is_no_longer_disqualified(self):
+        """Inverted by the Bonn pivot: Werkstudent used to be an automatic
+        drop (not enrolled at a German uni). From 10/2026 he is enrolled at
+        Uni Bonn, and Werkstudent is now the ONLY employment form wanted."""
         dq, _, _ = scorer._hard_disqualify(self._j(title="Werkstudent Data Science"))
-        assert dq
+        assert not dq
+
+    def test_enrolled_student_phrasing_does_not_trigger_masters_drop(self):
+        """Every Werkstudent ad says some form of 'enrolled in a Bachelor's
+        or Master's programme'. That describes his exact status, so it must
+        not read as a completed-Master's requirement."""
+        dq, _, _ = scorer._hard_disqualify(self._j(
+            title="Werkstudent Machine Learning",
+            description="You are currently enrolled in a Master's programme "
+                        "in computer science and available 20h/week."))
+        assert not dq
+
+    def test_completed_masters_requirement_still_drops(self):
+        dq, _, cat = scorer._hard_disqualify(self._j(
+            description="We require a completed Master's degree in statistics."))
+        assert dq and cat == "masters_required"
 
     def test_unpaid_dropped(self):
         dq, _, _ = scorer._hard_disqualify(self._j(

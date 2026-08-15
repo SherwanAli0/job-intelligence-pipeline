@@ -1,13 +1,17 @@
 # Job Hunter: an autonomous AI job-search pipeline
 
 ![Tests](https://github.com/SherwanAli0/job-hunter/actions/workflows/test.yml/badge.svg)
-![Daily Job Hunt](https://github.com/SherwanAli0/job-hunter/actions/workflows/daily.yml/badge.svg)
+![Deploy](https://github.com/SherwanAli0/job-hunter/actions/workflows/deploy.yml/badge.svg)
 
 Twice a day, this pipeline scans **300+ company job boards and public job APIs**, filters
 thousands of postings down to the handful worth applying to, scores each one against
 track-specific CV profiles with a two-stage Claude pipeline, and delivers a ranked
 email digest with pre-drafted screening answers, keyword-gap tailoring hints,
 freshness badges, and an application funnel tracker.
+
+It runs on **AWS Fargate**, scheduled by EventBridge, with state in S3 and secrets in
+SSM Parameter Store. Deploys are automatic from `main` over GitHub OIDC, with no
+long-lived AWS keys anywhere.
 
 Built and maintained by [Sherwan Ali](https://github.com/SherwanAli0) as a real
 daily-driver (it has processed **19,000+ unique postings** since May 2026), and as a
@@ -27,8 +31,21 @@ flowchart TD
     E --> F["Stage 3: Sonnet re-score of finalists<br/>score ≥ 50 only"]
     F --> G["Ranking layer<br/>diversity quotas · ghost-job penalty · near-miss band"]
     G --> H["Email digest<br/>screening-answer kits · tailoring hints · funnel + follow-ups · health warnings"]
-    G --> I["Committed state<br/>seen_jobs.json · run_stats.jsonl"]
+    G --> I["Durable state (S3)<br/>seen_jobs.json · digested_keys.json · run_stats.jsonl"]
 ```
+
+**Runtime.** The whole pipeline is one container image. EventBridge Scheduler starts an
+ECS Fargate task twice a day (Europe/Berlin, so daylight saving is handled for me);
+the task reads its secrets from SSM Parameter Store as SecureStrings, reads and writes
+state in a versioned private S3 bucket, and logs structured JSON to CloudWatch. Fargate
+was chosen over Lambda only after measuring the real scrape: a full run takes about 40
+minutes, well past Lambda's 15-minute ceiling. A push to `main` runs the tests, builds
+the image, pushes it to ECR and registers a new task definition revision, authenticating
+with GitHub OIDC against a least-privilege role.
+
+Two concurrent runs would each see the same jobs as unseen and both send a digest, so
+runs take a claim in S3 (conditional write plus TTL) and a second run exits cleanly
+instead of failing.
 
 **Sources** (all public interfaces): Greenhouse, Lever, Ashby, Personio, Recruitee,
 SmartRecruiters and Workday endpoints across 300+ company boards; the official
@@ -85,7 +102,17 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
   anything ambiguous; the LLM stage (which can read the description) makes the
   precision call. False negatives are unrecoverable; false positives cost a cent.
 - **State is auditable.** Seen-job ids carry last-seen dates and prune after 60
-  days; every run's behaviour is one JSON line in the repo history.
+  days; every run's behaviour is one JSON line of run stats.
+- **What it hunts is configuration, not architecture.** The target changed
+  completely once already: it looked for junior full-time roles until its owner
+  was admitted to an M.Sc. in Bonn, and now looks only for Werkstudent
+  (working-student) roles reachable within about an hour of Bonn by train, or
+  remote within Germany. That pivot touched the CV profiles and query lists in
+  [config.py](config.py), one required-employment-form filter, one commute rule,
+  and the labels on the calibration set. The regression suite is what made it
+  safe: it caught the spots where the old assumption had leaked into unrelated
+  code, including a language filter that treated the word "Werkstudent" itself
+  as evidence that a posting was written in German.
 
 ## Repo tour
 
@@ -100,7 +127,8 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
 | [track.py](track.py) | Application tracker: funnel stats + follow-up nudges |
 | [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
 | [health_check.py](health_check.py) | Monthly board-rot detector |
-| [tests/](tests/) | 85 offline tests, run on every push |
+| [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
+| [tests/](tests/) | 270 offline tests, run on every push |
 
 ## Run your own
 

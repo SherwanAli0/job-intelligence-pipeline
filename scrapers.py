@@ -781,31 +781,31 @@ def scrape_lever() -> list[dict]:
 
 # ── 7. Arbeitsagentur (German Federal Employment Agency — official API) ────────
 
-# Balanced across the four tracks (AI · ML · Data Scientist · Data Analyst).
-# The Arbeitsagentur API is the official German employment agency, so German
-# and English terms both work.
+# Werkstudent-only across the four tracks (AI / ML / Data Science / Data
+# Analyst). The Arbeitsagentur API is the official German employment agency,
+# and Werkstudent is a German-law employment form, so the German phrasings
+# carry most of the volume here.
 ARBEITSAGENTUR_QUERIES = [
     # AI
-    "Artificial Intelligence",
-    "AI Engineer",
-    "LLM Engineer",
+    "Werkstudent Künstliche Intelligenz",
+    "Werkstudent AI",
+    "Working Student AI",
     # ML
-    "Machine Learning",
-    "Machine Learning Engineer",
-    "Junior ML Engineer",
+    "Werkstudent Machine Learning",
+    "Working Student Machine Learning",
     # Data Science
-    "Data Science",
-    "Data Scientist",
-    "Junior Data Scientist",
+    "Werkstudent Data Science",
+    "Werkstudent Data Scientist",
     # Data Analyst
-    "Data Analyst",
-    "Data Analytics",
-    "Business Intelligence Analyst",
-    # Internships — one per track
-    "AI Praktikum",
-    "Machine Learning Internship",
-    "Data Science Internship",
-    "Data Analyst Praktikum",
+    "Werkstudent Data Analyst",
+    "Werkstudent Datenanalyse",
+    "Werkstudent Business Intelligence",
+    # Adjacent (Tier 2/3: software work with a data/Python component)
+    "Werkstudent Informatik",
+    "Werkstudent Softwareentwicklung",
+    "Werkstudent Python",
+    "Studentische Hilfskraft Informatik",
+    "Studentische Hilfskraft Data",
 ]
 
 # ── Arbeitsagentur enrichment (idea 3 + idea 1-lite) ─────────────────────────
@@ -1271,47 +1271,35 @@ _SKIP_DOMAINS = {
     "recruitee.com", "bamboohr.com", "join.com", "jobteaser.com",
 }
 
-# Broad queries designed to surface jobs on company career pages
-# BALANCED across the four tracks (AI · ML · Data Scientist · Data Analyst).
+# Broad queries designed to surface jobs on company career pages.
+# Werkstudent-only across the four tracks, anchored on the Bonn commute belt
+# (Bonn / Köln / Düsseldorf) plus genuinely Germany-remote roles.
 # Used by the Brave + DuckDuckGo web-search scrapers.
 _WEB_QUERIES = [
-    # ── Junior roles + English — one per track ───────────────────────────────
-    '"junior AI engineer" Germany "English"',
-    '"junior machine learning engineer" Germany "English"',
-    '"junior data scientist" Germany "English"',
-    '"junior data analyst" Germany "English"',
-    # ── Entry level / graduate + English — one per track ─────────────────────
-    '"entry level" "AI engineer" Germany "English"',
-    '"entry level" "machine learning" Germany "English"',
-    '"graduate" "data scientist" Germany "English"',
-    '"junior" "data analytics" Germany "English"',
-    # ── AI / LLM depth ───────────────────────────────────────────────────────
-    '"AI engineer" OR "LLM engineer" junior Germany "English"',
-    '"generative AI" OR "GenAI" junior Germany "English"',
-    '"AI agent" OR "agentic" engineer Germany "English"',
-    # ── ML depth ─────────────────────────────────────────────────────────────
-    '"python" "machine learning" junior Germany "English"',
-    '"deep learning" OR "computer vision" junior Germany "English"',
-    '"NLP engineer" OR "MLOps" junior Germany "English"',
-    # ── Data Science depth ───────────────────────────────────────────────────
-    '"associate data scientist" Germany "English"',
-    '"data scientist" "python" junior Germany "English"',
-    '"product data scientist" Germany "English"',
-    # ── Data Analyst depth ───────────────────────────────────────────────────
-    '"business intelligence analyst" Germany "English"',
-    '"BI analyst" OR "analytics engineer" Germany "English"',
-    '"data analyst" "SQL" junior Germany "English"',
-    '"business analyst" data Germany "English"',
-    # ── Internships — one per track ──────────────────────────────────────────
-    '"AI internship" Germany "English"',
-    '"machine learning internship" Germany "English"',
-    '"data science internship" Germany "English"',
-    '"data analyst internship" Germany "English"',
-    # ── Remote / EU — one per track ──────────────────────────────────────────
-    '"remote" "AI engineer" junior "English"',
-    '"fully remote" "machine learning" "English"',
-    '"fully remote" "data scientist" "English"',
-    '"fully remote" "data analyst" "English"',
+    # Core Werkstudent + track, Germany-wide (remote ads surface here)
+    '"werkstudent" "data science" Germany',
+    '"werkstudent" "machine learning" Germany',
+    '"werkstudent" "artificial intelligence" OR "künstliche intelligenz"',
+    '"werkstudent" "data analyst" OR "datenanalyse"',
+    '"working student" "data" Germany "English"',
+    '"working student" "AI" OR "machine learning" Germany "English"',
+    # Commute belt: Bonn / Köln / Düsseldorf
+    '"werkstudent" data Bonn',
+    '"werkstudent" data Köln OR Cologne',
+    '"werkstudent" "künstliche intelligenz" Köln OR Bonn',
+    '"werkstudent" data Düsseldorf',
+    '"werkstudent" informatik Bonn OR Köln',
+    '"werkstudent" python Bonn OR Köln OR Düsseldorf',
+    # German phrasings and adjacent student-employment forms
+    '"studentische hilfskraft" "data science" OR "machine learning"',
+    '"studentische hilfskraft" informatik Bonn OR Köln',
+    '"werkstudent" "business intelligence" OR "power bi"',
+    '"werkstudent" "softwareentwicklung" python Köln OR Bonn',
+    # Remote within Germany
+    '"werkstudent" remote "data" Deutschland',
+    '"working student" remote Germany "English"',
+    '"werkstudent" "100% remote" OR "deutschlandweit"',
+    '"werkstudent" "machine learning" OR "LLM" remote',
 ]
 
 
@@ -1915,20 +1903,18 @@ _ADZUNA_BASE = "https://api.adzuna.com/v1/api/jobs/de/search/{page}"
 
 # Search terms designed to maximise AI/ML/data coverage in DE
 _ADZUNA_QUERIES = (
-    "machine learning",
-    "data scientist",
-    "AI engineer",
-    "data analyst",
-    "applied scientist",
-    "ML engineer",
-    "data engineer",
-    "Praktikum Data",
-    "Praktikum KI",
-    "Werkstudent AI",  # we drop these later but include for broader coverage
-    "Junior Data",
-    "Junior AI",
-    "LLM engineer",
-    "Python developer",
+    "Werkstudent Data",
+    "Werkstudent KI",
+    "Werkstudent Machine Learning",
+    "Werkstudent Data Science",
+    "Werkstudent Data Analyst",
+    "Werkstudent Business Intelligence",
+    "Werkstudent Informatik",
+    "Werkstudent Python",
+    "Working Student Data",
+    "Working Student AI",
+    "Studentische Hilfskraft Data",
+    "Studentische Hilfskraft Informatik",
 )
 
 
@@ -2538,10 +2524,13 @@ _XING_QUERY = """query JobSearchByQuery($query: JobSearchQueryInput!, $consumer:
   }
 }"""
 
-# Balanced across the four tracks; German-market terms (XING is DE-native).
+# Werkstudent-only across the four tracks. XING is DE-native and its
+# Mittelstand segment is exactly where Werkstudent ads live.
 _XING_QUERIES = (
-    "AI Engineer", "Machine Learning Engineer", "Data Scientist", "Data Analyst",
-    "LLM Engineer", "Data Engineer", "Business Intelligence", "Junior Data Scientist",
+    "Werkstudent Data Science", "Werkstudent Machine Learning",
+    "Werkstudent Künstliche Intelligenz", "Werkstudent Data Analyst",
+    "Werkstudent Business Intelligence", "Werkstudent Informatik",
+    "Werkstudent Python", "Studentische Hilfskraft Informatik",
 )
 
 _XING_DESC_CAP = 60  # max job-page description fetches per run
@@ -2677,10 +2666,17 @@ _ABSOLVENTA_VOCAB = re.compile(
     r"|-ki-|informatik|software|developer|entwickler",
     re.IGNORECASE,
 )
-# The board is full of retail/gastro/sales juniors; exclude by slug before
-# spending a fetch. Praktikum/Werkstudent are ineligible for the owner anyway.
+# Since the Werkstudent pivot the slug must ALSO look like a student role.
+# Absolventa mixes graduate-entry and student jobs in one sitemap, and the
+# owner is only eligible for (and only wants) the student half.
+_ABSOLVENTA_STUDENT = re.compile(
+    r"werkstudent|working-student|studentische|studentenjob|hiwi",
+    re.IGNORECASE,
+)
+# The board is full of retail/gastro/sales roles; exclude by slug before
+# spending a fetch. Praktikum/Ausbildung are the wrong employment form.
 _ABSOLVENTA_EXCLUDE = re.compile(
-    r"praktik|werkstudent|schueler|ausbildung|verkauf|verkaeuf|bedienung"
+    r"praktik|schueler|ausbildung|verkauf|verkaeuf|bedienung"
     r"|vertrieb|gastro|filial|lager|kurier",
     re.IGNORECASE,
 )
@@ -2723,7 +2719,9 @@ def scrape_absolventa() -> list[dict]:
         candidates = []
         for u in urls:
             slug = u.rsplit("/", 1)[-1]
-            if _ABSOLVENTA_VOCAB.search(slug) and not _ABSOLVENTA_EXCLUDE.search(slug):
+            if (_ABSOLVENTA_VOCAB.search(slug)
+                    and _ABSOLVENTA_STUDENT.search(slug)
+                    and not _ABSOLVENTA_EXCLUDE.search(slug)):
                 candidates.append(u)
         picked = candidates[:_ABSOLVENTA_CAP]
         results = _parallel_collect(picked, _absolventa_page, "Absolventa")
@@ -2807,12 +2805,14 @@ def scrape_getinit() -> list[dict]:
 # ── hiring.cafe (G1) — one aggregated feed over 40+ ATS platforms ────────────
 # hiring.cafe indexes ATS boards directly, including platforms this repo has
 # no client for (Teamtailor, iCIMS, Avature, Dover, OracleCloud...). Its
-# Next.js data route serves the search server-side filtered: Germany +
-# seniorityLevel "Entry Level" cut a 12,011-hit query to ~3,000 junior-band
-# hits (verified live). Unofficial API: the buildId changes on every deploy,
-# so it is re-bootstrapped from the homepage each run, and any breakage lands
-# in the existing dead-source alarm.
-_HIRINGCAFE_QUERIES = ("data", "machine learning", "artificial intelligence", "analyst")
+# Next.js data route serves the search server-side filtered by country.
+# The seniorityLevel="Entry Level" filter was dropped in the Werkstudent
+# pivot: the keyword itself is now the narrow filter, and German student ads
+# are tagged inconsistently (Entry Level vs Internship), so filtering on it
+# silently lost eligible roles. Unofficial API: the buildId changes on every
+# deploy, so it is re-bootstrapped from the homepage each run, and any
+# breakage lands in the existing dead-source alarm.
+_HIRINGCAFE_QUERIES = ("werkstudent", "working student", "studentische hilfskraft")
 _HIRINGCAFE_BUILDID_RE = re.compile(r'"buildId":"([^"]+)"')
 _HIRINGCAFE_GERMANY = {
     "formatted_address": "Germany", "types": ["country"],
@@ -2839,7 +2839,6 @@ def scrape_hiringcafe() -> list[dict]:
             state = json.dumps({
                 "searchQuery": query,
                 "locations": [_HIRINGCAFE_GERMANY],
-                "seniorityLevel": ["Entry Level"],
             })
             url = (f"https://hiringcafe.com/_next/data/{build_id}/index.json"
                    f"?searchState={urllib.parse.quote(state)}")
@@ -2885,32 +2884,31 @@ def scrape_hiringcafe() -> list[dict]:
             time.sleep(1)
     except Exception as e:
         print(f"  [HiringCafe] failed: {e}")
-    print(f"  [HiringCafe] {len(results)} entry-level DE jobs "
+    print(f"  [HiringCafe] {len(results)} student-role DE jobs "
           f"across {len(_HIRINGCAFE_QUERIES)} queries")
     return results
 
 
 # ── LinkedIn guest API (direct, server-side filtered) ─────────────────────────
 # LinkedIn serves logged-out job search through a public guest endpoint that
-# accepts filters JobSpy does not expose — crucially f_E (experience level) and
-# f_TPR (time range). That changes the economics completely: LinkedIn
-# rate-limits at roughly 10 pages (~250 results) per IP, and JobSpy's keyword
-# queries spend that budget downloading senior roles we immediately discard.
-# With f_E=2,3 (Entry level + Associate) the filtering happens SERVER-SIDE,
-# so every card in the budget is already in the junior band.
+# accepts filters JobSpy does not expose, crucially f_TPR (time range).
+# LinkedIn rate-limits at roughly 10 pages (~250 results) per IP, so the
+# budget has to be spent on postings that could actually be eligible.
 #
-# A few broad queries then beat many narrow ones: 5 queries x 10 pages x 25
-# cards = up to 1,250 pre-filtered candidates per run, where 29 narrow JobSpy
-# queries yielded ~400 mixed-seniority rows. Fargate assigns a fresh public IP
-# per task, so the per-IP budget resets every run.
-#
-# Verified live before building: HTTP 200 with f_E=2 returns genuine
-# entry-level German postings with dates and companies.
+# The f_E (experience level) filter was REMOVED in the Werkstudent pivot.
+# "werkstudent" in the keyword is now the real filter, and German student ads
+# are tagged inconsistently across Internship / Entry level / even Mid-Senior,
+# so an f_E allowlist quietly dropped eligible roles. Recall matters more than
+# budget here because the keyword already narrows the result set far below the
+# per-IP ceiling. Fargate assigns a fresh public IP per task, so the budget
+# resets every run.
 
 _LI_GUEST_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 _LI_GUEST_QUERIES = (
-    "data scientist", "data analyst", "machine learning",
-    "ai engineer", "data engineer",
+    "werkstudent data", "werkstudent machine learning",
+    "werkstudent künstliche intelligenz", "werkstudent informatik",
+    "working student data", "working student AI",
+    "studentische hilfskraft informatik",
 )
 _LI_GUEST_PAGES = 10          # LinkedIn throttles around page 10 per IP
 _LI_GUEST_PAGE_SLEEP = 1.5    # pace like a human; stop instantly on 429
@@ -2944,7 +2942,6 @@ def scrape_linkedin_guest() -> list[dict]:
                         "keywords": query,
                         "location": "Germany",
                         "f_TPR": "r86400",    # last 24h — apply-fast is the whole point
-                        "f_E": "2,3",         # Entry level + Associate — the junior band
                         "start": page * 25,
                     },
                     headers=HEADERS, timeout=15,
@@ -2993,8 +2990,8 @@ def scrape_linkedin_guest() -> list[dict]:
     # Same two-phase enrichment as JobSpy: title-screen first, then parallel
     # description fetches for the plausible subset only.
     _enrich_jobspy_descriptions(results)
-    print(f"  [LinkedIn-Guest] {len(results)} entry-level jobs "
-          f"across {len(_LI_GUEST_QUERIES)} broad queries")
+    print(f"  [LinkedIn-Guest] {len(results)} student-role jobs "
+          f"across {len(_LI_GUEST_QUERIES)} queries")
     return results
 
 

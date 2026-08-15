@@ -250,39 +250,35 @@ _RE_EXP_TEXT = re.compile(
     re.IGNORECASE,
 )
 
-# Master's-required signals — concise + verbose + contextual + student-status.
-# Used in concert with _RE_BACHELOR_OK below.
-# Catches BOTH "Master's degree required" (full-time roles) AND "currently
-# enrolled in a Master's program" (working-student / internship roles that
-# require active student status, which Sherwan can't claim at a German uni).
+# Master's-required signals — a COMPLETED Master's/PhD only.
+# Used in concert with _RE_BACHELOR_OK and _RE_ENROLLED_CONTEXT below.
+#
+# This regex used to also catch student-status phrasing ("currently enrolled
+# in a Master's programme", "Master's student", "must be enrolled at a
+# university") because those marked Werkstudent ads the owner was ineligible
+# for. Since the pivot he IS an enrolled M.Sc. student at Uni Bonn, so that
+# phrasing describes his exact situation and disqualifying on it would drop
+# every single target role. Only completed-degree demands remain.
 _RE_MASTERS_REQ = re.compile(
     r"(?:"
     r"master(?:'s)?\s+degree\s+(?:is\s+)?required"
     r"|must\s+have\s+a\s+master"
     r"|requires\s+a\s+master"
-    r"|master(?:'s)?\s+degree\s+in\b"
+    r"|completed\s+master"
     r"|master\s+of\s+science\s+in\b"
-    r"|\bmsc\s+in\b"
-    r"|\bm\.sc\.?\s+in\b"
     r"|masterabschluss\s+erforderlich"
     r"|abgeschlossenes\s+masterstudium"
-    # NEW: "Master's program in X" — common in working-student / internship JDs
-    r"|master(?:'s)?\s+program(?:me)?\s+in\b"
-    r"|master(?:'s)?\s+studies\s+in\b"
-    r"|master(?:'s)?\s+studies?\b"
-    # NEW: "currently enrolled in a Master's", "currently doing your Master's",
-    #      "pursuing your Master's", "studying for your Master's"
-    r"|currently\s+enrolled\s+in\s+(?:a\s+)?master"
-    r"|(?:currently\s+)?(?:pursuing|studying|in|doing)\s+(?:for\s+)?(?:a\s+|your\s+|the\s+)?master"
-    # NEW: "Master's student", "MSc student" — student-status requirement
-    r"|master(?:'s)?\s+student\b"
-    r"|\bmsc\s+student\b"
-    r"|\bm\.sc\.?\s+student\b"
-    # NEW: "must be enrolled in a Master's", "you must currently be a student"
-    r"|must\s+be\s+enrolled\s+(?:as\s+a\s+)?(?:in\s+a\s+)?(?:master|student)"
-    r"|you\s+(?:are|must\s+be)\s+(?:currently\s+)?enrolled\s+(?:as\s+a\s+|in\s+a\s+)?(?:master|student)"
-    r"|enrolled\s+in\s+(?:a\s+)?(?:german\s+)?university"
     r")",
+    re.IGNORECASE,
+)
+
+# Student-status framing. Its presence means the ad is describing WHO may
+# apply (an enrolled student), not demanding a finished degree, so the
+# Master's disqualifier must stand down.
+_RE_ENROLLED_CONTEXT = re.compile(
+    r"enrolled|immatrikuliert|eingeschrieben|matriculated|student\s+status"
+    r"|werkstudent|working\s+student|studentische|studierende|studying\s+at"
+    r"|bachelor(?:'s)?\s+or\s+master|bachelor-\s*oder\s+master",
     re.IGNORECASE,
 )
 _RE_MASTERS_CONTEXT = re.compile(
@@ -415,36 +411,6 @@ from filters import (
     GERMANY_TERMS as _GERMANY_TERMS,
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
-)
-
-# Werkstudent / German-uni-student-only roles.
-# Sherwan's CV: "NOT eligible for Werkstudent — not enrolled at a German university."
-# Werkstudent is a German-law student-employment status; you must be enrolled
-# at a German university to work as one. Drop these unconditionally.
-_RE_WERKSTUDENT_TITLE = re.compile(
-    # "working student" is the English phrasing of the same German-law
-    # employment form — a real digest carried "Working Student (f/m/d) Python
-    # & AI Automation @ Innomotics" straight past this filter.
-    r"\b(werkstudent|werkstudentin|werk-student|working\s+student|"
-    r"student\s+assistant|student\s+helper|"
-    r"hiwi|studentische[rn]?\s+(mitarbeiter|hilfskraft))\b",
-    re.IGNORECASE,
-)
-_RE_WERKSTUDENT_DESC = re.compile(
-    r"\b("
-    # Explicit Werkstudent mentions in body
-    r"als\s+werkstudent|als\s+werkstudentin|werkstudent(?:in)?\s+\(|"
-    r"werkstudent(?:in)?\s+position|"
-    # "must be enrolled at a German university"
-    r"enrolled\s+at\s+a\s+german\s+university|"
-    r"matriculated\s+at\s+a\s+german\s+university|"
-    r"immatrikuliert\s+an\s+einer\s+(?:deutschen\s+)?universit|"
-    # Restricted to active students
-    r"only\s+(?:open\s+)?(?:to|for)\s+(?:current\s+)?students|"
-    r"must\s+be\s+a\s+(?:current\s+|registered\s+)?student|"
-    r"must\s+currently\s+be\s+(?:a\s+|an\s+|your\s+)?(?:enrolled|registered|active|current)\s+student"
-    r")\b",
-    re.IGNORECASE,
 )
 
 # Unpaid / equity-only compensation
@@ -580,13 +546,6 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     if _requires_fluent_german(d_low):
         return True, "Requires fluent/native German — candidate is B1", "german_required"
 
-    # ── Check 2b: Werkstudent / German-uni-student-only roles ─────────────────
-    # Sherwan can't take Werkstudent positions (not enrolled at a German uni).
-    if _RE_WERKSTUDENT_TITLE.search(title):
-        return True, "Werkstudent role — candidate not enrolled at a German university", "werkstudent"
-    if _RE_WERKSTUDENT_DESC.search(d_low):
-        return True, "Requires active student status / Werkstudent — candidate ineligible", "werkstudent"
-
     # ── Check 3: Non-Python primary language ──────────────────────────────────
     if _RE_NONPY_TITLE.search(title) and "python" not in combined:
         return True, "Primary language is not Python (no Python mentioned)", "non_python"
@@ -651,7 +610,9 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
 
     # ── Check 9: Master's degree strictly required (no Bachelor's alternative)
     bachelor_mentioned = bool(_RE_BACHELOR_OK.search(d_low))
-    if not bachelor_mentioned:
+    # An ad written for enrolled students is not asking for a finished degree.
+    enrolled_context = bool(_RE_ENROLLED_CONTEXT.search(d_low))
+    if not bachelor_mentioned and not enrolled_context:
         if _RE_MASTERS_REQ.search(d_low):
             return True, "Master's degree required and no Bachelor's alternative — candidate has B.Sc.", "masters_required"
         ctx = _RE_MASTERS_CONTEXT.search(d_low)
@@ -661,7 +622,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
-    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate (graduated July 2026) targeting junior full-time roles. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
+    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting Werkstudent / working-student roles ONLY — up to 20h/week alongside his studies. Full-time roles, internships/Praktikum, and thesis positions are all WRONG employment forms now, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
 
 CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
 {cv_profile}
@@ -669,7 +630,7 @@ CANDIDATE PROFILE (this profile is already framed for the track of the jobs in t
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
 ═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Junior/intern level, English-OK, no major gaps, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: paretos AI Backend Engineer (Claude Code stack mentioned), Enpal Working Student AI Agents, Junior Data Scientist with scikit-learn/XGBoost stack and Berlin office, BI/Data Analyst role built on SQL + Tableau with an English-speaking team.
+- 85-100: Excellent fit. Real shot at interview. Werkstudent role, English-OK, commutable from Bonn or DE-remote, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
@@ -678,15 +639,16 @@ SCORING SCALE — be calibrated, not generous
 CALIBRATION ANCHORS — score every job RELATIVE TO THESE THREE, not relative
 to the other jobs in this batch. A batch full of weak jobs must not inflate a
 mediocre one; a batch full of strong jobs must not deflate a good one.
-- ANCHOR 75: "Junior Machine Learning Engineer, Berlin. Python, PyTorch,
-  scikit-learn. 0-2 years experience. English-speaking team, German nice to
-  have. Bachelor's required." → 75. Clean junior fit, minor unknowns.
-- ANCHOR 45: "Data Engineer (m/w/d), Hamburg. Airflow, dbt, Snowflake.
-  2 years experience required. German und Englisch fließend." → 45. Adjacent
-  stack, experience bar at the edge, German requirement ambiguous.
-- ANCHOR 20: "Senior Data Scientist, Munich. 5+ years production ML,
-  team leadership. Verhandlungssicheres Deutsch." → 20. Wrong seniority and
-  hard German requirement; field match alone cannot lift it.
+- ANCHOR 75: "Werkstudent Machine Learning (m/w/d), Köln. Python, PyTorch.
+  Enrolled Bachelor's or Master's student, 15-20h/week, English-speaking
+  team, German nice to have." → 75. Clean Werkstudent fit, minor unknowns.
+- ANCHOR 45: "Werkstudent Data Engineering, Düsseldorf. Airflow, dbt,
+  Snowflake. Sehr gute Deutschkenntnisse erforderlich." → 45. Right
+  employment form, adjacent stack, German requirement at the edge.
+- ANCHOR 20: "Junior Data Scientist (full-time), Berlin. Python,
+  scikit-learn, English team." → 20. Perfect topical fit but WRONG
+  employment form (full-time, not Werkstudent) and not commutable from
+  Bonn; topic match alone cannot lift it.
 
 ═══════════════════════════════════════════════════════════════
 WORK AUTHORIZATION (highest priority, applied before any other cap)
@@ -694,19 +656,36 @@ WORK AUTHORIZATION (highest priority, applied before any other cap)
 The candidate is authorized to work in Germany only, not the US, UK, or
 other non-EU countries. Score 0 to 15 for any role that is US-only,
 US-remote-only, requires US/UK or other non-EU work authorization, or is
-onsite outside Germany with no Germany or EU-remote option. Roles in
-Germany or remote within Germany or the EU are eligible.
+onsite outside Germany with no Germany-remote option.
+
+LOCATION (applied with the same priority): the candidate studies in BONN.
+On-site or hybrid roles are attendable ONLY within roughly one hour of Bonn
+by train: Bonn, Köln/Cologne, Siegburg, Sankt Augustin, Troisdorf, Hennef,
+Brühl, Wesseling, Hürth, Bornheim, Königswinter, Bad Honnef, Remagen,
+Andernach, Koblenz, Euskirchen, Leverkusen, Bergisch Gladbach, Dormagen,
+Neuss, Düsseldorf. Score 0 to 15 for on-site/hybrid roles anywhere else in
+Germany (Berlin, Munich, Hamburg, Frankfurt, Aachen, Dortmund, ... — a
+weekly office day there does not work alongside Bonn lectures). Genuinely
+remote-within-Germany roles are fully eligible.
 
 ═══════════════════════════════════════════════════════════════
 HARD CAPS — these set a MAXIMUM score the role can receive.
 Apply the LOWEST applicable cap. Boosts cannot exceed the cap.
 ═══════════════════════════════════════════════════════════════
 
+CAP AT 15 if the role is NOT a Werkstudent/working-student role:
+- Full-time or part-time regular employment, internship/Praktikum,
+  Ausbildung, trainee/graduate programme, thesis (Abschlussarbeit/
+  Bachelorarbeit/Masterarbeit), PhD, or freelance. The ONLY acceptable
+  employment form is Werkstudent / working student / studentische
+  Hilfskraft (HiWi). If the ad never signals a student role, assume it is
+  full-time and apply this cap.
+
 CAP AT 20 if ANY of these are true:
 - Role requires fluent/business/native German (C1+), even if the JD is written in English. Look for: "fluent German", "verhandlungssicheres Deutsch", "Mandatory: English and German", "business-fluent German", "German native". Sherwan is B1.
 - Role requires 5+ years professional experience. Sherwan has zero.
 - Role title contains: Senior, Lead, Principal, Staff, Head of, Director, VP, Vice President, Manager, Architect (without "junior"/"associate" qualifier).
-- Role explicitly requires Master's or PhD with no "Bachelor's or equivalent" alternative. Sherwan has B.Sc. only.
+- Role requires a COMPLETED Master's or PhD. Sherwan has a completed B.Sc. and is an ENROLLED M.Sc. student from October 2026 — ads asking for "enrolled Bachelor's or Master's students" are his exact situation and must NOT trigger this cap.
 - Role is in a domain Sherwan has zero exposure to AND requires domain knowledge: energy markets / power trading, public sector / municipal, embedded systems / firmware / FPGA, hardware engineering, biomedical / clinical / pharma, manufacturing OT / SCADA / PLC, financial risk / actuarial.
 
 CAP AT 35 if ANY of these are true:
@@ -729,32 +708,31 @@ favour AI roles over data-analyst or data-science roles. All four tracks below
 start at the SAME score.
 ═══════════════════════════════════════════════════════════════
 
-TIER 1 (start at 80, then apply caps and adjustments) — ANY of the 4 tracks:
+All tiers assume the role IS a Werkstudent/working-student role — anything
+else is already capped at 15 above.
+
+TIER 1 (start at 80, then apply caps and adjustments) — Werkstudent in ANY
+of the 4 tracks:
   AI track:
-    - AI Engineer / LLM Engineer / GenAI Engineer / AI Software Engineer
-    - Applied AI Engineer / Applied AI Scientist
-    - AI Agent Engineer / Agentic AI / Conversational AI / RAG Engineer
+    - Werkstudent AI / Working Student AI Engineering / GenAI / LLM
+    - Working Student AI Agents / Agentic AI / RAG / Conversational AI
   ML track:
-    - Machine Learning Engineer / Junior ML Engineer
-    - MLOps Engineer / Computer Vision Engineer / NLP Engineer
-    - Deep Learning Engineer / Applied Scientist / ML Researcher
+    - Werkstudent Machine Learning / ML Engineering / MLOps
+    - Werkstudent Computer Vision / NLP / Deep Learning
   Data Science track:
-    - Data Scientist / Junior Data Scientist / Associate Data Scientist
-    - Product Data Scientist / Quantitative Analyst
+    - Werkstudent Data Science / Working Student Data Scientist
   Data Analyst track:
-    - Data Analyst / Junior Data Analyst / Business Intelligence (BI) Analyst
-    - Analytics Engineer / Data Analytics / Reporting Analyst
-    - Business Analyst with a clear data/SQL/Python focus
-  (junior, entry-level, graduate, or no seniority specified all qualify)
+    - Werkstudent Data Analytics / BI / Reporting / Analytics Engineering
+    - Werkstudent Business Analysis with a clear data/SQL/Python focus
+  (studentische Hilfskraft / HiWi postings in these fields count equally)
 
 TIER 2 (start at 70, then apply caps and adjustments):
-- Any of the four tracks above at mid level (some experience expected but
-  still under the 2-year hard cap), or with a partial skills overlap.
+- Werkstudent software engineering with a real data/AI component
+  (e.g. Werkstudent Softwareentwicklung Python, backend for an ML product).
 
 TIER 3 (start at 60, then apply caps and adjustments):
-- AI / ML / Data Science / Data Analyst internships (paid)
-- Graduate programmes in any of the four tracks
-- Praktikum (paid) in any of the four tracks
+- Werkstudent IT / software engineering without a data/AI component but with
+  Python or modern web stack — acceptable to stay funded, less CV value.
 
 OFF-TARGET (start at 40, max possible 50 even with boosts):
 - Anything that isn't AI, ML, data science, or data analytics work
@@ -811,9 +789,9 @@ UNIVERSAL BOOSTS (apply regardless of track):
 
 +8: Working language is explicitly English / international team / "we work in English"
 
-+8: Located in NRW (Bochum, Düsseldorf, Cologne, Dortmund, Essen) — Sherwan lives in Bochum, zero relocation friction
++8: Located in Bonn or Köln — walkable/20-minute commute from his university city, zero friction alongside lectures
 
-+5: Located in Berlin, Munich, Hamburg, Frankfurt — major tech hubs, willing to relocate
++5: Genuinely remote within Germany, or explicitly flexible hours / "flexible Arbeitszeiten passend zum Stundenplan" — fits around a lecture schedule
 
 +5: Visa sponsorship not required (Sherwan has full work auth)
 
@@ -823,11 +801,11 @@ UNIVERSAL BOOSTS (apply regardless of track):
 PENALTIES — subtractive, applied AFTER caps and boosts
 ═══════════════════════════════════════════════════════════════
 
--15: Role mentions "Master's preferred" (not required, but preferred) — signals the team expects more credentials than Sherwan has
+-15: Ad restricts to students of a DIFFERENT field ("enrolled in business administration / mechanical engineering / law") with no computer-science/AI/data option listed
 
--10: Üsküdar University is unlikely to be recognized; if the company is FAANG-tier or has a strong brand-school hiring pattern (BCG, McKinsey, Google, Meta, top consultancies), apply this penalty.
+-10: Ad demands more than 20h/week during the lecture period, or full-time availability
 
--10: Role description shows clear mid-level expectations even if title says "junior" (e.g., "ownership of large systems", "mentor others", "drive technical roadmap")
+-10: Role description shows clear professional-level expectations despite the student title (e.g. "ownership of large systems", "on-call", "drive technical roadmap")
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -841,14 +819,13 @@ For any job you score >= 55, ALSO include two tailoring fields (omit them for lo
 - "cv_hint": ONE short concrete sentence telling him how to re-angle his CV for this specific role (e.g. "Lead with the FUS recommender replication and frame it as production-style A/B evaluation, and add a SQL/Tableau line to match their BI stack.").
 
 Examples of good reasons:
-- "Tier 1 AI Engineer match, Claude Code mentioned (+15), English-first, Berlin (+5) → 88"
-- "Tier 1 Junior Data Scientist match, XGBoost/imbalanced classification (+15), scikit-learn (+10), Bochum (+8) → 91"
-- "Tier 1 BI/Data Analyst match, SQL + Tableau dashboarding (+15), English-first (+8) → 82"
-- "Tier 1 ML Engineer match, MLOps/model deployment (+15), PyTorch (+10) → 89"
+- "Tier 1 Werkstudent AI Agents match, LangGraph mentioned (+15), English-first (+8), Köln (+8) → 90"
+- "Tier 1 Werkstudent Data Science match, scikit-learn/XGBoost (+15), remote in Germany (+5) → 84"
+- "Tier 1 Werkstudent BI match, SQL + Power BI dashboarding (+15), Bonn (+8) → 85"
+- "Capped at 15: full-time Junior Data Scientist — wrong employment form"
+- "Capped at 15: on-site Werkstudent in Hamburg — not commutable from Bonn, no remote option"
 - "Capped at 20: explicitly requires fluent German for DACH customer-facing role"
-- "Capped at 35: 3-4 years production ML required, Sherwan has zero"
-- "Capped at 20: Master's required, no Bachelor's alternative in qualifications"
-- "Off-target: enterprise SSIS/SQL Server data engineering, no ML component → 30"
+- "Off-target: Werkstudent marketing, no data component → 30"
 
 Be terse. The reason exists so Sherwan can audit your decisions, not so you can be polite.
 """

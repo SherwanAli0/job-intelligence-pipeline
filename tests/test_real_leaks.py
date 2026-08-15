@@ -274,19 +274,154 @@ class TestFreshnessCap:
         assert main._is_fresh_enough(j)
 
 
-class TestWorkingStudentEnglishPhrasing:
-    def test_english_working_student_title_is_disqualified(self):
-        """Real digest: 'Working Student (f/m/d) Python & AI Automation
-        @ Innomotics'. The filter knew 'Werkstudent' but not its English
-        translation, and the owner cannot take these roles at all."""
+class TestWerkstudentIsNowTheTarget:
+    """The exact inversion of this file's oldest rule. 'Working Student
+    (f/m/d) Python & AI Automation @ Innomotics' was once pinned here as a
+    leak to kill; from October 2026 the owner is enrolled at Uni Bonn and
+    that posting is the single best kind of job the pipeline can find."""
+
+    def test_english_working_student_title_now_survives(self):
         j = _job("Working Student (f/m/d) Python & AI Automation", """
             Support our Market Intelligence team. Our working language is
             English. You are enrolled at a university.
-        """)
-        dq, _r, cat = scorer._hard_disqualify(j)
-        assert dq and cat == "werkstudent"
+        """, location="Köln, Germany")
+        assert main._is_student_role(j)
+        assert _survives_pipeline(j)
 
-    def test_german_werkstudent_still_disqualified(self):
-        j = _job("Werkstudent Data Analytics", "Unterstütze unser Team.")
-        dq, _r, cat = scorer._hard_disqualify(j)
-        assert dq and cat == "werkstudent"
+    def test_german_werkstudent_title_is_recognised(self):
+        j = _job("Werkstudent Data Analytics (m/w/d)", "Support our team.",
+                 location="Bonn, Germany")
+        assert main._is_student_role(j)
+
+    def test_studentische_hilfskraft_is_recognised(self):
+        assert main._is_student_role(
+            _job("Studentische Hilfskraft Informatik", "x", location="Bonn"))
+
+    def test_full_time_role_is_not_a_student_role(self):
+        """The mirror image: a perfect topical match that is full-time is now
+        the thing being filtered out."""
+        j = _job("Junior Machine Learning Engineer", """
+            Full-time position, 40h/week. Python, PyTorch. English team.
+        """, location="Köln, Germany")
+        assert not main._is_student_role(j)
+
+    def test_werkstudent_mentioned_only_in_the_body_still_counts(self):
+        j = _job("Data Analytics Support (m/w/d)", """
+            This is a Werkstudent position, 20 hours per week alongside your
+            studies. English-speaking team.
+        """, location="Bonn, Germany")
+        assert main._is_student_role(j)
+
+
+class TestGermanMarketIsNotGermanLanguage:
+    """German employers put (m/w/d) and the word 'Werkstudent' on nearly every
+    student ad, including ones written entirely in English. Treating either as
+    proof of a German-language posting deleted most of the target market."""
+
+    def test_german_titled_werkstudent_with_english_body_survives(self):
+        j = _job("Werkstudent Data Science (m/w/d)", """
+            You will join our analytics team for 20 hours per week alongside
+            your studies. You will build reporting pipelines, analyse product
+            usage data and present findings to the team. We expect solid Python
+            and SQL knowledge and curiosity about machine learning methods.
+        """, location="Köln, Germany")
+        assert main._is_english_friendly(j), \
+            "(m/w/d) plus an English body must not read as a German posting"
+
+    def test_studentische_hilfskraft_title_with_english_body_survives(self):
+        j = _job("Studentische Hilfskraft NLP", """
+            Join our research group for ten to nineteen hours per week. You
+            will run experiments with transformer models, prepare datasets and
+            help our doctoral researchers evaluate results. Python and a
+            genuine interest in language technology are what matter here.
+        """, location="Bonn, Germany")
+        assert main._is_english_friendly(j)
+
+    def test_german_body_is_still_dropped_however_it_is_titled(self):
+        j = _job("Werkstudent Data Science (m/w/d)", """
+            Du unterstützt unser Team bei der Entwicklung von Datenprodukten
+            und arbeitest mit uns an der Auswertung von Kundendaten. Du bist
+            eingeschrieben an einer Hochschule und hast bereits erste
+            Kenntnisse in Python sowie Freude an der Arbeit mit Daten.
+        """, location="Köln, Germany")
+        assert not main._is_english_friendly(j)
+
+    def test_short_stub_description_cannot_claim_to_be_english(self):
+        """_reads_as_english demands positive evidence, so a two-line stub
+        with a gender marker is still dropped rather than assumed fine."""
+        j = _job("Werkstudent Data Science (m/w/d)", "Werkstudent gesucht.",
+                 location="Köln, Germany")
+        assert not main._is_english_friendly(j)
+
+
+class TestCommutableFromBonn:
+    """He studies in Bonn, so an on-site role is only real if he can get
+    there and back around lectures. The rule is an explicit ~1h-by-train
+    list, NOT 'anywhere in NRW': Bielefeld and Münster are in NRW and are
+    over two hours away."""
+
+    def _at(self, location, description="Werkstudent role, English team."):
+        return _job("Werkstudent Data Science", description, location=location)
+
+    def test_bonn_is_kept(self):
+        assert main._is_commutable_or_remote(self._at("Bonn, Germany"))
+
+    def test_cologne_is_kept(self):
+        assert main._is_commutable_or_remote(self._at("Köln, Germany"))
+
+    def test_dusseldorf_is_kept(self):
+        assert main._is_commutable_or_remote(self._at("Düsseldorf, Germany"))
+
+    def test_siegburg_is_kept(self):
+        assert main._is_commutable_or_remote(self._at("Siegburg, Germany"))
+
+    def test_koblenz_is_kept(self):
+        assert main._is_commutable_or_remote(self._at("Koblenz, Germany"))
+
+    def test_berlin_onsite_is_dropped(self):
+        assert not main._is_commutable_or_remote(self._at("Berlin, Germany"))
+
+    def test_munich_onsite_is_dropped(self):
+        assert not main._is_commutable_or_remote(self._at("München, Germany"))
+
+    def test_aachen_is_dropped_even_though_it_is_nrw(self):
+        """Aachen is NRW but 1h11+ from Bonn Hbf — the reason this filter is
+        an explicit city list and not a state match."""
+        assert not main._is_commutable_or_remote(self._at("Aachen, Germany"))
+
+    def test_dortmund_is_dropped_even_though_it_is_nrw(self):
+        assert not main._is_commutable_or_remote(self._at("Dortmund, Germany"))
+
+    def test_remote_germany_is_kept_wherever_the_office_is(self):
+        assert main._is_commutable_or_remote(self._at(
+            "Berlin, Germany",
+            "This role is 100% remote within Germany, work from anywhere."))
+
+    def test_location_field_saying_remote_is_kept(self):
+        assert main._is_commutable_or_remote(self._at("Remote, Germany"))
+
+    def test_unknown_location_is_kept_not_guessed(self):
+        """Absence of evidence is not evidence of Berlin. Let the scorer
+        judge rather than dropping silently."""
+        assert main._is_commutable_or_remote(self._at(""))
+
+
+class TestEnrolledStudentPhrasingSurvives:
+    """Werkstudent ads describe enrolment, which the Master's filter used to
+    read as a completed-degree requirement. That would now drop the entire
+    target market."""
+
+    def test_bachelor_or_master_enrolment_is_not_a_masters_requirement(self):
+        j = _job("Werkstudent Data Science", """
+            You are enrolled in a Bachelor's or Master's programme in computer
+            science, data science or a related field. English-speaking team.
+        """, location="Bonn, Germany")
+        assert main._no_masters_required(j)
+        assert _survives_pipeline(j)
+
+    def test_completed_masters_requirement_still_drops(self):
+        j = _job("Werkstudent Data Science", """
+            An abgeschlossenes Masterstudium is required for this position.
+            English-speaking team.
+        """, location="Bonn, Germany")
+        assert not _survives_pipeline(j)

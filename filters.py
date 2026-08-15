@@ -30,10 +30,12 @@ _RE_TITLE_HARD_SENIOR = re.compile(
     r"vice\s+president|\bvp\b|chief|manager|leiter(in)?)(?![a-z])",
     re.IGNORECASE,
 )
-# German-market employment forms he is not eligible for, plus gender markers
-# that indicate a German-language posting.
+# Employment forms that are never the target. Since the Werkstudent pivot
+# (owner enrolled at Uni Bonn from 10/2026), werkstudent/studentische/HiWi
+# titles are the TARGET and must NOT appear here; internships, thesis work,
+# Ausbildung and academia remain out of scope.
 _RE_TITLE_INELIGIBLE = re.compile(
-    r"\b(werkstudent\w*|praktikum|praktikant\w*|studentische\w*|hiwi|"
+    r"\b(praktikum|praktikant\w*|"
     r"ausbildung|dual(es|er)|abschlussarbeit|masterarbeit|bachelorarbeit|"
     r"intern(ship)?|thesis|postdoc\w*|professor\w*)\b",
     re.IGNORECASE,
