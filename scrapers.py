@@ -785,6 +785,15 @@ def scrape_lever() -> list[dict]:
 # Analyst). The Arbeitsagentur API is the official German employment agency,
 # and Werkstudent is a German-law employment form, so the German phrasings
 # carry most of the volume here.
+# Germany-wide homeoffice pass: remote Werkstudent roles have office
+# addresses anywhere, so the radius pass alone would never see them.
+ARBEITSAGENTUR_REMOTE_QUERIES = [
+    "Werkstudent Data",
+    "Werkstudent Machine Learning",
+    "Werkstudent Softwareentwicklung",
+    "Working Student Data",
+]
+
 ARBEITSAGENTUR_QUERIES = [
     # AI
     "Werkstudent Künstliche Intelligenz",
@@ -820,6 +829,36 @@ import re as _re_ba
 
 _BA_ENRICH_CAP = 150  # max jobdetails calls per run (each ~0.3s)
 
+# ── Arbeitsagentur endpoint configuration ────────────────────────────────────
+# SEARCH is v6-only (v4/v5 return 403 since ~2026-08-10). DETAILS are v4-only
+# (v5/v6 return 403). Both verified live before shipping this.
+_BA_SEARCH_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs"
+_BA_DETAIL_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails"
+_BA_API_KEY = "jobboerse-jobsuche"     # the documented public key for this API
+_BA_ANCHOR = "Bonn"                    # radius searches are centred on the uni city
+_BA_RADIUS_KM = 75                     # covers Köln, Düsseldorf, Koblenz, Leverkusen
+_BA_PAGE_SIZE = 100
+_BA_MAX_PAGES = 5                      # 500 hits per query is far past the useful tail
+_BA_PUBLISHED_WITHIN_DAYS = 3          # the 24h digest cap does the final trimming
+
+# The API matches "Werkstudent Data Science" loosely and cheerfully returns
+# Werkstudent roles in law, purchasing and gastronomy. Two reasons that
+# matters: the ad text costs one extra request each (a budget of 150 spent on
+# Werkstudent Recht buys nothing), and a posting with no fetched description
+# sails through the language filter and reaches the scorer as an empty shell.
+# So the title has to look like technical work before this source keeps it.
+_BA_RELEVANT_TITLE = re.compile(
+    r"data|analyt|analys|machine\s+learning|\bml\b|\bki\b|künstlich"
+    r"|artificial|intelligen|informatik|software|entwickl|programmier"
+    r"|python|\bit\b|\bbi\b|business\s+intelligence|digital|tech|cloud"
+    r"|statistik|datenbank|web|report"
+    # "dev" catches DevOps, Developer and compounds like DevClient-Management
+    # (a real BWI IT role in Bonn that the first version of this screen threw
+    # away because "IT" only appears inside another word).
+    r"|\bdev",
+    re.IGNORECASE,
+)
+
 _BA_EMAIL   = _re_ba.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 _BA_PHONE   = _re_ba.compile(r"(?:\+49|0)[\s\-/()]?\d[\d\s\-/()]{6,}\d")
 _BA_CONTACT = _re_ba.compile(
@@ -852,8 +891,8 @@ def _ba_enrich(ref: str) -> dict:
     try:
         enc = _b64.b64encode(ref.encode()).decode()
         r = requests.get(
-            f"https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobdetails/{enc}",
-            headers={**HEADERS, "X-API-Key": "jobboerse-jobsuche"},
+            f"{_BA_DETAIL_URL}/{enc}",
+            headers={**HEADERS, "X-API-Key": _BA_API_KEY},
             timeout=12,
         )
         if r.status_code != 200:
@@ -879,64 +918,121 @@ def _ba_enrich(ref: str) -> dict:
         return {}
 
 
+def _ba_location(item: dict) -> str:
+    """First posting location as 'Ort, Region'. v6 nests these under
+    stellenlokationen[].adresse."""
+    locs = item.get("stellenlokationen") or []
+    if not locs:
+        return "Deutschland"
+    addr = (locs[0] or {}).get("adresse") or {}
+    ort = (addr.get("ort") or "").strip()
+    region = (addr.get("region") or "").replace("_", " ").title()
+    return ", ".join(x for x in (ort, region) if x) or "Deutschland"
+
+
+def _ba_posted_at(item: dict) -> str:
+    """When THIS listing went live. datumErsteVeroeffentlichung is the first
+    ever publication, which for re-posted ads can be months earlier, so the
+    current publication window wins and the change date is the fallback."""
+    window = item.get("veroeffentlichungszeitraum") or {}
+    return str(window.get("von") or item.get("aenderungsdatum") or "")
+
+
 def scrape_arbeitsagentur() -> list[dict]:
-    """Uses the unofficial but stable Arbeitsagentur API — free, no auth needed."""
-    results = []
+    """Bundesagentur für Arbeit job search — Germany's official federal job
+    board, and the densest source of German Werkstudent ads.
+
+    API VERSIONS ARE SPLIT, which is why this broke silently for five days:
+    the pc/v4 and pc/v5 SEARCH endpoints now return HTTP 403, and only pc/v6
+    answers. v6 also renamed every field (stellenangebote -> ergebnisliste,
+    titel -> stellenangebotsTitel, arbeitgeber -> firma, arbeitsort ->
+    stellenlokationen[].adresse), so a version bump alone would have parsed
+    into nothing. The jobdetails endpoint is the opposite way round: v6 and
+    v5 return 403 and only v4 still serves the full ad text. Both quirks are
+    verified live, not assumed.
+
+    Two passes, because Werkstudent work is either close enough to reach
+    between lectures or fully remote:
+      1. radius pass  — wo=Bonn with umkreis, so the API does the distance
+         filtering server-side and returns entfernung (km) per hit
+      2. homeoffice pass — arbeitszeit=ho nationwide, catching DE-remote roles
+         whose office address is nowhere near Bonn
+    """
+    results: list[dict] = []
     seen_refs: set[str] = set()
     enriched = 0
 
+    def collect(query: str, params: dict, label: str) -> None:
+        nonlocal enriched
+        for page in range(1, _BA_MAX_PAGES + 1):
+            try:
+                r = requests.get(
+                    _BA_SEARCH_URL,
+                    params={"was": query, "size": _BA_PAGE_SIZE, "page": page,
+                            "veroeffentlichtseit": _BA_PUBLISHED_WITHIN_DAYS,
+                            **params},
+                    headers={**HEADERS, "X-API-Key": _BA_API_KEY},
+                    timeout=20,
+                )
+                if r.status_code != 200:
+                    print(f"  [Arbeitsagentur] '{query}' ({label}) HTTP {r.status_code}")
+                    return
+                data = r.json()
+                items = data.get("ergebnisliste") or []
+                if not items:
+                    return
+                for item in items:
+                    ref = str(item.get("referenznummer") or "")
+                    if not ref or ref in seen_refs:
+                        continue
+                    seen_refs.add(ref)
+
+                    title = (item.get("stellenangebotsTitel") or "").strip()
+                    if not title or not _BA_RELEVANT_TITLE.search(title):
+                        continue
+
+                    description = ""
+                    apply_url = contact = salary = ""
+                    if enriched < _BA_ENRICH_CAP:
+                        det = _ba_enrich(ref)
+                        enriched += 1
+                        description = det.get("description", "")
+                        apply_url = det.get("apply_url", "")
+                        contact = det.get("contact", "")
+                        salary = det.get("salary", "")
+                        time.sleep(0.25)
+
+                    # Distance is only meaningful on the radius pass; on the
+                    # homeoffice pass it is measured from an arbitrary point.
+                    km = item.get("entfernung")
+                    if label == "radius" and isinstance(km, (int, float)):
+                        description = f"[{int(km)} km von Bonn]\n" + description
+
+                    results.append(job(
+                        title,
+                        (item.get("firma") or "Arbeitsagentur").strip(),
+                        _ba_location(item),
+                        f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{ref}",
+                        "Arbeitsagentur",
+                        description,
+                        posted_at=_ba_posted_at(item),
+                        apply_url=apply_url, contact=contact, salary=salary,
+                    ))
+
+                if len(items) < _BA_PAGE_SIZE:
+                    return          # last page
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"  [Arbeitsagentur] '{query}' ({label}) page {page} failed: {e}")
+                return
+
     for query in ARBEITSAGENTUR_QUERIES:
-        try:
-            params = {
-                "angebotsart": 1,      # job listings
-                "was": query,          # search term
-                "wo": "Deutschland",   # whole Germany
-                "umkreis": 200,        # radius km
-                "size": 25,
-                "page": 1,
-            }
-            r = requests.get(
-                "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/jobs",
-                params=params,
-                headers={**HEADERS, "X-API-Key": "jobboerse-jobsuche"},
-                timeout=15,
-            )
-            data = r.json()
-            for item in data.get("stellenangebote", []):
-                ref = item.get("refnr", "")
-                if not ref or ref in seen_refs:
-                    continue
-                seen_refs.add(ref)
+        collect(query, {"wo": _BA_ANCHOR, "umkreis": _BA_RADIUS_KM}, "radius")
+    for query in ARBEITSAGENTUR_REMOTE_QUERIES:
+        collect(query, {"arbeitszeit": "ho"}, "homeoffice")
 
-                title = item.get("titel", "")
-                company = item.get("arbeitgeber", "")
-                location = item.get("arbeitsort", {}).get("ort", "Germany")
-                job_url = f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{ref}"
-                description = item.get("kurzbeschreibung", "") or ""
-                apply_url = contact = salary = ""
-
-                # Enrich with the full jobdetails (bounded per run)
-                if enriched < _BA_ENRICH_CAP:
-                    det = _ba_enrich(ref)
-                    enriched += 1
-                    if det.get("description"):
-                        description = det["description"]  # full text > snippet
-                    apply_url = det.get("apply_url", "")
-                    contact   = det.get("contact", "")
-                    salary    = det.get("salary", "")
-                    time.sleep(0.25)
-
-                results.append(job(
-                    title, company, location, job_url, "Arbeitsagentur",
-                    description, apply_url=apply_url, contact=contact, salary=salary,
-                ))
-
-            time.sleep(1)
-        except Exception as e:
-            print(f"  [Arbeitsagentur] query '{query}' failed: {e}")
-            continue
-
-    print(f"  [Arbeitsagentur] {len(results)} jobs ({enriched} enriched with full detail)")
+    print(f"  [Arbeitsagentur] {len(results)} jobs "
+          f"({enriched} enriched with the full ad text)")
     return results
 
 
@@ -2929,12 +3025,23 @@ def _li_canonical_url(href: str) -> str:
 def scrape_linkedin_guest() -> list[dict]:
     results: list[dict] = []
     seen_urls: set[str] = set()
-    throttled = False
 
-    for query in _LI_GUEST_QUERIES:
-        if throttled:
+    # BREADTH BEFORE DEPTH. LinkedIn throttles at roughly 10 pages per IP, and
+    # the old query-by-query loop spent that entire budget on the FIRST query:
+    # a real run 429'd on query 2 of 7 and the last five queries never ran at
+    # all, so "werkstudent informatik" and the English phrasings contributed
+    # nothing. Pages are therefore interleaved — page 1 of every query, then
+    # page 2 of every query — so a throttle costs depth on every query equally
+    # instead of erasing most of them. Page 1 is also where the freshest and
+    # most relevant hits sit, so shallow-and-wide beats deep-and-narrow here.
+    exhausted: set[str] = set()
+
+    for page in range(_LI_GUEST_PAGES):
+        if len(exhausted) == len(_LI_GUEST_QUERIES):
             break
-        for page in range(_LI_GUEST_PAGES):
+        for query in _LI_GUEST_QUERIES:
+            if query in exhausted:
+                continue
             try:
                 r = requests.get(
                     _LI_GUEST_URL,
@@ -2950,16 +3057,19 @@ def scrape_linkedin_guest() -> list[dict]:
                     # Per-IP budget exhausted. Keep what we have; pushing on
                     # just makes LinkedIn block harder.
                     print(f"  [LinkedIn-Guest] 429 at '{query}' page {page + 1} — "
-                          f"stopping with {len(results)} jobs")
-                    throttled = True
+                          f"stopping with {len(results)} jobs from "
+                          f"{len(_LI_GUEST_QUERIES) - len(exhausted)} live queries")
+                    exhausted.update(_LI_GUEST_QUERIES)
                     break
                 if r.status_code != 200:
-                    break
+                    exhausted.add(query)
+                    continue
 
                 soup = BeautifulSoup(r.text, "html.parser")
                 cards = soup.select("li")
                 if len(cards) < 5:
-                    break                      # end of results for this query
+                    exhausted.add(query)       # end of results for this query
+                    continue
 
                 for c in cards:
                     a = c.select_one("a.base-card__full-link") or c.select_one("a")
@@ -2985,7 +3095,8 @@ def scrape_linkedin_guest() -> list[dict]:
                 time.sleep(_LI_GUEST_PAGE_SLEEP)
             except Exception as e:
                 print(f"  [LinkedIn-Guest] '{query}' page {page + 1} failed: {e}")
-                break
+                exhausted.add(query)
+                continue
 
     # Same two-phase enrichment as JobSpy: title-screen first, then parallel
     # description fetches for the plausible subset only.
