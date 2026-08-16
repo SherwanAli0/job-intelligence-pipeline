@@ -2,6 +2,27 @@
 #  config.py  —  edit this file to customise
 # ─────────────────────────────────────────────
 
+from datetime import date as _date
+
+# ── One-time catch-up window ─────────────────────────────────────────────────
+# The owner did not job-hunt at all during the pivot week (and for most of it
+# the filters were mis-tuned anyway), so Sunday 2026-08-16's scheduled runs
+# sweep the last 7 days of postings ONCE. From Monday 2026-08-17 the cap
+# self-reverts to 24 hours — no second deploy, nothing to remember to undo.
+# Every scraper that takes a time-range parameter (JobSpy hours_old,
+# LinkedIn f_TPR, Arbeitsagentur veroeffentlichtseit) derives it from here,
+# so the window applies at the SOURCE too, not only at the filter.
+CATCHUP_UNTIL = _date(2026, 8, 17)          # exclusive: Monday is fresh mode
+_CATCHUP_HOURS = 168                        # 7 days
+_NORMAL_HOURS = 24
+
+
+def max_posting_age_hours(today=None) -> int:
+    """Freshness cap in hours. `today` is injectable for tests."""
+    t = today or _date.today()
+    return _CATCHUP_HOURS if t < CATCHUP_UNTIL else _NORMAL_HOURS
+
+
 # ── CV profiles (used by Claude for scoring) ──────────────────────────────────
 # THREE track-specific profiles built from the same real facts but framed for
 # their track. The scorer routes each job to the matching profile (see

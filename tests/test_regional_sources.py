@@ -212,10 +212,15 @@ class TestLongLivedSourceFreshness:
         for src in ("Fraunhofer", "DLR", "Stellenwerk"):
             assert main._is_fresh_enough(self._aged(src, 90)), src
 
-    def test_aggregators_still_obey_the_24h_cap(self):
+    def test_aggregators_still_obey_the_24h_cap(self, monkeypatch):
         """The exemption must stay narrow: the repeat problem it was built for
-        is an aggregator problem, and aggregators keep the strict rule."""
+        is an aggregator problem, and aggregators keep the strict rule.
+        Pinned to normal mode — the 2026-08-16 catch-up day widens the live
+        cap to 168h, which is not what this test is about."""
+        import config
         import main
+        monkeypatch.setattr(config, "max_posting_age_hours",
+                            lambda today=None: 24)
         for src in ("Adzuna", "linkedin", "HiringCafe", "Arbeitsagentur"):
             assert not main._is_fresh_enough(self._aged(src, 6)), src
 

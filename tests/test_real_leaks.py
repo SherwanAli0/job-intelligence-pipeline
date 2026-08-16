@@ -269,7 +269,17 @@ class TestDigestRepeats:
 class TestFreshnessCap:
     """13 of 14 jobs in a real digest were more than a day old; one was six
     days old. Running twice daily exists to apply FAST, so known-stale
-    postings never reach the digest."""
+    postings never reach the digest.
+
+    These tests pin NORMAL mode explicitly: on the one-time 2026-08-16
+    catch-up day the live cap is legitimately 168h, and a calendar-dependent
+    test would go red for correct behaviour."""
+
+    @pytest.fixture(autouse=True)
+    def _normal_mode(self, monkeypatch):
+        import config
+        monkeypatch.setattr(config, "max_posting_age_hours",
+                            lambda today=None: 24)
 
     def _aged(self, hours):
         from datetime import datetime, timedelta, timezone

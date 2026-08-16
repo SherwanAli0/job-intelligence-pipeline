@@ -190,6 +190,7 @@ def _parallel_collect(items: list, fetch_one, label: str = "") -> list[dict]:
         out.extend(batch or [])
     return out
 
+from config import max_posting_age_hours as _max_age_hours
 from config import (
     GREENHOUSE_SLUGS,
     LEVER_SLUGS,
@@ -423,7 +424,8 @@ def scrape_jobspy() -> list[dict]:
                     # 24h window: the owner runs twice daily precisely to apply
                     # fast, and postings older than a day were crowding out
                     # fresh ones (a digest arrived with 13/14 jobs >24h old).
-                    hours_old=24,
+                    # 24h normally; 168h during the one-time catch-up window
+                    hours_old=_max_age_hours(),
                     country_indeed="Germany",
                     # WITHOUT this, LinkedIn rows carry only a short snippet —
                     # the requirements section is never downloaded at all. That
@@ -980,7 +982,9 @@ def scrape_arbeitsagentur() -> list[dict]:
                 r = requests.get(
                     _BA_SEARCH_URL,
                     params={"was": query, "size": _BA_PAGE_SIZE, "page": page,
-                            "veroeffentlichtseit": _BA_PUBLISHED_WITHIN_DAYS,
+                            "veroeffentlichtseit": max(
+                                _BA_PUBLISHED_WITHIN_DAYS,
+                                _max_age_hours() // 24),
                             **params},
                     headers={**HEADERS, "X-API-Key": _BA_API_KEY},
                     timeout=20,
@@ -3075,7 +3079,8 @@ def scrape_linkedin_guest() -> list[dict]:
                     params={
                         "keywords": query,
                         "location": "Germany",
-                        "f_TPR": "r86400",    # last 24h — apply-fast is the whole point
+                        # Seconds window: 24h normally, 7 days in catch-up.
+                        "f_TPR": f"r{_max_age_hours() * 3600}",
                         "start": page * 25,
                     },
                     headers=HEADERS, timeout=15,
@@ -3401,6 +3406,240 @@ def scrape_bwi() -> list[dict]:
         return []
 
 
+# ── igus GmbH — Köln, custom JSON API ────────────────────────────────────────
+# One of the best single finds of the regional sweep: karriere.igus.de/api/jobs
+# is clean JSON with the FULL ad text inline (introduction/tasks/profile/offer),
+# so zero per-job fetches. Live tonight: "Werkstudent AI & Workflow Automation",
+# "Werkstudent Digitalisierung & Excel Automatisierung", both Köln.
+_IGUS_API = "https://karriere.igus.de/api/jobs"
+_IGUS_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester", re.IGNORECASE)
+
+
+def scrape_igus() -> list[dict]:
+    try:
+        r = requests.get(_IGUS_API, headers=HEADERS, timeout=25)
+        if r.status_code != 200:
+            print(f"  [Igus] HTTP {r.status_code}")
+            return []
+        payload = r.json()
+        # The API wraps the list: {"data": [...]}. Iterating the dict
+        # instead of the list silently yields zero — the exact failure
+        # class this repo keeps finding, caught here in the live test.
+        rows = payload.get("data", []) if isinstance(payload, dict) else payload
+        out = []
+        for it in rows if isinstance(rows, list) else []:
+            title = (it.get("title") or "").strip()
+            if not title or not _IGUS_STUDENT.search(title):
+                continue
+            desc = "\n".join(str(it.get(k) or "") for k in
+                              ("introduction", "tasks", "profile", "offer"))
+            desc = BeautifulSoup(desc, "html.parser").get_text(separator="\n")
+            out.append(job(
+                title=title,
+                company="igus GmbH",
+                location=(it.get("location") or "Köln").strip() or "Köln",
+                # Real pattern per their sitemap: /offer/{slug}/{uuid}
+                # (the slug is truncated in their own links; the uuid is
+                # what routes).
+                url=(f"https://karriere.igus.de/offer/"
+                     f"{(it.get('slug') or 'x')[:35]}/{it.get('id')}"),
+                source="Igus",
+                description=desc,
+                posted_at=str(it.get("createdAt") or ""),
+            ))
+        print(f"  [Igus] {len(out)} student roles from {len(rows)} postings")
+        return out
+    except Exception as e:
+        print(f"  [Igus] failed: {e}")
+        return []
+
+
+# ── REWE Group — Köln HQ, custom JSON search API ─────────────────────────────
+# jobs.rewe-group.com/api/job-search honours term+limit and returns clean JSON
+# (verified live). REWE and rewe_digital post Werkstudent data/engineering
+# roles in Köln and Hürth continuously.
+_REWE_API = "https://jobs.rewe-group.com/api/job-search"
+_REWE_TERMS = ("Werkstudent", "Praktikum")
+
+
+def scrape_rewe() -> list[dict]:
+    out: list[dict] = []
+    seen_ids: set[str] = set()
+    for term in _REWE_TERMS:
+        try:
+            r = requests.get(_REWE_API, params={"term": term, "limit": 100},
+                             headers=HEADERS, timeout=25)
+            if r.status_code != 200:
+                print(f"  [REWE] '{term}' HTTP {r.status_code}")
+                continue
+            for it in r.json() or []:
+                jid = str(it.get("id") or "")
+                if not jid or jid in seen_ids:
+                    continue
+                seen_ids.add(jid)
+                title = (it.get("title") or "").strip()
+                if not title:
+                    continue
+                url = str(it.get("url") or "").replace("http://", "https://")
+                out.append(job(
+                    title=title,
+                    company="REWE Group",
+                    location=(it.get("location") or "Köln").strip(),
+                    url=url or f"https://jobs.rewe-group.com/{jid}",
+                    source="REWE",
+                    description=str(it.get("details") or ""),
+                    posted_at=str(it.get("created_at") or ""),
+                ))
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  [REWE] '{term}' failed: {e}")
+    print(f"  [REWE] {len(out)} student postings across {len(_REWE_TERMS)} terms")
+    return out
+
+
+# ── d.vinci cluster — one scraper, four Köln employers ───────────────────────
+# Generali Deutschland, RheinEnergie, DER Touristik and REWE digital all run
+# d.vinci: GET https://{slug}.dvinci-hr.com/de/jobs with Accept:
+# application/json returns the whole board as JSON (verified live; Generali
+# alone carries 21 student roles right now, incl. Controlling/Data Quality).
+# The payload has no location field, so each tenant's home city is the
+# default — all four are Köln companies, which is the reason they are here.
+_DVINCI_TENANTS = (
+    ("generali-gruppe", "Generali Deutschland", "Köln"),
+    ("rheinenergie", "RheinEnergie", "Köln"),
+    ("dertouristik", "DER Touristik", "Köln"),
+    ("rewe-digital", "REWE digital", "Köln"),
+)
+_DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische",
+                             re.IGNORECASE)
+
+
+def scrape_dvinci() -> list[dict]:
+    out: list[dict] = []
+    for slug, company, city in _DVINCI_TENANTS:
+        try:
+            # d.vinci sniffs the User-Agent: a browser-like UA gets HTML
+            # no matter what Accept says, a plain one gets JSON. Verified
+            # by A/B-ing the exact same request with both UAs.
+            r = requests.get(f"https://{slug}.dvinci-hr.com/de/jobs",
+                             headers={"User-Agent": "job-hunter/1.0",
+                                      "Accept": "application/json"},
+                             timeout=25)
+            if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
+                print(f"  [d.vinci] {slug} HTTP {r.status_code} — not JSON")
+                continue
+            n = 0
+            for it in r.json() or []:
+                title = (it.get("position") or "").strip()
+                if not title or not _DVINCI_STUDENT.search(title):
+                    continue
+                url = str(it.get("jobPublicationURL") or "")
+                if not url:
+                    continue
+                desc = "\n".join(str(it.get(k) or "") for k in
+                                  ("subtitle", "pageDescription"))
+                out.append(job(
+                    title=title, company=company, location=city, url=url,
+                    source=company.split()[0], description=desc,
+                ))
+                n += 1
+            print(f"  [d.vinci] {company}: {n} student roles")
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  [d.vinci] {slug} failed: {e}")
+    return out
+
+
+# ── Universität Bonn — the owner's own university's HiWi page ────────────────
+# A single server-rendered page listing SHK/WHF (studentische Hilfskraft)
+# openings as PDF links. Tiny volume, zero overlap with anything else, and it
+# is literally his employer-to-be. robots.txt allows it with Crawl-delay: 1,
+# honoured by the single-request design (one page, no PDF fetches).
+_UNIBONN_URL = ("https://www.uni-bonn.de/de/universitaet/arbeiten-an-der-uni/"
+                "stellenangebote/stellenangebote-fuer-studierende-und-praktikant-innen")
+
+
+def scrape_unibonn() -> list[dict]:
+    try:
+        r = requests.get(_UNIBONN_URL, headers=HEADERS, timeout=25)
+        if r.status_code != 200:
+            print(f"  [UniBonn] HTTP {r.status_code}")
+            return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        out = []
+        for a in soup.find_all("a", href=True):
+            if ".pdf" not in a["href"].lower():
+                continue
+            title = a.get_text(" ", strip=True)
+            if len(title) < 15:
+                continue
+            href = a["href"]
+            if href.startswith("/"):
+                href = "https://www.uni-bonn.de" + href
+            out.append(job(
+                title=title,
+                company="Universität Bonn",
+                location="Bonn, Germany",
+                url=href,
+                source="UniBonn",
+                # The ad itself is a PDF; the title carries role, hours and
+                # deadline, which is enough for the student filter and scorer.
+                description=title,
+            ))
+        print(f"  [UniBonn] {len(out)} SHK/WHF postings")
+        return out
+    except Exception as e:
+        print(f"  [UniBonn] failed: {e}")
+        return []
+
+
+# ── SuccessFactors Career Site Builder — Zurich, Bayer, DEUTZ ────────────────
+# The replacement for the dead career4.successfactors.com XML API: CSB serves
+# a server-rendered search page with a.jobTitle-link anchors (verified live —
+# Zurich has an open-ended "Initiativstelle Werkstudent" in Köln, DEUTZ runs
+# Werkstudent Frontend Development in Köln). TÜV Rheinland's search returned
+# zero and is deliberately not listed. Hrefs are pre-filtered to the commute
+# belt via _RMK_REGION, and detail pages are parsed by the same og:title/meta
+# routine the Fraunhofer/DLR scraper uses — same product family, same markup.
+_CSB_SITES = (
+    ("https://www.careers.zurich.com", "Zurich"),
+    ("https://jobs.bayer.com", "Bayer"),
+    ("https://career.deutz.com", "DEUTZ"),
+)
+_CSB_QUERIES = ("Werkstudent", "Praktikum")
+_CSB_CAP_PER_SITE = 20
+
+
+def scrape_csb() -> list[dict]:
+    out: list[dict] = []
+    for host, source in _CSB_SITES:
+        try:
+            hrefs: list[str] = []
+            seen: set[str] = set()
+            for q in _CSB_QUERIES:
+                r = requests.get(f"{host}/search/", params={"q": q},
+                                 headers=HEADERS, timeout=25)
+                if r.status_code != 200:
+                    continue
+                soup = BeautifulSoup(r.text, "html.parser")
+                for a in soup.select("a.jobTitle-link"):
+                    href = a.get("href") or ""
+                    if not href or href in seen:
+                        continue
+                    seen.add(href)
+                    full = href if href.startswith("http") else host.split("/jobs")[0] + href
+                    if _RMK_REGION.search(full):
+                        hrefs.append(full)
+                time.sleep(0.5)
+            picked = hrefs[:_CSB_CAP_PER_SITE]
+            got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
+            out.extend(got)
+            print(f"  [{source}] {len(got)} commute-belt student roles")
+        except Exception as e:
+            print(f"  [{source}] failed: {e}")
+    return out
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def scrape_all() -> list[dict]:
@@ -3418,6 +3657,11 @@ def scrape_all() -> list[dict]:
         scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
         scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
         scrape_bwi,                # BWI GmbH — Bundeswehr IT, Bonn/Meckenheim
+        scrape_igus,               # igus Köln — JSON API, full ad text inline
+        scrape_rewe,               # REWE Group Köln — JSON search API
+        scrape_dvinci,             # Generali/RheinEnergie/DER Touristik/REWE digital
+        scrape_unibonn,            # Uni Bonn SHK/HiWi page — his own university
+        scrape_csb,                # Zurich/Bayer/DEUTZ — SuccessFactors CSB
         scrape_amazon,             # Amazon Jobs API (Germany filter at API level)
         scrape_personio,           # German Mittelstand + AI startups (20 companies)
         scrape_smartrecruiters,    # Bosch, Continental, Visa, Roland Berger

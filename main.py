@@ -84,6 +84,15 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "Fraunhofer":       70,
     "DLR":              70,
     "BWI":              70,
+    "UniBonn":          75,
+    "Igus":             70,
+    "REWE":             65,
+    "Zurich":           62,
+    "Bayer":            62,
+    "DEUTZ":            62,
+    "Generali":         62,
+    "RheinEnergie":     62,
+    "DER":              55,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -934,6 +943,8 @@ def _record_shown(top: list[dict], near: list[dict]) -> None:
 # discovers 6 days after it went up has hundreds of applicants already, so
 # jobs with a KNOWN posting age beyond this never reach the digest. Unknown
 # ages are kept — several boards omit dates, and absent evidence is not age.
+# Base value only — _is_fresh_enough consults config.max_posting_age_hours(),
+# which widens to 7 days during the one-time 2026-08-16 catch-up window.
 _MAX_POSTING_AGE_HOURS = 24
 
 # ...with one exception, for a reason the aggregator-era rule did not foresee.
@@ -952,7 +963,14 @@ _MAX_POSTING_AGE_HOURS = 24
 # Showing a still-open role once is safe: digested_keys.json guarantees he
 # never sees the same company+title twice, so there is no repeat risk here.
 # Aggregators keep the strict 24h rule.
-_LONG_LIVED_SOURCES = frozenset({"BWI", "Fraunhofer", "DLR", "Stellenwerk"})
+_LONG_LIVED_SOURCES = frozenset({
+    "BWI", "Fraunhofer", "DLR", "Stellenwerk",
+    # Same reasoning for the rest of the employer-own boards: a posting
+    # stays up until filled, and its datePosted (when present at all) says
+    # when the search began, not whether applying still makes sense.
+    "UniBonn", "Igus", "REWE", "Zurich", "Bayer", "DEUTZ",
+    "Generali", "RheinEnergie", "DER",
+})
 
 
 def _is_fresh_enough(j: dict) -> bool:
@@ -961,7 +979,8 @@ def _is_fresh_enough(j: dict) -> bool:
     age_days = _job_age_days(j)
     if age_days is None:
         return True
-    return age_days * 24 <= _MAX_POSTING_AGE_HOURS
+    from config import max_posting_age_hours
+    return age_days * 24 <= max_posting_age_hours()
 
 
 SEEN_FILE = Path("seen_jobs.json")
@@ -1089,6 +1108,80 @@ def _dead_source_warnings(history: list[dict], current: dict) -> list[str]:
     return warnings
 
 
+# ── Absent-source registry ───────────────────────────────────────────────────
+# The median alarm above has a blind spot that let THREE sources die silently
+# in one week: it judges against the last _HISTORY_WINDOW runs, so a source
+# dead for longer than the window — or dead since before a state migration,
+# as Arbeitsagentur was (the S3-era history begins 2026-08-10, the very day
+# it broke) — has a median of zero and is never even ELIGIBLE for its own
+# alarm.
+#
+# The registry is the long-term memory the window lacks: every source that
+# has ever delivered is recorded with a typical volume and the last time it
+# delivered anything. A registered source that stays quiet past the grace
+# period is flagged regardless of what the recent median says.
+_SOURCE_REGISTRY_FILE = Path("source_registry.json")
+_REGISTRY_GRACE_HOURS = 36      # ~3 scheduled runs of silence before alarming
+_REGISTRY_MIN_TYPICAL = 10      # sources that never delivered much stay quiet
+
+
+def _load_source_registry() -> dict:
+    try:
+        raw = storage.read_text(str(_SOURCE_REGISTRY_FILE))
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def _absent_source_warnings_from(registry: dict, current: dict, now=None) -> list[str]:
+    """Pure part, testable without storage. `current` maps source -> count
+    for THIS run; a registered source missing from it counts as zero."""
+    from datetime import datetime, timezone
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for src, e in sorted(registry.items()):
+        if int(e.get("typical", 0)) < _REGISTRY_MIN_TYPICAL:
+            continue
+        if int(current.get(src, 0)) > 0:
+            continue
+        try:
+            last = datetime.fromisoformat(str(e.get("last_nonzero", "")))
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        silent_h = (now - last).total_seconds() / 3600
+        if silent_h >= _REGISTRY_GRACE_HOURS:
+            out.append(
+                f"Source '{src}' has delivered nothing since "
+                f"{last.date().isoformat()} (typically ~{int(e['typical'])} "
+                f"jobs/run) — check whether its API or layout changed."
+            )
+    return out
+
+
+def _update_source_registry(current: dict) -> None:
+    """Record which sources delivered this run. Called for real runs only:
+    a dry run must not write state, and health bookkeeping is state."""
+    from datetime import datetime, timezone
+    try:
+        reg = _load_source_registry()
+        now = datetime.now(timezone.utc).isoformat()
+        for src, n in current.items():
+            n = int(n)
+            if n <= 0:
+                continue
+            e = reg.setdefault(src, {"typical": n, "last_nonzero": now})
+            # Slow-moving typical: yesterday's spike must not raise the bar
+            # a normal day then fails to clear.
+            e["typical"] = int(round(0.7 * int(e.get("typical", n)) + 0.3 * n))
+            e["last_nonzero"] = now
+        storage.write_text(str(_SOURCE_REGISTRY_FILE),
+                           json.dumps(reg, ensure_ascii=False, indent=1))
+    except Exception as e:
+        print(f"  [Registry] could not update source registry: {e}")
+
+
 def _job_age_days(j: dict):
     """Age of a posting in days from posted_at, or None if unknown/unparseable."""
     from datetime import datetime, timezone
@@ -1191,6 +1284,13 @@ def node_scrape(state: dict) -> dict:
     from collections import Counter as _Counter
     src_counts = dict(_Counter(j.get("source", "?") for j in all_jobs))
     health_warnings = _dead_source_warnings(_load_run_history(), src_counts)
+    # Registry pass: catches sources dead for longer than the history
+    # window can see (the failure mode the median check misses).
+    _flagged = {w.split("'")[1] for w in health_warnings if "'" in w}
+    for w in _absent_source_warnings_from(_load_source_registry(), src_counts):
+        if "'" in w and w.split("'")[1] in _flagged:
+            continue                    # median check already reported it
+        health_warnings.append(w)
     for w in health_warnings:
         print(f"WARNING: {w}")
 
@@ -1352,6 +1452,8 @@ def node_persist(state: dict) -> dict:
         save_digested(digested)
         # O2: log what was shown, with features, for the conversion join
         _record_shown(state.get("top", []), state.get("near", []))
+        # Source-health long-term memory (see _update_source_registry).
+        _update_source_registry(state.get("src_counts", {}))
         print("\nDone. seen_jobs.json + digested_keys.json updated.")
     else:
         # B2 guard: a failed send must not bury the day's matches.
