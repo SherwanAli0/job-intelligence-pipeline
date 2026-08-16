@@ -740,9 +740,17 @@ TIER 3 (start at 60, then apply caps and adjustments):
 - Werkstudent IT / software engineering without a data/AI component but with
   Python or modern web stack — acceptable to stay funded, less CV value.
 
-OFF-TARGET (start at 40, max possible 50 even with boosts):
-- Anything that isn't AI, ML, data science, or data analytics work
-  (e.g. pure frontend, pure DevOps, sales, marketing, non-technical).
+OFF-TARGET (CAP AT 25 — a hard maximum, boosts cannot lift it):
+- A student role with NO data/AI/software content. The 2026-08-16
+  digest carried an outlet sales assistant, a retail sales operation
+  role and a quality-management role as near misses because off-target
+  used to START at 40; anything above 35 reaches the owner's inbox, so
+  off-target must sit strictly below that line.
+- Examples: retail/outlet/cashier, sales/Vertrieb, marketing/
+  communications, HR/recruiting, office management, event management,
+  pure QM, pure controlling/accounting, legal, logistics floor work.
+- Werkstudent IT/software WITHOUT data content is NOT off-target — it
+  is Tier 3 above. Off-target means no technical content at all.
 
 ═══════════════════════════════════════════════════════════════
 BOOSTS — additive, but never exceed the applicable cap.

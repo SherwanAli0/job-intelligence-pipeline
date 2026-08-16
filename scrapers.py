@@ -1337,6 +1337,9 @@ def scrape_brave_search() -> list[dict]:
                 )):
                     drop_keyword += 1
                     continue
+                if _WEB_LISTING_TITLE_RE.search(title):
+                    drop_keyword += 1     # directory page, not a posting
+                    continue
 
                 seen_urls.add(url)
                 parts = domain.split(".")
@@ -1388,7 +1391,26 @@ _SKIP_DOMAINS = {
     "xing.com", "monster.de", "karriere.at", "jobs.ch", "jobware.de",
     "greenhouse.io", "lever.co", "workday.com", "smartrecruiters.com",
     "recruitee.com", "bamboohr.com", "join.com", "jobteaser.com",
+    # Aggregators-of-aggregators and listing portals. A search hit on
+    # these is a directory PAGE, not a posting — the 2026-08-16 digest
+    # carried "Praktikum bei Telekom AG — freie Praktikumsplätze" (a
+    # Praktikumsstellen index page) at score 72, and a Jobgether remint
+    # of a SIXT Portugal role at 78. Real postings on real career pages
+    # still come through; these hosts never carry one.
+    "jobgether.com", "praktikumsstellen.de", "praktikum.info",
+    "studentjob.de", "jooble.org", "talent.com", "whatjobs.com",
+    "jobrapido.com", "kimeta.de", "stellenanzeigen.de",
+    "meinestadt.de", "jobboerse.de", "renego.de", "jobisjob.de",
 }
+
+# Listing-page TITLES that survive the domain screen on unknown hosts:
+# "freie Praktikumsplätze bei X", "127 Werkstudent Jobs in Köln", ...
+_WEB_LISTING_TITLE_RE = re.compile(
+    r"freie\s+(praktikumsplätze|stellen)|praktikumsplätze\s+bei"
+    r"|\b\d+\s+(\w+\s+){0,2}(jobs?|stellen(angebote)?)\b"
+    r"|stellenangebote\s|jobbörse|top\s+\d+\s",
+    re.IGNORECASE,
+)
 
 # Broad queries designed to surface jobs on company career pages.
 # Werkstudent-only across the four tracks, anchored on the Bonn commute belt
