@@ -705,25 +705,24 @@ def _reads_as_english(text: str) -> bool:
 
 
 def _is_english_friendly(j: dict) -> bool:
-    """Drop jobs that are clearly German-language unless the posting genuinely
-    confirms an English-speaking team.
+    """Drop jobs whose description is not written in English.
 
-    STUDENT ROLES ARE EXEMPT from the ad-language test. Measured on the
-    2026-08-15 run: of 76 student roles within commuting distance of Bonn,
-    this filter killed 62 (82%), and the digest came out empty. The German
-    Werkstudent market is simply advertised in German, far more so than the
-    full-time market was.
-
-    The language of the advertisement is not the language of the job. What
-    actually locks him out at B1 is an explicit demand for fluent/business/
-    C1 German, so for student roles that explicit demand is the only test
-    applied — _requires_fluent_german, the same check the scorer uses.
+    HISTORY OF THIS RULE, because it has flipped twice and must not flip
+    again by accident:
+    - Originally German-language bodies were dropped for all roles.
+    - 2026-08-15: student roles were EXEMPTED (only an explicit C1 demand
+      dropped them), because the ad-language test killed 82% of the
+      commutable Werkstudent market and the digest came out empty.
+    - 2026-08-16: the owner reviewed a real digest full of German-language
+      student ads and reversed the exemption: at B1 German, roles advertised
+      in German are not usable for him in practice, whatever the theoretical
+      team language. His words: "only english from now... i dont have other
+      chance here." The known cost — most Werkstudent ads are German, so
+      volume drops sharply — is accepted deliberately: a short list he can
+      act on beats a long list he cannot.
     """
     title_lower = j["title"].lower()
     desc_lower = (j.get("description") or "").lower()
-
-    if _is_student_role(j):
-        return not _requires_fluent_german(desc_lower)
 
     # A German-language body is disqualifying even when the title is English
     # and even when the word "english" appears somewhere. Four such jobs were
