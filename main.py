@@ -815,13 +815,48 @@ _NON_COMMUTABLE_DE_CITIES = (
 # Full-remote signals (German market phrasings included). Deliberately does
 # NOT count plain "hybrid" or "remote möglich": hybrid still requires office
 # days, which only works if the office is commutable.
+# FULL-remote signals. The owner's rule (2026-08-17): "germany wide search then
+# focus on the remote and home office ones and the face to face must be in
+# places around bonn". So a genuinely remote role is in scope wherever the
+# employer sits, while anything requiring presence must be in the belt.
+#
+# German ads rarely say "fully remote" — they say Homeoffice, mobiles Arbeiten
+# or ortsunabhängig, and the old list caught almost none of that.
 _DE_REMOTE_SIGNALS = (
     "100% remote", "100 % remote", "fully remote", "vollständig remote",
     "komplett remote", "deutschlandweit", "remote in germany",
     "remote within germany", "remote (germany", "germany-remote",
     "remote-first", "remote first", "work from anywhere in germany",
     "bundesweit remote", "remote deutschland", "ortsunabhängig",
+    # German-market phrasings for genuinely location-independent work
+    "vollständig im homeoffice", "komplett im homeoffice", "100% homeoffice",
+    "100 % homeoffice", "reines homeoffice", "dauerhaft homeoffice",
+    "vollzeit remote", "remote arbeiten", "remote-arbeit", "telearbeit",
+    "mobiles arbeiten deutschlandweit", "homeoffice deutschlandweit",
+    "standortunabhängig", "arbeitsort: remote", "arbeitsort remote",
+    "remote möglich", "full remote", "voll remote",
 )
+
+# Partial-presence signals. These BEAT the remote signals above: "Teilweise
+# Home-Office" is the single most common phrase on German job ads and it means
+# hybrid, not remote — there are office days, so the office has to be
+# reachable. Treating it as remote would let Munich and Berlin hybrid roles
+# back in through the side door.
+_HYBRID_SIGNALS = (
+    "teilweise home", "teilweise remote", "hybrid", "hybrides arbeiten",
+    "tage vor ort", "tage im büro", "tage pro woche im", "anwesenheit vor ort",
+    "days in the office", "days on site", "days per week in the office",
+    "presence in the office", "vor ort und remote", "anteilig homeoffice",
+)
+
+
+def _is_full_remote(loc: str, desc: str) -> bool:
+    """True only for genuinely location-independent roles. Hybrid wording
+    anywhere in the ad disqualifies, because hybrid needs a reachable office."""
+    blob = f"{loc} {desc}"
+    if any(h in blob for h in _HYBRID_SIGNALS):
+        return False
+    return any(sig in blob for sig in _DE_REMOTE_SIGNALS)
 
 
 def _is_commutable_or_remote(j: dict) -> bool:
@@ -831,9 +866,9 @@ def _is_commutable_or_remote(j: dict) -> bool:
     desc = (j.get("description") or "").lower()
 
     if any(c in loc for c in _COMMUTABLE_FROM_BONN):
-        return True
-    if any(sig in loc or sig in desc for sig in _DE_REMOTE_SIGNALS):
-        return True
+        return True                     # on-site, and reachable
+    if _is_full_remote(loc, desc):
+        return True                     # remote: the employer's city is moot
     if "remote" in loc and not any(c in loc for c in _NON_COMMUTABLE_DE_CITIES):
         return True                     # location field itself says remote
     if any(c in loc for c in _NON_COMMUTABLE_DE_CITIES):

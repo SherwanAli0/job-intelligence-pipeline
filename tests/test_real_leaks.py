@@ -601,6 +601,50 @@ class TestCommutableFromBonn:
         assert main._is_commutable_or_remote(self._at(""))
 
 
+class TestRemoteFromAnywhereInGermany:
+    """Owner's rule, 2026-08-17: "germany wide search then focus on the remote
+    and home office ones and the face to face must be in places around bonn".
+
+    So the employer's city stops mattering the moment a role is genuinely
+    remote — but hybrid must still sit in the belt, because hybrid means office
+    days. "Teilweise Home-Office" is the most common phrase on German ads and
+    it is HYBRID, not remote; reading it as remote would quietly re-admit every
+    Munich and Berlin role."""
+
+    def _j(self, loc, desc=""):
+        return _job("Werkstudent Data Science", desc or "Student role.",
+                    location=loc)
+
+    def test_full_homeoffice_in_a_far_city_is_kept(self):
+        assert main._is_commutable_or_remote(self._j(
+            "Berlin", "Die Stelle ist 100% Homeoffice, deutschlandweit möglich."))
+
+    def test_mobiles_arbeiten_deutschlandweit_is_kept(self):
+        assert main._is_commutable_or_remote(self._j(
+            "Hamburg", "mobiles arbeiten deutschlandweit"))
+
+    def test_ortsunabhaengig_is_kept(self):
+        assert main._is_commutable_or_remote(self._j(
+            "München", "Remote möglich, du arbeitest ortsunabhängig."))
+
+    def test_TEILWEISE_homeoffice_far_away_is_dropped(self):
+        """The guard that matters most: partial home office is not remote."""
+        assert not main._is_commutable_or_remote(self._j(
+            "München", "Teilweise Home-Office, 2 Tage vor Ort."))
+
+    def test_hybrid_far_away_is_dropped(self):
+        assert not main._is_commutable_or_remote(self._j(
+            "Berlin", "Hybrides Arbeiten, 3 Tage im Büro pro Woche."))
+
+    def test_hybrid_inside_the_belt_is_fine(self):
+        """Hybrid is only a problem when the office is unreachable."""
+        assert main._is_commutable_or_remote(self._j(
+            "Köln", "Teilweise Home-Office"))
+
+    def test_plain_onsite_far_away_still_drops(self):
+        assert not main._is_commutable_or_remote(self._j("München, Germany"))
+
+
 class TestEnrolledStudentPhrasingSurvives:
     """Werkstudent ads describe enrolment, which the Master's filter used to
     read as a completed-degree requirement. That would now drop the entire
