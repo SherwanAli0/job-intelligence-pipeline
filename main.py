@@ -705,24 +705,35 @@ def _reads_as_english(text: str) -> bool:
 
 
 def _is_english_friendly(j: dict) -> bool:
-    """Drop jobs whose description is not written in English.
+    """Drop German-language jobs, EXCEPT student roles, which are judged only
+    on whether they explicitly demand fluent German.
 
-    HISTORY OF THIS RULE, because it has flipped twice and must not flip
-    again by accident:
-    - Originally German-language bodies were dropped for all roles.
-    - 2026-08-15: student roles were EXEMPTED (only an explicit C1 demand
-      dropped them), because the ad-language test killed 82% of the
-      commutable Werkstudent market and the digest came out empty.
-    - 2026-08-16: the owner reviewed a real digest full of German-language
-      student ads and reversed the exemption: at B1 German, roles advertised
-      in German are not usable for him in practice, whatever the theoretical
-      team language. His words: "only english from now... i dont have other
-      chance here." The known cost — most Werkstudent ads are German, so
-      volume drops sharply — is accepted deliberately: a short list he can
-      act on beats a long list he cannot.
+    HISTORY — this rule has now flipped three times. Read this before touching
+    it, because each flip was a deliberate owner decision, not a bug:
+      1. Originally German bodies were dropped for every role.
+      2. 2026-08-15: student roles EXEMPTED. The ad-language test had killed
+         82% of the commutable Werkstudent market and produced an empty digest.
+      3. 2026-08-16: exemption REVERSED to English-only, after the owner
+         reviewed a digest full of German ads: "only english from now".
+      4. 2026-08-18: exemption RESTORED, on measured evidence. Three
+         consecutive days produced zero emails, and the daily logs showed the
+         language test removing 61 of 81, 61 of 87 and 34 of 62 reachable
+         student roles — consistently ~75% of everything in range, and the
+         single largest cut in the whole chain. Several of the best roles he
+         had verified by hand (InsurLab Applied AI, OSCAR KI-Entwicklung,
+         UNITY AI Engineer, 1&1 AI & Data Automation, Zurich Python/SQL) were
+         German-language ads at employers doing genuinely technical work.
+
+    The distinction that makes this safe: the language of the ADVERTISEMENT is
+    not the language of the JOB. What actually locks him out at B1 is an
+    explicit demand for fluent/business/C1 German, and _requires_fluent_german
+    still drops exactly those. Non-student ads keep the strict rule.
     """
     title_lower = j["title"].lower()
     desc_lower = (j.get("description") or "").lower()
+
+    if _is_student_role(j):
+        return not _requires_fluent_german(desc_lower)
 
     # A German-language body is disqualifying even when the title is English
     # and even when the word "english" appears somewhere. Four such jobs were

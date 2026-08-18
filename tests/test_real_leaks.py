@@ -92,24 +92,24 @@ class TestGermanLanguageBodies:
         """)
         assert not _survives_pipeline(j)
 
-    def test_lidl_german_internship_is_dropped_for_language(self):
+    def test_lidl_german_internship_survives_again(self):
         """This fixture has now flipped THREE times; each flip was a
         deliberate owner decision and the history matters more than the
         current value. (1) Pinned as a leak in the full-time era. (2) Allowed
         on 2026-08-16 morning when internships became targets and German
         student ads were exempted. (3) Dropped again on 2026-08-16 afternoon
-        when the owner reviewed the resulting digest and set the rule to
-        English-only descriptions — a German-language ad is unusable for him
-        regardless of employment form. The internship inclusion itself is
-        unchanged: an ENGLISH Praktikum ad still survives (see
-        TestEnglishOnlyDescriptions)."""
+        when the owner set the rule to English-only. (4) Restored on
+        2026-08-18 after three consecutive zero-email days, when the logs
+        showed the language test cutting ~75% of all reachable student roles.
+        Nothing here demands fluent German, so it belongs in the digest and
+        the scorer judges the BWL/VWL study-field mismatch."""
         j = _job("Praktikum Data Analytics", """
             Als Teil unseres Lidl Plus international Teams arbeitest du an
             unserem digitalen Vorteilsprogramm. Ab August für 6 Monate.
             Studium im Bereich BWL, VWL, Mathematik / Statistik.
             Pflichtpraktikum: 1.000 € p.M. Erste Erfahrungen mit SQL, Python.
         """)
-        assert not _survives_pipeline(j)
+        assert _survives_pipeline(j)
 
 
 class TestMultiYearExperienceWithoutDigits:
@@ -357,18 +357,18 @@ class TestGermanMarketIsNotGermanLanguage:
         """, location="Bonn, Germany")
         assert main._is_english_friendly(j)
 
-    def test_german_bodied_student_ad_is_dropped(self):
-        """Flipped twice, final state English-only (owner decision 2026-08-16
-        after reviewing a real digest — see the _is_english_friendly
-        docstring). A German body drops the ad regardless of employment
-        form."""
+    def test_german_bodied_student_ad_survives(self):
+        """Flipped three times; current state is the exemption (2026-08-18,
+        restored on measured evidence — see the _is_english_friendly
+        docstring). A German BODY no longer drops a student role; only an
+        explicit fluent-German demand does."""
         j = _job("Werkstudent Data Science (m/w/d)", """
             Du unterstützt unser Team bei der Entwicklung von Datenprodukten
             und arbeitest mit uns an der Auswertung von Kundendaten. Du bist
             eingeschrieben an einer Hochschule und hast bereits erste
             Kenntnisse in Python sowie Freude an der Arbeit mit Daten.
         """, location="Köln, Germany")
-        assert not main._is_english_friendly(j)
+        assert main._is_english_friendly(j)
 
     def test_german_bodied_FULL_TIME_ad_is_still_dropped(self):
         """A German body is disqualifying for every role type."""
@@ -380,14 +380,13 @@ class TestGermanMarketIsNotGermanLanguage:
         """, location="Köln, Germany")
         assert not main._is_english_friendly(j)
 
-    def test_short_stub_with_german_marker_is_dropped_under_english_only(self):
-        """Under English-only a stub with a gender marker and no English
-        evidence drops, student role or not. The cost (a rare English ad
-        behind a stub row is lost) is accepted — the owner cannot act on an
-        ad he cannot read, and stubs give him nothing to read either way."""
+    def test_short_stub_student_ad_is_kept_for_the_scorer_to_judge(self):
+        """A two-line stub carries no language evidence either way. Under the
+        student exemption that is not grounds for a silent drop; the scorer
+        sees it and the explicit-C1 check still applies."""
         j = _job("Werkstudent Data Science (m/w/d)", "Werkstudent gesucht.",
                  location="Köln, Germany")
-        assert not main._is_english_friendly(j)
+        assert main._is_english_friendly(j)
 
     def test_short_stub_NON_student_ad_still_cannot_claim_english(self):
         """_reads_as_english demands positive evidence, so a two-line stub
@@ -397,13 +396,12 @@ class TestGermanMarketIsNotGermanLanguage:
         assert not main._is_english_friendly(j)
 
 
-class TestEnglishOnlyDescriptions:
-    """This rule has flipped twice — the history lives in the
-    _is_english_friendly docstring. Final state, set by the owner on
-    2026-08-16 after reviewing a real digest: the description must be
-    WRITTEN IN ENGLISH, student role or not. At B1 German, roles advertised
-    in German are not usable in practice, and a short actionable list beats
-    a long unusable one."""
+class TestStudentAdsJudgedOnDemandNotLanguage:
+    """This rule has flipped three times — the history lives in the
+    _is_english_friendly docstring. Current state (2026-08-18): a student ad
+    is judged on whether it DEMANDS fluent German, not on which language it
+    happens to be written in. Restored after three zero-email days in which
+    the language test removed ~75% of all reachable student roles."""
 
     _GERMAN_BODY = """
         Als Werkstudent unterstützt du unser Data-Team bei der Entwicklung
@@ -413,10 +411,17 @@ class TestEnglishOnlyDescriptions:
         Arbeitszeiten passend zu deinem Stundenplan und ein junges Team.
     """
 
-    def test_german_language_werkstudent_ad_is_dropped_again(self):
+    def test_german_language_werkstudent_ad_survives(self):
         j = _job("Werkstudent Data Analytics (m/w/d)", self._GERMAN_BODY,
                  location="Köln, Germany")
-        assert not main._is_english_friendly(j)
+        assert main._is_english_friendly(j)
+
+    def test_german_werkstudent_ad_demanding_c1_still_drops(self):
+        """The boundary that carries the whole rule."""
+        j = _job("Werkstudent Data Analytics (m/w/d)", self._GERMAN_BODY + """
+            Voraussetzung: verhandlungssicheres Deutsch auf C1-Niveau.
+        """, location="Köln, Germany")
+        assert not _survives_pipeline(j)
 
     def test_german_language_full_time_ad_still_drops(self):
         j = _job("Data Analyst (m/w/d)", """
