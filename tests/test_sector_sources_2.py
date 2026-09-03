@@ -128,3 +128,25 @@ class TestDvinciCustomHost:
         for src_name in ("UKB", "rhenag", "DeutscheBahn", "DZNE", "Uniper", "1und1", "WDR", "Lufthansa"):
             assert src_name in main._SOURCE_PRIORITY, src_name
             assert src_name in main._LONG_LIVED_SOURCES, src_name
+
+
+class TestSectorBatch3Config:
+    def test_consulting_and_retail_boards_configured(self):
+        from config import (GREENHOUSE_SLUGS, ASHBY_SLUGS, PERSONIO_SLUGS,
+                            SMARTRECRUITERS_SLUGS, WORKDAY_CXS_TENANTS)
+        for s in ("mindsquareag", "forvismazars", "thoughtworks"):
+            assert s in GREENHOUSE_SLUGS, s
+        assert "hrs" in ASHBY_SLUGS
+        for s in ("trusteq-gmbh", "maibornwolff"):
+            assert s in PERSONIO_SLUGS, s
+        assert "redcare-pharmacy" in SMARTRECRUITERS_SLUGS
+        assert "RedcarePharmacy" not in SMARTRECRUITERS_SLUGS, "CamelCase id is a test board"
+        assert "SopraSteria1" in SMARTRECRUITERS_SLUGS
+        assert ("accenture", "wd103", "AccentureCareers") in WORKDAY_CXS_TENANTS
+
+    def test_inverto_deloitte_ey_wired(self):
+        import main
+        assert any(t[0] == "inverto" for t in scrapers._DVINCI_TENANTS)
+        assert {"Deloitte", "EY"} <= {s for _, s in scrapers._CSB_SITES}
+        for src in ("INVERTO", "Deloitte", "EY"):
+            assert src in main._SOURCE_PRIORITY and src in main._LONG_LIVED_SOURCES, src

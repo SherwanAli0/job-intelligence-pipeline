@@ -111,6 +111,9 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "UKB":              70,
     "rhenag":           62,
     "DeutscheBahn":     58,
+    "INVERTO":          62,
+    "Deloitte":         60,
+    "EY":               60,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -1073,7 +1076,7 @@ _LONG_LIVED_SOURCES = frozenset({
     "Generali", "RheinEnergie", "DER",
     "HDI", "NRWBANK", "StadtKoeln", "GIZ", "LVR", "BaFin", "BARMER", "BundDE",
     "WDR", "Lufthansa", "DZNE", "Uniper", "SWD", "1und1", "Vodafone",
-    "UKB", "rhenag", "DeutscheBahn",
+    "UKB", "rhenag", "DeutscheBahn", "INVERTO", "Deloitte", "EY",
 })
 
 

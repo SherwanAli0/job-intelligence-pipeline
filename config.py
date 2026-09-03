@@ -322,6 +322,9 @@ GREENHOUSE_SLUGS = [
     # METRO Düsseldorf, so it is deliberately NOT here.
     "trivago",         # 10 jobs, Düsseldorf — incl. Data Scientist, AI Search & Ranking
     "dept",            # 233 jobs, 5 in the Köln area
+    "mindsquareag",    # 54 jobs — remote Pflichtpraktikum/Praxisphase IT Consulting
+    "forvismazars",    # 187 jobs — Praktikum/Werkstudent Interne Revision & IT, Düsseldorf
+    "thoughtworks",    # 40 jobs — Cologne office, English; watch for student roles
     "valtech",         # 143 jobs, 6 in the Köln area
     # ── German tech / e-commerce (original list)
     # NOTE (health sweep): zalando, deepl, deliveryhero, cognigy, biontech,
@@ -525,6 +528,8 @@ PERSONIO_SLUGS = [
     "vytal",               # 2, Köln
     "foodforecast",        # 2, Köln — AI food-waste startup
     "effzeh",              # 14, 1. FC Köln — Werkstudent Digitale Projekte, analysis internships
+    "trusteq-gmbh",        # 21, Köln office — AI Developer Intern, AI Strategy Intern (some ask C1)
+    "maibornwolff",        # 47, Bonn office — software/AI consultancy
     "1komma5grad",     # 352 positions, solar/energy AI
     "westwing",        # 61, e-commerce
     "vivid",           # 19, Berlin fintech
@@ -628,6 +633,7 @@ WORKDAY_CXS_TENANTS = [
     # Bonn-belt employers found in the 2026-09 sector sweep (verified live).
     ("debeka",      "wd3",  "Karriere"),                   # Koblenz — 13 Werkstudent/Praktikant
     ("creditreform","wd103","Verband_Creditreform"),       # Neuss — small, Werkstudent roles
+    ("accenture",   "wd103","AccentureCareers"),          # 15 Werkstudent; Düsseldorf 121 / Köln 12 roles
     ("kone",        "wd3",  "Careers"),                    # 1000  jobs — Hannover area
     ("novartis",    "wd3",  "Novartis_Careers"),           # 760   jobs — Nuremberg
     ("intel",       "wd1",  "External"),                   # 727   jobs — Munich
@@ -654,6 +660,10 @@ SMARTRECRUITERS_SLUGS = [
     "StrerSECoKGaAStrerGruppe", # 235 — Ströer, incl. Werkstudent CRM-Datenanalyse Köln
     "Bertelsmann-Jobs",         # 909 — Bertelsmann/RTL Deutschland, Köln Picassoplatz
     "JobTeaser",                # 7 — Köln Friesenplatz
+    # SmartRecruiters ids are CASE-SENSITIVE. "RedcarePharmacy" (CamelCase) is a
+    # test board full of fake "Test Hire Sync" rows — never add it.
+    "redcare-pharmacy",         # 154 DE jobs, 11 student in Cologne (Marketplace Technical Integration...)
+    "SopraSteria1",             # 256 DE jobs — Werkstudent roles, many "bundesweit"
     "BoschGroup",      # 4641 total jobs, ~947 in Germany
     "deliveryhero",    # 1087 jobs — relocated from Greenhouse (404 there)
     "Continental",     # 1188 jobs
@@ -702,6 +712,7 @@ COMPANY_PAGES = [
 ASHBY_SLUGS = [
     "deepl",         # 24 jobs — relocated from Greenhouse (404 there), Cologne LLM/MT
     "sosafe",        # 24 jobs, 15 in Cologne — security-awareness scale-up, Köln HQ
+    "hrs",           # 20 jobs — HRS Group, Cologne office + Germany-remote, English
     "ramp",          # 121 jobs, fintech
     "deepgram",      # 61 jobs, speech AI — direct AI/ML fit
     "perplexity",    # 59 jobs, frontier AI lab

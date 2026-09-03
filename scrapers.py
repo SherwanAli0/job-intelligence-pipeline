@@ -3552,6 +3552,7 @@ _DVINCI_TENANTS = (
     ("rewe-digital", "REWE digital", "Köln"),
     # A value containing a dot is a full host, not a *.dvinci-hr.com slug.
     ("jobs.dzne.de", "DZNE", "Bonn"),          # neuroscience research, English ads
+    ("inverto", "INVERTO", "Köln"),            # BCG procurement consultancy — English "Consulting Intern - Digital & AI"
 )
 _DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische"
                              r"|student (research )?assistant|hilfskraft|working student",
@@ -3658,6 +3659,8 @@ _CSB_SITES = (
     ("https://jobs.swd-ag.de", "SWD"),                # Stadtwerke Düsseldorf — Werkstudent CX Systeme
     ("https://career.1and1.org", "1und1"),            # Düsseldorf/Montabaur — Conversational AI, Data Analytics
     ("https://opportunities.vodafone.com", "Vodafone"),
+    ("https://jobs.deloitte.de", "Deloitte"),         # 39 in feed, 8 Düsseldorf/Köln Werkstudent
+    ("https://careers.ey.com", "EY"),                 # 38 in feed, 5 belt incl. EY-Parthenon Decision Modelling
 )
 # "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
 _CSB_QUERIES = ("Werkstudent", "Praktikum", "Student")
