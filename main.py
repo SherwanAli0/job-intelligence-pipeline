@@ -732,7 +732,11 @@ def _is_english_friendly(j: dict) -> bool:
     title_lower = j["title"].lower()
     desc_lower = (j.get("description") or "").lower()
 
-    if _is_student_role(j):
+    # Student roles AND part-time tech roles (2026-09-03: measured 49 of 50
+    # reachable part-time IT ads as German-language; the owner chose the
+    # same rule as for student ads) are judged only on an explicit demand
+    # for fluent German. Full-time ads keep the strict body test.
+    if _is_eligible_form(j):
         return not _requires_fluent_german(desc_lower)
 
     # A German-language body is disqualifying even when the title is English
@@ -917,11 +921,10 @@ def _is_student_role(j: dict) -> bool:
 #      admin ads in the belt; without a topical check the scorer would be
 #      paid to reject them all. Student roles keep their gate-free path —
 #      that volume is small and the scorer's off-target cap handles it.
-#   2. NO language exemption. The student-ad exemption in
-#      _is_english_friendly rests on "the ad's language is not the job's
-#      language" for enrolment-driven roles. For a regular part-time job a
-#      German ad is a much stronger signal of a German-speaking workplace,
-#      so those keep the strict body-language test.
+#   2. Language: SAME exemption as student ads (decided 2026-09-03 after
+#      measuring that 49 of 50 reachable part-time IT ads were German-
+#      language, i.e. a strict rule would have made the addition
+#      pointless). Only an explicit fluent-German demand drops them.
 _RE_PART_TIME = re.compile(r"\bteilzeit\b|\bpart[\s-]?time\b", re.IGNORECASE)
 _RE_PART_TIME_TECH = re.compile(
     r"data|daten|informatik|software|entwickl|develop|analyt|\bKI\b|\bAI\b"
