@@ -909,6 +909,41 @@ def _is_student_role(j: dict) -> bool:
     return bool(_RE_STUDENT_ROLE.search(blob))
 
 
+# Part-time (Teilzeit) regular employment, added 2026-09-03 on request: "add
+# the part time jobs". A part-time IT role fits alongside an M.Sc. exactly as
+# a Werkstudent contract does, and every sector has an IT department that
+# posts them. Two deliberate differences from the student path:
+#   1. A TECH gate. "Teilzeit" appears on thousands of retail, care and
+#      admin ads in the belt; without a topical check the scorer would be
+#      paid to reject them all. Student roles keep their gate-free path —
+#      that volume is small and the scorer's off-target cap handles it.
+#   2. NO language exemption. The student-ad exemption in
+#      _is_english_friendly rests on "the ad's language is not the job's
+#      language" for enrolment-driven roles. For a regular part-time job a
+#      German ad is a much stronger signal of a German-speaking workplace,
+#      so those keep the strict body-language test.
+_RE_PART_TIME = re.compile(r"\bteilzeit\b|\bpart[\s-]?time\b", re.IGNORECASE)
+_RE_PART_TIME_TECH = re.compile(
+    r"data|daten|informatik|software|entwickl|develop|analyt|\bKI\b|\bAI\b"
+    r"|machine learning|python|engineer|cloud|digital|\bIT\b|devops|database"
+    r"|datenbank|statist|business intelligence|\bBI\b|automatisier|automation",
+    re.IGNORECASE,
+)
+
+
+def _is_part_time_tech(j: dict) -> bool:
+    title = j.get("title") or ""
+    desc = j.get("description") or ""
+    return (bool(_RE_PART_TIME.search(f"{title} {desc[:3000]}"))
+            and bool(_RE_PART_TIME_TECH.search(f"{title} {desc[:1500]}")))
+
+
+def _is_eligible_form(j: dict) -> bool:
+    """Employment-form gate: student role (Werkstudent/HiWi/internship) OR a
+    part-time tech role. Full-time regular employment stays out."""
+    return _is_student_role(j) or _is_part_time_tech(j)
+
+
 # ── Digest memory by company+title, not just URL ─────────────────────────────
 # seen_jobs.json remembers URLs (ids), but some sources mint a NEW url for the
 # same posting on every scrape — Adzuna's redirect links carry per-request
@@ -1380,8 +1415,8 @@ def node_filter(state: dict) -> dict:
     # Stale postings never reach the digest; the whole point is applying fast.
     new_jobs = _apply_filter(new_jobs, _is_fresh_enough,
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
-    new_jobs = _apply_filter(new_jobs, _is_student_role,
-                             "Student-role filter (Werkstudent only)")
+    new_jobs = _apply_filter(new_jobs, _is_eligible_form,
+                             "Employment-form filter (student or part-time tech)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
     new_jobs = _apply_filter(new_jobs, _is_commutable_or_remote,
                              "Commute filter (<=1h from Bonn or DE-remote)")

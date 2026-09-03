@@ -800,6 +800,16 @@ ARBEITSAGENTUR_REMOTE_QUERIES = [
     "Praktikum Machine Learning",
 ]
 
+# Part-time pass (added 2026-09-03). arbeitszeit=tz is the API's own Teilzeit
+# filter, so this is a structured query rather than a keyword guess: every
+# hit is a part-time contract, and the tech keyword narrows it to IT work.
+# Radius-anchored on Bonn — a part-time role, unlike a remote one, has to be
+# reachable.
+ARBEITSAGENTUR_PARTTIME_QUERIES = [
+    "Data", "Informatik", "Softwareentwicklung", "Data Analyst",
+    "Künstliche Intelligenz", "Python", "IT",
+]
+
 ARBEITSAGENTUR_QUERIES = [
     # AI
     "Werkstudent Künstliche Intelligenz",
@@ -1045,6 +1055,9 @@ def scrape_arbeitsagentur() -> list[dict]:
         collect(query, {"wo": _BA_ANCHOR, "umkreis": _BA_RADIUS_KM}, "radius")
     for query in ARBEITSAGENTUR_REMOTE_QUERIES:
         collect(query, {"arbeitszeit": "ho"}, "homeoffice")
+    for query in ARBEITSAGENTUR_PARTTIME_QUERIES:
+        collect(query, {"wo": _BA_ANCHOR, "umkreis": _BA_RADIUS_KM,
+                        "arbeitszeit": "tz"}, "teilzeit")
 
     print(f"  [Arbeitsagentur] {len(results)} jobs "
           f"({enriched} enriched with the full ad text)")
@@ -2676,6 +2689,7 @@ _XING_QUERIES = (
     "Werkstudent Business Intelligence", "Werkstudent Informatik",
     "Werkstudent Python", "Studentische Hilfskraft Informatik",
     "Praktikum Data Science", "Praktikum Informatik",
+    "Teilzeit Data", "Teilzeit Informatik",
 )
 
 _XING_DESC_CAP = 60  # max job-page description fetches per run
@@ -3058,6 +3072,7 @@ _LI_GUEST_QUERIES = (
     "studentische hilfskraft informatik",
     "praktikum data science", "praktikum machine learning",
     "internship data science germany",
+    "teilzeit data", "part-time data analyst",
 )
 _LI_GUEST_PAGES = 10          # LinkedIn throttles around page 10 per IP
 _LI_GUEST_PAGE_SLEEP = 1.5    # pace like a human; stop instantly on 429

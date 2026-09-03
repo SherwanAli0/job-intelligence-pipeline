@@ -622,7 +622,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
-    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting STUDENT employment only: Werkstudent / working-student roles (up to 20h/week alongside his studies) AND internships (Praktikum, Pflichtpraktikum, Praxissemester, internship). Full-time permanent roles and thesis positions are the WRONG employment form, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
+    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting roles that fit ALONGSIDE a full-time M.Sc.: Werkstudent / working-student roles (up to 20h/week), internships (Praktikum, Pflichtpraktikum, Praxissemester, internship), AND part-time (Teilzeit) regular employment of roughly 20h/week or less. Full-time (Vollzeit) permanent roles and thesis positions are the WRONG employment form, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
 
 CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
 {cv_profile}
@@ -673,15 +673,16 @@ HARD CAPS — these set a MAXIMUM score the role can receive.
 Apply the LOWEST applicable cap. Boosts cannot exceed the cap.
 ═══════════════════════════════════════════════════════════════
 
-CAP AT 15 if the role is NOT student employment:
-- Full-time or part-time regular employment, Ausbildung, trainee/graduate
+CAP AT 15 if the role is the WRONG employment form:
+- Full-time (Vollzeit) regular employment, Ausbildung, trainee/graduate
   programme, thesis (Abschlussarbeit/Bachelorarbeit/Masterarbeit), PhD,
   or freelance. ACCEPTABLE forms are: Werkstudent / working student /
-  studentische Hilfskraft (HiWi), AND internships (Praktikum,
-  Pflichtpraktikum, Praxissemester, internship).
+  studentische Hilfskraft (HiWi), internships (Praktikum, Pflichtpraktikum,
+  Praxissemester, internship), AND part-time (Teilzeit) regular roles of
+  roughly 20h/week or less.
 - Do NOT apply this cap merely because the ad is vague about hours. The
   pre-filter already guarantees every job you see signalled a student
-  role or an internship somewhere in its text. Only apply it when the ad
+  role, an internship, or part-time work somewhere in its text. Only apply it when the ad
   EXPLICITLY states a form from the excluded list above.
 
 CAP AT 20 if ANY of these are true:
@@ -711,11 +712,12 @@ favour AI roles over data-analyst or data-science roles. All four tracks below
 start at the SAME score.
 ═══════════════════════════════════════════════════════════════
 
-All tiers assume the role IS student employment — a Werkstudent/working-
-student role or an internship. Anything else is already capped at 15.
-Werkstudent and internship are scored EQUALLY: judge on the work, the
-location and the language, not on which of the two forms it is. A paid
-internship in the commute belt is as good as a Werkstudent role.
+All tiers assume the role IS an acceptable form — a Werkstudent/working-
+student role, an internship, or a part-time (Teilzeit) role. Anything else
+is already capped at 15. The three forms are scored EQUALLY: judge on the
+work, the location and the language, not on the contract type. A paid
+internship or a 20h/week Teilzeit data role in the commute belt is as good
+as a Werkstudent role. A part-time role in a track uses that track's tier.
 
 TIER 1 (start at 80, then apply caps and adjustments) — Werkstudent in ANY
 of the 4 tracks:

@@ -105,8 +105,8 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
   days; every run's behaviour is one JSON line of run stats.
 - **What it hunts is configuration, not architecture.** The target changed
   completely once already: it looked for junior full-time roles until its owner
-  was admitted to an M.Sc. in Bonn, and now looks only for Werkstudent
-  (working-student) roles reachable within about an hour of Bonn by train, or
+  was admitted to an M.Sc. in Bonn, and now looks only for Werkstudent (working-student), internship and
+  part-time (Teilzeit) IT roles reachable within about an hour of Bonn by train, or
   remote within Germany. That pivot touched the CV profiles and query lists in
   [config.py](config.py), one required-employment-form filter, one commute rule,
   and the labels on the calibration set. The regression suite is what made it

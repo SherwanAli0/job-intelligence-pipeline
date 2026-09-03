@@ -43,10 +43,12 @@ ENROLLED at a German university → FULLY ELIGIBLE for Werkstudent (working stud
 up to 20h/week during the semester, more during semester breaks.
 
 TARGET (exclusive — this is the ONLY thing being searched for):
-STUDENT EMPLOYMENT in AI, ML, Data Science or Data Analytics — either
-(a) Werkstudent / working-student / studentische Hilfskraft (HiWi), up to 20h/week, or
-(b) an INTERNSHIP: Praktikum, Pflichtpraktikum, Praxissemester, internship.
-Both count equally. NOT full-time permanent roles, NOT thesis positions.
+Roles that fit ALONGSIDE a full-time M.Sc., in AI, ML, Data Science, Data Analytics or
+software — any of:
+(a) Werkstudent / working-student / studentische Hilfskraft (HiWi), up to 20h/week,
+(b) an INTERNSHIP: Praktikum, Pflichtpraktikum, Praxissemester, internship,
+(c) a PART-TIME (Teilzeit) regular role of roughly 20h/week or less.
+All three count equally. NOT full-time (Vollzeit) permanent roles, NOT thesis positions.
 LOCATION: on-site/hybrid must be within ~1 hour of Bonn by train: Bonn, Köln/Cologne,
 Siegburg, Sankt Augustin, Troisdorf, Hennef, Brühl, Wesseling, Hürth, Bornheim,
 Königswinter, Bad Honnef, Remagen, Andernach, Koblenz, Euskirchen, Leverkusen,
@@ -277,6 +279,13 @@ SEARCH_QUERIES = [
     "Internship Artificial Intelligence",
     "Data Science Intern",
     "Machine Learning Intern",
+    # Part-time regular roles (added 2026-09-03)
+    "Teilzeit Data",
+    "Teilzeit Informatik",
+    "Teilzeit Softwareentwicklung",
+    "Teilzeit Data Analyst",
+    "Part-time Data Analyst",
+    "Part-time Software Developer",
 ]
 
 LOCATION = "Germany"
