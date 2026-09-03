@@ -511,7 +511,7 @@ import re as _re_senior
 
 _RE_SENIOR_IN_TITLE = _re_senior.compile(
     r"(?<![a-z])"
-    r"(senior|sr\.?|lead|principal|staff|"
+    r"(expert|senior|sr\.?|lead|principal|staff|"
     r"head[\s_\-]of|director|vice[\s_\-]president|\bvp\b|"
     r"chief|architect|"
     r"engineer[\s_\-]+(ii|iii|iv|v)|"

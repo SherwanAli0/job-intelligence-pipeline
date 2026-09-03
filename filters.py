@@ -26,7 +26,7 @@ import re
 # certain — never "probably" — belong in this list.
 
 _RE_TITLE_HARD_SENIOR = re.compile(
-    r"(?<![a-z])(senior|sr\.?|lead|principal|staff|head\s+of|director|"
+    r"(?<![a-z])(expert|senior|sr\.?|lead|principal|staff|head\s+of|director|"
     r"vice\s+president|\bvp\b|chief|manager|leiter(in)?)(?![a-z])",
     re.IGNORECASE,
 )

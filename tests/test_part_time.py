@@ -74,3 +74,26 @@ class TestPartTimeWiring:
     def test_filter_chain_uses_the_form_gate(self):
         src = inspect.getsource(main.node_filter)
         assert "_is_eligible_form" in src
+
+
+class TestExpertIsASeniorityLevel:
+    """The Teilzeit pass surfaced 'Expert Cloud Data Engineer' and 'Senior
+    Expert ...' from Düsseldorf corporates as part-time-eligible. At Telekom
+    and Vodafone 'Expert' is a career grade above Senior, and no senior
+    pattern knew the word."""
+
+    def test_expert_title_is_dropped(self):
+        assert not main._not_fulltime_senior(
+            _j("Expert Cloud Data Engineer (m/w/d)", "Teilzeit möglich."))
+
+    def test_senior_expert_title_is_dropped(self):
+        assert not main._not_fulltime_senior(
+            _j("Senior Expert Cloud Data Engineer (m/w/d)", ""))
+
+    def test_title_screen_skips_expert(self):
+        from filters import title_is_worth_fetching
+        assert not title_is_worth_fetching("Expert IT Solution Management (m/w/d)")
+
+    def test_plain_part_time_analyst_is_untouched(self):
+        assert main._not_fulltime_senior(
+            _j("Business Analyst Data & Python (m/w/d) in Teilzeit", ""))

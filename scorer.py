@@ -297,7 +297,7 @@ _RE_BACHELOR_OK = re.compile(
 # "(Senior)", "AI Engineer, Senior" all match.
 _RE_SENIOR_TITLE = re.compile(
     r"(?<![a-z])"
-    r"(senior|sr\.?|lead|principal|staff|"
+    r"(expert|senior|sr\.?|lead|principal|staff|"
     r"head[\s_\-]of|director|vice[\s_\-]president|\bvp\b|"
     r"chief|architect|"
     r"engineer[\s_\-]+(ii|iii|iv|v)|"
