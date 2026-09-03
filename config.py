@@ -524,6 +524,7 @@ PERSONIO_SLUGS = [
     "areto",               # 7, Köln — data/BI consultancy (Databricks, Snowflake)
     "vytal",               # 2, Köln
     "foodforecast",        # 2, Köln — AI food-waste startup
+    "effzeh",              # 14, 1. FC Köln — Werkstudent Digitale Projekte, analysis internships
     "1komma5grad",     # 352 positions, solar/energy AI
     "westwing",        # 61, e-commerce
     "vivid",           # 19, Berlin fintech
@@ -624,6 +625,9 @@ WORKDAY_CXS_TENANTS = [
     ("salesforce",  "wd12", "External_Career_Site"),       # 1441  jobs — Munich/Berlin
     ("adobe",       "wd5",  "external_experienced"),       # 1193  jobs — Hamburg/Munich
     ("philips",     "wd3",  "jobs-and-careers"),           # 1026  jobs — Hamburg/Aachen
+    # Bonn-belt employers found in the 2026-09 sector sweep (verified live).
+    ("debeka",      "wd3",  "Karriere"),                   # Koblenz — 13 Werkstudent/Praktikant
+    ("creditreform","wd103","Verband_Creditreform"),       # Neuss — small, Werkstudent roles
     ("kone",        "wd3",  "Careers"),                    # 1000  jobs — Hannover area
     ("novartis",    "wd3",  "Novartis_Careers"),           # 760   jobs — Nuremberg
     ("intel",       "wd1",  "External"),                   # 727   jobs — Munich
@@ -772,6 +776,7 @@ RECRUITEE_SLUGS = [
     "currenta",      # 40, Leverkusen Chempark — 2 Werkstudent live
     "trustedshops",  # 24, Köln
     "inovex",        # 20, Köln office — runs "Werkstudent:in Data & AI"
+    "unu",           # United Nations University (UNU-EHS Bonn) — English, intern roles
     "limehome",      # 16 jobs, Munich hospitality
     "personio",      # 1 job
     # ── Discovery sweep batch (verified live) ──

@@ -153,8 +153,8 @@ class TestDvinci:
         monkeypatch.setattr(scrapers.requests, "get", lambda *a, **kw: R())
         monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
         out = scrapers.scrape_dvinci()
-        # 4 tenants x 1 student row each (same fixture served to all)
-        assert len(out) == 4
+        # one student row per configured tenant (same fixture served to all)
+        assert len(out) == len(scrapers._DVINCI_TENANTS)
         assert all("erkstudent" in j["title"] or "raktik" in j["title"] for j in out)
 
     def test_non_json_response_is_survivable(self, monkeypatch):

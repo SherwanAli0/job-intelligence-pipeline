@@ -1902,6 +1902,10 @@ _WD_AI_KEYWORDS = (
     "computer vision", "llm", "generative", "junior", "intern",
     "praktikum", "graduate", "associate", "entry level", "entry-level",
     "python developer", "ml ops", "mlops",
+    # Student/part-time employment forms: since the Werkstudent pivot these ARE
+    # the target, and Debeka/Creditreform titles carry no AI keyword at all.
+    "werkstudent", "working student", "studentische", "hilfskraft", "teilzeit",
+    "part-time", "software", "informatik",
 )
 
 _WD_PAYLOAD = {
@@ -3546,8 +3550,11 @@ _DVINCI_TENANTS = (
     ("rheinenergie", "RheinEnergie", "Köln"),
     ("dertouristik", "DER Touristik", "Köln"),
     ("rewe-digital", "REWE digital", "Köln"),
+    # A value containing a dot is a full host, not a *.dvinci-hr.com slug.
+    ("jobs.dzne.de", "DZNE", "Bonn"),          # neuroscience research, English ads
 )
-_DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische",
+_DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische"
+                             r"|student (research )?assistant|hilfskraft|working student",
                              re.IGNORECASE)
 
 
@@ -3558,7 +3565,8 @@ def scrape_dvinci() -> list[dict]:
             # d.vinci sniffs the User-Agent: a browser-like UA gets HTML
             # no matter what Accept says, a plain one gets JSON. Verified
             # by A/B-ing the exact same request with both UAs.
-            r = requests.get(f"https://{slug}.dvinci-hr.com/de/jobs",
+            base = slug if "." in slug else f"{slug}.dvinci-hr.com"
+            r = requests.get(f"https://{base}/de/jobs",
                              headers={"User-Agent": "job-hunter/1.0",
                                       "Accept": "application/json"},
                              timeout=25)
@@ -3642,8 +3650,17 @@ _CSB_SITES = (
     ("https://www.careers.zurich.com", "Zurich"),
     ("https://jobs.bayer.com", "Bayer"),
     ("https://career.deutz.com", "DEUTZ"),
+    # Sector sweep 2026-09 (verified live via the RSS endpoint):
+    ("https://job.hdi.group", "HDI"),               # Köln — 20 Werkstudent in feed
+    ("https://karriere.nrwbank.de", "NRWBANK"),     # Düsseldorf — Werkstudent IT Kapitalmarkt
+    ("https://karriere.stadt-koeln.de", "StadtKoeln"),
+    ("https://jobs.uniper.energy", "Uniper"),         # Düsseldorf — English "Working student" ads
+    ("https://jobs.swd-ag.de", "SWD"),                # Stadtwerke Düsseldorf — Werkstudent CX Systeme
+    ("https://career.1and1.org", "1und1"),            # Düsseldorf/Montabaur — Conversational AI, Data Analytics
+    ("https://opportunities.vodafone.com", "Vodafone"),
 )
-_CSB_QUERIES = ("Werkstudent", "Praktikum")
+# "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
+_CSB_QUERIES = ("Werkstudent", "Praktikum", "Student")
 _CSB_CAP_PER_SITE = 20
 
 
@@ -3653,6 +3670,7 @@ def scrape_csb() -> list[dict]:
         try:
             hrefs: list[str] = []
             seen: set[str] = set()
+            rss_titles: dict[str, str] = {}
             for q in _CSB_QUERIES:
                 r = requests.get(f"{host}/search/", params={"q": q},
                                  headers=HEADERS, timeout=25)
@@ -3668,12 +3686,334 @@ def scrape_csb() -> list[dict]:
                     if _RMK_REGION.search(full):
                         hrefs.append(full)
                 time.sleep(0.5)
+            # The RSS feed is more reliable than the HTML search: NRW.BANK's
+            # search page returned nothing while its feed carried the live
+            # Werkstudent IT role, and HDI's HTML list is JS-paginated.
+            for q in _CSB_QUERIES:
+                try:
+                    rss = requests.get(f"{host}/services/rss/job/",
+                                       params={"locale": "de_DE", "keywords": f"({q})"},
+                                       headers=HEADERS, timeout=25)
+                    for m in re.finditer(r"<item>(.*?)</item>", rss.text, re.S):
+                        item = m.group(1)
+                        lk = re.search(r"<link>(.*?)</link>", item, re.S)
+                        tt = re.search(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", item, re.S)
+                        link = lk.group(1).strip() if lk else ""
+                        if "/job/" not in link:
+                            continue
+                        if tt:
+                            rss_titles[link] = tt.group(1).strip()
+                        if link not in seen:
+                            seen.add(link)
+                            if _RMK_REGION.search(link):
+                                hrefs.append(link)
+                except Exception:
+                    pass
             picked = hrefs[:_CSB_CAP_PER_SITE]
             got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
+            # Some CSB hosts (HDI) serve a generic og:title ("Apply online for
+            # jobs at HDI AG") and no parseable body. The RSS item carries the
+            # real title, and the visible page text is a usable description.
+            for j in got:
+                if j["title"].lower().startswith("apply online") or len(j["description"]) < 120:
+                    j["title"] = rss_titles.get(j["url"], j["title"])
+                    j["description"] = _page_text(j["url"]) or j["description"]
             out.extend(got)
             print(f"  [{source}] {len(got)} commute-belt student roles")
         except Exception as e:
             print(f"  [{source}] failed: {e}")
+    return out
+
+
+# ── BeeSite (milch & zucker) JSON search — GIZ, LVR, BaFin, BARMER ───────────
+# One JSON endpoint shared by several Bonn/Köln public-sector and NGO
+# employers. GET {host}/search/?data=<urlencoded JSON> returns every published
+# posting with title, city and career level; the public ad sits at
+# PositionURI. Verified live 2026-09-03: GIZ 60 postings (28 student-level,
+# many "Intern (m/f/d)" in English), LVR 320 (Studentische Hilfskraft), BaFin
+# 11, BARMER 69.
+_BEESITE_HOSTS = (
+    ("giz-beesite-production-gjb.app.beesite.de", "GIZ", "Bonn"),
+    ("lvr-beesite-gjb.app.beesite.de", "LVR", "Köln"),
+    ("bafin-production-gjb.app.beesite.de", "BaFin", "Bonn"),
+    ("barmer-beesite-production-gjb.app.beesite.de", "BARMER", "Bonn"),
+    ("api-bewerbung.wdr.de", "WDR", "Köln"),                 # 39 postings, Werkstudent Köln
+    ("api-apply.lufthansagroup.careers", "Lufthansa", "Köln"),  # 356 postings, ~90 student, many English
+)
+_BEESITE_QUERY = {
+    "LanguageCode": "DE",
+    "SearchParameters": {"FirstItem": 1, "CountItem": 10000,
+                         "MatchedObjectDescriptor": ["ID", "PositionTitle", "PositionURI",
+                                                     "PositionLocation.CityName",
+                                                     "PublicationStartDate", "CareerLevel.Name"]},
+    "SearchCriteria": [{"CriterionName": "PublicationChannel.Code", "CriterionValue": ["12"]}],
+}
+_BEESITE_STUDENT = re.compile(
+    r"werkstudent|working student|studentische|hilfskraft|praktik|\bintern\b|internship"
+    r"|teilzeit|part-time|duales studium", re.IGNORECASE)
+_BEESITE_CAP = 25
+
+
+def _page_text(url: str) -> str:
+    """Visible text of an ad page (main/body), for sources whose list API
+    carries no description. Empty string on any failure."""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            return ""
+        soup = BeautifulSoup(r.text, "html.parser")
+        for t in soup(["script", "style", "nav", "footer", "header"]):
+            t.decompose()
+        main = soup.select_one("main") or soup.body
+        return main.get_text(separator="\n", strip=True)[:6000] if main else ""
+    except Exception:
+        return ""
+
+
+def scrape_beesite() -> list[dict]:
+    import urllib.parse
+    out: list[dict] = []
+    for host, company, default_city in _BEESITE_HOSTS:
+        try:
+            url = f"https://{host}/search/?data={urllib.parse.quote(json.dumps(_BEESITE_QUERY))}"
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                print(f"  [BeeSite/{company}] HTTP {r.status_code}")
+                continue
+            items = ((r.json().get("SearchResult") or {}).get("SearchResultItems") or [])
+            picked = [it.get("MatchedObjectDescriptor") or {} for it in items
+                      if _BEESITE_STUDENT.search(json.dumps(it.get("MatchedObjectDescriptor") or {},
+                                                            ensure_ascii=False))]
+            n = 0
+            for d in picked[:_BEESITE_CAP]:
+                title = (d.get("PositionTitle") or "").strip()
+                uri = (d.get("PositionURI") or "").strip()
+                if not title or not uri:
+                    continue
+                loc = d.get("PositionLocation") or {}
+                if isinstance(loc, list):
+                    loc = loc[0] if loc else {}
+                city = (loc.get("CityName") if isinstance(loc, dict) else "") or default_city
+                level = d.get("CareerLevel") or {}
+                level = level.get("Name", "") if isinstance(level, dict) else str(level)
+                desc = f"{title}\nCareer level: {level}\n{_page_text(uri)}"
+                out.append(job(title=title, company=company, location=city, url=uri,
+                               source=company, description=desc,
+                               posted_at=str(d.get("PublicationStartDate") or "")))
+                n += 1
+            print(f"  [BeeSite/{company}] {n} student roles of {len(items)} postings")
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  [BeeSite/{company}] failed: {e}")
+    return out
+
+
+# ── service.bund.de RSS — every federal agency in Bonn, plus Interamt imports ─
+# The federal job portal re-imports Interamt ads and exposes a server-rendered
+# search with an RSS switch. One feed per keyword, 30 km around Bonn, covers
+# BSI, BfArM, Bundesnetzagentur, BaFin, ITZBund, BMZ, BLE, BIBB, DFG, DW and
+# more. Verified live 2026-09-03: a "Werkstudentinnen / Werkstudenten (w/m/d)
+# BSI-2026-092" ad sat at the top of the feed.
+_BUND_RSS = ("https://www.service.bund.de/Content/DE/Stellen/Suche/Formular.html"
+             "?nn=4642046&view=processForm&resultsPerPage=100&sortOrder=dateOfIssue_dt+desc"
+             "&city_zipcode=Bonn&ambit_distance=30&templateQueryString={q}&jobsrss=true")
+_BUND_QUERIES = ("Werkstudent", "Studentische Hilfskraft", "Praktikum Informatik",
+                 "Teilzeit Informatik", "Data")
+_BUND_CAP = 30
+_BUND_EMP = re.compile(r"Arbeitgeber:?\s*(.+?)(?:\s{2,}|\||Ort:|$)", re.S)
+_BUND_ORT = re.compile(r"Ort:?\s*(.+?)(?:\s{2,}|\||Bewerbungsfrist|$)", re.S)
+
+
+def _bund_items(xml: str) -> list[dict]:
+    """Parse the RSS body into {title, link, desc} dicts (pure, testable)."""
+    import html as _h
+    out = []
+    for item in re.findall(r"<item>(.*?)</item>", xml, re.S):
+        link = re.search(r"<link>(.*?)</link>", item, re.S)
+        title = re.search(r"<title>(.*?)</title>", item, re.S)
+        desc = re.search(r"<description>(.*?)</description>", item, re.S)
+        if not link or not title:
+            continue
+        raw = _h.unescape(desc.group(1)) if desc else ""
+        out.append({
+            "title": _h.unescape(title.group(1)).strip(),
+            "link": link.group(1).strip(),
+            "desc": _h.unescape(re.sub(r"<[^>]+>", " ", raw)).strip(),
+        })
+    return out
+
+
+def scrape_bund_rss() -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    fetched = 0
+    for q in _BUND_QUERIES:
+        try:
+            r = requests.get(_BUND_RSS.format(q=q.replace(" ", "+")), headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                print(f"  [service.bund.de] '{q}' HTTP {r.status_code}")
+                continue
+            for it in _bund_items(r.text):
+                if it["link"] in seen:
+                    continue
+                seen.add(it["link"])
+                emp = _BUND_EMP.search(it["desc"])
+                ort = _BUND_ORT.search(it["desc"])
+                company = (emp.group(1).strip() if emp else "Bund (service.bund.de)")[:80]
+                city = (ort.group(1).strip() if ort else "Bonn")[:60]
+                body = ""
+                if fetched < _BUND_CAP:
+                    body = _page_text(it["link"])
+                    fetched += 1
+                out.append(job(title=it["title"], company=company, location=city,
+                               url=it["link"], source="BundDE",
+                               description=f"{it['desc']}\n{body}"))
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"  [service.bund.de] '{q}' failed: {e}")
+    print(f"  [service.bund.de] {len(out)} federal postings within 30 km of Bonn")
+    return out
+
+
+# ── Universitätsklinikum Bonn — WordPress REST ───────────────────────────────
+# The UKB careers site is WordPress with the standard REST API left open:
+# /wp-json/wp/v2/jobs lists every posting (49 at verification, incl. several
+# Studentische/Wissenschaftliche Hilfskraft roles). The list carries no body,
+# so the ad page is fetched for the student-looking ones only.
+_UKB_API = "https://karriereamukb.de/wp-json/wp/v2/jobs"
+_UKB_STUDENT = re.compile(r"werkstudent|studentische|hilfskraft|hiwi\b|praktik|teilzeit|aushilfe",
+                          re.IGNORECASE)
+_UKB_CAP = 20
+
+
+def scrape_ukb() -> list[dict]:
+    import html as _h
+    out: list[dict] = []
+    try:
+        r = requests.get(_UKB_API, params={"per_page": 100}, headers=HEADERS, timeout=30)
+        if r.status_code != 200:
+            print(f"  [UKB] HTTP {r.status_code}")
+            return []
+        rows = r.json()
+        for x in rows:
+            title = _h.unescape(re.sub(r"<[^>]+>", "", (x.get("title") or {}).get("rendered", ""))).strip()
+            link = (x.get("link") or "").strip()
+            if not title or not link or not _UKB_STUDENT.search(title):
+                continue
+            if len(out) >= _UKB_CAP:
+                break
+            out.append(job(title=title, company="Universitätsklinikum Bonn", location="Bonn",
+                           url=link, source="UKB", description=_page_text(link) or title,
+                           posted_at=str(x.get("date") or "")))
+        print(f"  [UKB] {len(out)} student roles of {len(rows)} postings")
+    except Exception as e:
+        print(f"  [UKB] failed: {e}")
+    return out
+
+
+# ── rhenag Rheinische Energie — job list embedded in the page ────────────────
+# karriere.rhenag.de renders its whole job list into a data-pages attribute as
+# entity-escaped JSON ({title, uriPathSegment, jobDetailPageTags, date}). At
+# verification: 45 postings, 9 Werkstudent incl. "KI & Innovation" and
+# "Digitalisierung & Projektmanagement" (Köln). The detail-URL prefix is
+# discovered from a real anchor on the page so a routing change cannot
+# silently produce dead links.
+_RHENAG_URL = "https://karriere.rhenag.de/"
+_RHENAG_STUDENT = re.compile(r"werkstud|praktik|studentische|teilzeit", re.IGNORECASE)
+
+
+def scrape_rhenag() -> list[dict]:
+    import html as _h
+    out: list[dict] = []
+    try:
+        r = requests.get(_RHENAG_URL, headers=HEADERS, timeout=30)
+        m = re.search(r'data-pages="([^"]+)"', r.text)
+        if r.status_code != 200 or not m:
+            print(f"  [rhenag] HTTP {r.status_code} — data-pages attribute not found")
+            return []
+        rows = json.loads(_h.unescape(m.group(1)))
+        picked = [x for x in rows if _RHENAG_STUDENT.search(
+            f"{x.get('title', '')} {x.get('jobDetailPageTags', '')}")]
+        for x in picked:
+            seg = x.get("uriPathSegment") or ""
+            title = (x.get("title") or "").strip()
+            if not seg or not title:
+                continue
+            hit = re.search(r'href="([^"]*' + re.escape(seg) + r'[^"]*)"', r.text)
+            url = hit.group(1) if hit else f"{_RHENAG_URL}{seg}"
+            if url.startswith("/"):
+                url = "https://karriere.rhenag.de" + url
+            tags = x.get("jobDetailPageTags") or ""
+            city = next((t for t in tags.split(",") if t.strip() and "studier" not in t.lower()), "Köln")
+            posted = ((x.get("date") or {}).get("date") if isinstance(x.get("date"), dict) else "") or ""
+            out.append(job(title=title, company="rhenag Rheinische Energie", location=city.strip(),
+                           url=url, source="rhenag", description=_page_text(url) or f"{title}\n{tags}",
+                           posted_at=str(posted)[:10]))
+        print(f"  [rhenag] {len(out)} student roles of {len(rows)} postings")
+    except Exception as e:
+        print(f"  [rhenag] failed: {e}")
+    return out
+
+
+# ── Deutsche Bahn — db.jobs search JSON ──────────────────────────────────────
+# db.jobs exposes its search as JSON (view=json). The result is a list of
+# postings with jobId, jobTitleInternational, locations (a stringified list)
+# and pubExternalDate. Only rows located in the Bonn belt are kept; the
+# detail page is fetched for the description.
+_DB_API = "https://db.jobs/service/search/de-de/6561052"
+_DB_QUERIES = ("Werkstudent", "Praktikum Informatik", "Studentische Hilfskraft")
+_DB_BELT = re.compile(r"Köln|Koeln|Bonn|Düsseldorf|Duesseldorf|Koblenz|Neuss|Leverkusen|Siegburg|Troisdorf",
+                      re.IGNORECASE)
+_DB_CAP = 20
+
+
+def _db_date(v) -> str:
+    """db.jobs ships epoch milliseconds as a string; the pipeline wants ISO."""
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(int(v) / 1000, tz=timezone.utc).date().isoformat()
+    except Exception:
+        return ""
+
+
+def scrape_db_jobs() -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for q in _DB_QUERIES:
+        try:
+            r = requests.get(_DB_API, params={"qli": "true", "query": q, "pageNum": 0,
+                                              "itemsPerPage": 200, "view": "json"},
+                             headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                continue
+            rows = r.json() or []
+            if not isinstance(rows, list):
+                continue
+            for x in rows:
+                jid = str(x.get("jobId") or "")
+                if not jid or jid in seen or not _DB_BELT.search(str(x.get("locations") or "")):
+                    continue
+                seen.add(jid)
+                title = (x.get("jobTitleInternational") or x.get("title") or x.get("jobTitle") or "").strip()
+                if not title:
+                    continue
+                target = str(x.get("target") or "")
+                # target is a site-relative path ("/de-de/Suche/..."); the id-only
+                # form is the fallback when it is missing.
+                url = (target if target.startswith("http")
+                       else "https://db.jobs" + target if target.startswith("/")
+                       else f"https://db.jobs/de-de/jobs/{jid}")
+                loc = re.sub(r"[\[\]']", "", str(x.get("locations") or "")).strip() or "Köln"
+                if len(out) >= _DB_CAP:
+                    break
+                out.append(job(title=title, company="Deutsche Bahn", location=loc, url=url,
+                               source="DeutscheBahn", description=_page_text(url) or title,
+                               posted_at=_db_date(x.get("pubExternalDate"))))
+            time.sleep(0.5)
+        except Exception as e:
+            # One query returning HTML (or nothing) must not discard the others.
+            print(f"  [DB] '{q}' failed: {e}")
+    print(f"  [DB] {len(out)} Bonn-belt student postings")
     return out
 
 
@@ -3698,7 +4038,12 @@ def scrape_all() -> list[dict]:
         scrape_rewe,               # REWE Group Köln — JSON search API
         scrape_dvinci,             # Generali/RheinEnergie/DER Touristik/REWE digital
         scrape_unibonn,            # Uni Bonn SHK/HiWi page — his own university
-        scrape_csb,                # Zurich/Bayer/DEUTZ — SuccessFactors CSB
+        scrape_csb,                # Zurich/Bayer/DEUTZ/HDI/NRW.BANK/Stadt Köln — SuccessFactors CSB
+        scrape_beesite,            # GIZ/LVR/BaFin/BARMER — BeeSite JSON
+        scrape_bund_rss,           # service.bund.de — federal Bonn agencies + Interamt imports
+        scrape_ukb,                # Universitätsklinikum Bonn — WordPress REST
+        scrape_rhenag,             # rhenag Köln — embedded job JSON (Werkstudent KI & Innovation)
+        scrape_db_jobs,            # Deutsche Bahn — db.jobs search JSON, belt-filtered
         scrape_amazon,             # Amazon Jobs API (Germany filter at API level)
         scrape_personio,           # German Mittelstand + AI startups (20 companies)
         scrape_smartrecruiters,    # Bosch, Continental, Visa, Roland Berger
