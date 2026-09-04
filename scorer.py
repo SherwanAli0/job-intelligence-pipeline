@@ -1101,15 +1101,11 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
     # opinion. Scoring overwrites score/reason in place on success and leaves
     # the Haiku values untouched on any failure, so this stage can never lose
     # a job — worst case it just keeps the Haiku ranking.
-    finalists = [jb for jb in scored if jb.get("score", 0) >= SONNET_RESCORE_FLOOR]
-    if finalists:
-        print(f"  [Sonnet] re-scoring {len(finalists)} finalists (Haiku >= {SONNET_RESCORE_FLOOR})")
-        s3_groups = _make_groups(finalists, SONNET_MODEL)
-        if len(finalists) < _BATCH_API_MIN_JOBS or not _score_groups_via_batch_api(s3_groups):
-            for batch, model, profile in s3_groups:
-                _score_batch(batch, model=model, cv_profile=profile)
-                time.sleep(1)
-        print(f"  [Sonnet] done")
+    # Stage 3 REMOVED 2026-09-04 (owner decision, cost): the Sonnet re-score
+    # of finalists was a third of every run's bill (~$0.07 of $0.20) for a
+    # second opinion on jobs Haiku already ranked. Haiku's ranking is what
+    # decides the digest order; the constants above stay so the stage can be
+    # restored in one line if the trade ever reverses.
 
     # Merge Claude-scored jobs with pre-screened (score=0) jobs
     scored_ids = {j["id"] for j in scored}

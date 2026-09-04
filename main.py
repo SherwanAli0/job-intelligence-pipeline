@@ -912,6 +912,61 @@ def _is_commutable_or_remote(j: dict) -> bool:
     return True                         # unknown → let the scorer judge
 
 
+
+# ── Tech-relevance gate (free) ───────────────────────────────────────────────
+# Measured 2026-09-04: of 252 jobs sent to Claude, 20 reached the digest and
+# 20 of 24 batches averaged under 30 points. The sector-sweep sources are
+# broad by design (GIZ, LVR, WDR, Lufthansa, service.bund.de) and their
+# student ads are mostly legal clerkships, nursing, social work and marketing
+# — every one of which passed the employment-form filter and then cost money
+# to be scored near zero. This gate asks the one question the scorer was
+# answering at ~$0.0006 a time: is there ANY tech content here at all?
+#
+# The vocabulary is built from his CV (cv/CV_*.md, config profiles) and the
+# skill radar: his stack, the four target tracks, and their German forms. It
+# is deliberately a positive gate only — off-target roles that mention a
+# tech term still go to the scorer, whose off-target cap handles them.
+#
+# Case-sensitive tokens are matched on the RAW text because "it" is one of the
+# most common English words; "IT" as a capitalised token is unambiguous.
+_TECH_TOKENS_CASED = re.compile(
+    r"\b(IT|KI|AI|ML|BI|NLP|SQL|ETL|API|CRM|ERP|SAP|ROS|AWS|GCP|RPA|IoT|LLM|GenAI|"
+    r"DevOps|MLOps|M365)\b"
+)
+_TECH_TERMS_LOWER = re.compile(
+    # tracks / role words
+    r"data\b|daten|analytic|analys|statisti|machine learning|maschinelle[sn]? lernen"
+    r"|deep learning|artificial intelligence|k[üu]nstliche intelligenz|neural|"
+    r"transformer|computer vision|bildverarbeitung|nlp\b|sprachverarbeitung"
+    r"|recommender|a/b[- ]test|experiment|hypothes|regression|classification"
+    r"|klassifikation|quantitat|mathemat|algorithm|simulation|model+ing|modellier"
+    # software / engineering
+    r"|software|programm(ier|ing)|develop(er|ment)|entwickl|engineer|informatik"
+    r"|computer science|backend|frontend|full[- ]?stack|web ?dev|app ?dev|python"
+    r"|java\b|typescript|javascript|react|node\.?js|fastapi|rest api|microservice"
+    r"|docker|kubernetes|container|linux|cloud|azure|devops|ci/cd|github|gitlab"
+    r"|automatisierung|automation|robotic|robotik|process mining|digitalisierung"
+    r"|cyber ?security|it-sicherheit|informationssicherheit|network|netzwerk"
+    # data platform / BI
+    r"|pipeline|airflow|dbt\b|spark|databricks|snowflake|tableau|power ?bi|looker"
+    r"|dashboard|business intelligence|reporting|datenbank|database|data ?warehouse"
+    r"|power platform|microsoft 365|sharepoint|salesforce|erp\b|platform|plattform|\bsystem"
+    # LLM / GenAI
+    r"|llm|large language|genai|generative|prompt|rag\b|chatbot|conversational"
+    r"|hugging ?face|pytorch|tensorflow|scikit|xgboost|pandas|numpy|jupyter",
+    re.IGNORECASE,
+)
+
+
+def _is_tech_relevant(j: dict) -> bool:
+    title = j.get("title") or ""
+    desc = (j.get("description") or "")[:2500]
+    raw = f"{title}\n{desc}"
+    if _TECH_TOKENS_CASED.search(raw):
+        return True
+    return bool(_TECH_TERMS_LOWER.search(raw.lower()))
+
+
 # Student-role requirement: Werkstudent-class roles AND internships.
 # Still excluded: full-time posts, Ausbildung, and thesis positions
 # (Abschlussarbeit / Masterarbeit), which are a different search.
@@ -1444,6 +1499,8 @@ def node_filter(state: dict) -> dict:
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
                              "Employment-form filter (student or part-time tech)")
+    new_jobs = _apply_filter(new_jobs, _is_tech_relevant,
+                             "Tech-relevance filter (CV keywords)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
     new_jobs = _apply_filter(new_jobs, _is_commutable_or_remote,
                              "Commute filter (<=1h from Bonn or DE-remote)")
@@ -1495,15 +1552,16 @@ def node_rank(state: dict) -> dict:
     print("Digest track mix (A1 quotas applied): "
           + ", ".join(f"{k}={v}" for k, v in sorted(mix.items())))
 
-    near = [j for j in scored if 35 <= j.get("score", 0) < MIN_SCORE]
-    near.sort(key=lambda x: x["score"], reverse=True)
-    near = near[:10]
-    for j in near:
-        j["near_miss"] = True
+    # Near misses (35-44) are no longer sent. Owner decision 2026-09-04:
+    # "never found anything useful there". The band still shows up in the
+    # log line below so a day's shape stays visible; it just never reaches
+    # the inbox, and never counts as "shown" for the repeat memory.
+    near_count = sum(1 for j in scored if 35 <= j.get("score", 0) < MIN_SCORE)
+    near: list[dict] = []
 
     print(f"\nJobs scoring >= {MIN_SCORE}: {len(good)}")
-    print(f"Near misses (35-{MIN_SCORE - 1}): {len(near)}")
-    print(f"Sending top {len(top)} + {len(near)} near misses to notifications\n")
+    print(f"Near misses (35-{MIN_SCORE - 1}): {near_count} (not sent)")
+    print(f"Sending top {len(top)} to notifications\n")
     for j in top[:10]:
         print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} ({j['source']})")
 
