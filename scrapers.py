@@ -3964,7 +3964,9 @@ def scrape_rhenag() -> list[dict]:
 # and pubExternalDate. Only rows located in the Bonn belt are kept; the
 # detail page is fetched for the description.
 _DB_API = "https://db.jobs/service/search/de-de/6561052"
-_DB_QUERIES = ("Werkstudent", "Praktikum Informatik", "Studentische Hilfskraft")
+# "Studentische Hilfskraft" makes db.jobs answer with HTML instead of JSON every
+# run (the two-word query trips its search), so it is left out.
+_DB_QUERIES = ("Werkstudent", "Praktikum Informatik")
 _DB_BELT = re.compile(r"Köln|Koeln|Bonn|Düsseldorf|Duesseldorf|Koblenz|Neuss|Leverkusen|Siegburg|Troisdorf",
                       re.IGNORECASE)
 _DB_CAP = 20
@@ -4071,7 +4073,12 @@ def scrape_all() -> list[dict]:
         scrape_germantechjobs,     # germantechjobs.de RSS — German tech aggregator
         scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
         scrape_linkedin_guest,     # LinkedIn guest API — server-side entry-level filter
-        scrape_hiringcafe,         # hiring.cafe — 40+ ATS platforms, entry-level filtered
+        # scrape_hiringcafe DISABLED 2026-09-04 — hiringcafe.com now sits behind a
+        # Cloudflare challenge (homepage HTTP 403 "Just a moment..."), so the
+        # buildId bootstrap can never succeed. The dead-source alarm caught it
+        # after three zero runs (median 490). Same rule as StepStone: no bot-
+        # evasion in a public repo, so it stays off until the block is gone.
+        # scrape_hiringcafe,       # hiring.cafe — 40+ ATS platforms
         scrape_absolventa,         # Absolventa — German graduate/trainee board
         scrape_getinit,            # get-in-IT — German entry-level IT board
         scrape_xing,               # XING GraphQL — German SME / recruiter-native market
