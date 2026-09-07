@@ -109,9 +109,10 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
     # Sort jobs so that fresh ones bubble to the top within their score band
     def _sort_key(j):
         h = _hours_since(j.get("posted_at", ""))
-        # primary: score (desc), secondary: fresher first (None → far past)
+        # primary: work mode / belt (remote, near Bonn, rest of Germany —
+        # 2026-09-07), then score (desc), then fresher first (None → far past)
         fresh_rank = h if h is not None else 1e9
-        return (-j.get("score", 0), fresh_rank)
+        return (j.get("_where_rank", 2), -j.get("score", 0), fresh_rank)
     jobs = sorted(jobs, key=_sort_key)
 
     # Near misses (35–44, flagged by main.py) render in their own dimmed
@@ -177,6 +178,18 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
                 f'📝 Screening answers ready ({len(kit)}):{qa}</div>'
             )
 
+        # Work mode + belt label (2026-09-07: Germany-wide, English-only
+        # digest — the city and mode are what he decides on)
+        where = j.get("_where") or ""
+        where_html = ""
+        if where:
+            wcol = {"REMOTE": "#059669", "HYBRID": "#d97706"}.get(where, "#6b7280")
+            wtxt = where + (" · near Bonn" if j.get("_belt") else "")
+            where_html = (
+                f'<span style="background:{wcol};color:#fff;padding:1px 6px;'
+                f'border-radius:8px;font-size:10px;font-weight:700;margin-right:6px;">{wtxt}</span>'
+            )
+
         # B6: ghost/stale posting tag
         ghost_html = (
             '<span style="background:#f3f4f6;color:#9ca3af;padding:1px 6px;'
@@ -189,7 +202,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             <a href="{j['url']}" style="font-weight:600;color:#111827;text-decoration:none;font-size:14px;">
               {j['title']}
             </a>{badge}{ghost_html}{apply_html}<br>
-            <span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
+            {where_html}<span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
             <span style="color:#6b7280;font-size:12px;font-style:italic;">{j.get('reason','')}</span>
             {tailor_html}
             {kit_html}
@@ -268,7 +281,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
     <div style="background:#1e3a5f;padding:24px 28px;">
       <h1 style="color:#fff;margin:0;font-size:20px;">🎯 Job Digest — {today}</h1>
       <p style="color:#93c5fd;margin:6px 0 0;font-size:14px;">
-        {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · fresh first{fresh_summary}
+        {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · remote first, then near Bonn{fresh_summary}
       </p>
     </div>
     {warn_html}

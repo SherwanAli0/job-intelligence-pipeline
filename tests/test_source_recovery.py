@@ -62,6 +62,9 @@ class TestArbeitsagenturV6:
         monkeypatch.setattr(scrapers, "_ba_enrich", lambda ref: {"description": "Voll text"})
         monkeypatch.setattr(scrapers, "ARBEITSAGENTUR_QUERIES", ["Werkstudent Informatik"])
         monkeypatch.setattr(scrapers, "ARBEITSAGENTUR_REMOTE_QUERIES", [])
+        # The nationwide pass (2026-09-07) runs first and would claim the
+        # fixture's ref before the radius pass adds its km prefix.
+        monkeypatch.setattr(scrapers, "ARBEITSAGENTUR_NATIONWIDE_QUERIES", [])
         monkeypatch.setattr(scrapers, "_BA_MAX_PAGES", 1)
 
     def test_parses_the_v6_field_names(self, monkeypatch):

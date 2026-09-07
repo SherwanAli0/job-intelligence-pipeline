@@ -800,6 +800,16 @@ ARBEITSAGENTUR_REMOTE_QUERIES = [
     "Praktikum Machine Learning",
 ]
 
+# Germany-wide English pass (added 2026-09-07 with the English-only rule):
+# the radius pass is anchored on Bonn and phrased in German, so an English
+# "Working Student" ad in Hamburg or Munich never appeared. Runs FIRST so the
+# jobdetails enrichment budget goes to the ads most likely to survive the
+# English filter.
+ARBEITSAGENTUR_NATIONWIDE_QUERIES = [
+    "Working Student", "Student Assistant", "Internship Data",
+    "Internship Software", "Intern Machine Learning",
+]
+
 # Part-time pass (added 2026-09-03). arbeitszeit=tz is the API's own Teilzeit
 # filter, so this is a structured query rather than a keyword guess: every
 # hit is a part-time contract, and the tech keyword narrows it to IT work.
@@ -850,7 +860,7 @@ ARBEITSAGENTUR_QUERIES = [
 import base64 as _b64
 import re as _re_ba
 
-_BA_ENRICH_CAP = 150  # max jobdetails calls per run (each ~0.3s)
+_BA_ENRICH_CAP = 250  # max jobdetails calls per run (each ~0.3s); raised 2026-09-07 for the nationwide pass
 
 # ── Arbeitsagentur endpoint configuration ────────────────────────────────────
 # SEARCH is v6-only (v4/v5 return 403 since ~2026-08-10). DETAILS are v4-only
@@ -1051,6 +1061,8 @@ def scrape_arbeitsagentur() -> list[dict]:
                 print(f"  [Arbeitsagentur] '{query}' ({label}) page {page} failed: {e}")
                 return
 
+    for query in ARBEITSAGENTUR_NATIONWIDE_QUERIES:
+        collect(query, {}, "nationwide")            # Germany-wide, English phrasing
     for query in ARBEITSAGENTUR_QUERIES:
         collect(query, {"wo": _BA_ANCHOR, "umkreis": _BA_RADIUS_KM}, "radius")
     for query in ARBEITSAGENTUR_REMOTE_QUERIES:
@@ -1908,6 +1920,10 @@ _WD_AI_KEYWORDS = (
     "part-time", "software", "informatik",
 )
 
+# Workday's shared reference id for Germany in the locationCountry facet
+# (the same id on every tenant that supports the facet).
+_WD_COUNTRY_DE = "dcc5b7608d8644b3a93716604e78e995"
+
 _WD_PAYLOAD = {
     "appliedFacets": {},
     "limit": 20,
@@ -1955,9 +1971,19 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     measured at 718s sequentially across 15 tenants, the second-largest cost
     in the whole scrape after JobSpy (which cannot be parallelised)."""
     out: list[dict] = []
-    if not isinstance(entry, (tuple, list)) or len(entry) != 3:
+    if not isinstance(entry, (tuple, list)) or len(entry) not in (3, 4, 5):
         return out
-    tenant, region, site = entry
+    tenant, region, site = entry[:3]
+    # Optional 4th element (2026-09-07): a Workday search string. Airbus and
+    # Stryker hold thousands of postings, and the 200-offset walk below would
+    # otherwise only ever see a random slice of them.
+    search_text = entry[3] if len(entry) >= 4 else ""
+    # Optional 5th element: restrict to Germany with Workday's shared country
+    # facet id. Verified live 2026-09-07: Airbus 327 -> 114, Accenture
+    # 2000 -> 243, HARMAN 24 -> 9. Stryker, NVIDIA and Abbott answer HTTP 400
+    # to the facet, so it is opt-in per tenant and a 400 falls back to the
+    # unfiltered walk instead of losing the tenant.
+    facets = {"locationCountry": [_WD_COUNTRY_DE]} if len(entry) == 5 and entry[4] else {}
     host = f"{tenant}.{region}.myworkdayjobs.com"
     list_url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
     per_tenant_fetched = 0
@@ -1967,6 +1993,8 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     try:
         while offset < 200:  # safety cap: never walk past 200 postings per tenant
             payload = dict(_WD_PAYLOAD)
+            payload["appliedFacets"] = facets
+            payload["searchText"] = search_text
             payload["offset"] = offset
             payload["limit"] = 20
             r = requests.post(
@@ -1975,6 +2003,9 @@ def _workday_cxs_tenant(entry) -> list[dict]:
                 headers=_wd_headers(host),
                 timeout=15,
             )
+            if r.status_code == 400 and facets:
+                facets = {}                 # tenant rejects the facet: retry plain
+                continue
             if r.status_code != 200:
                 break
             data = r.json()
@@ -3191,13 +3222,18 @@ def scrape_linkedin_guest() -> list[dict]:
 # so this deliberately does NOT use it. The sitemap path is permitted and
 # carries the same postings.
 _STELLENWERK_SITEMAP = "https://www.stellenwerk.de/sitemap.xml"
+# Germany-wide since 2026-09-07: every city board. Measured that day on the
+# sitemap, slug-matched student tech postings: Hamburg 21, Stuttgart 13,
+# Düsseldorf 9, Köln 8, Erlangen-Nürnberg 8, Berlin 6 — and Bonn's own board
+# 1. The belt boards stay listed as the documented origin; the URL pattern
+# accepts any board, and the location filter runs downstream.
 _STELLENWERK_CITIES = ("bonn-rhein-sieg", "koeln", "duesseldorf")
 # /{city}/{slug}-{YYMMDD}-{id} — the trailing id is the dedup key, because
 # roughly a quarter of postings are cross-listed under several cities.
 _STELLENWERK_URL_RE = re.compile(
-    r"stellenwerk\.de/(?:" + "|".join(_STELLENWERK_CITIES) + r")/[^/]+-(\d{6})-(\d+)$"
+    r"stellenwerk\.de/(?:[a-z0-9\-]+)/[^/]+-(\d{6})-(\d+)$"
 )
-_STELLENWERK_CAP = 70
+_STELLENWERK_CAP = 150
 
 
 def _stellenwerk_page(url: str) -> list[dict]:
@@ -3308,10 +3344,19 @@ _RMK_STUDENT = re.compile(
 # in the same path segment with no separator to key on.
 _RMK_CITY_RE = re.compile(
     r"/job/(Sankt Augustin|Bonn|Köln|Koeln|Wachtberg|Siegburg|Troisdorf|Brühl"
-    r"|Euskirchen|Leverkusen|Remagen|Koblenz|Düsseldorf|Neuss|Hennef)",
+    r"|Euskirchen|Leverkusen|Remagen|Koblenz|Düsseldorf|Neuss|Hennef"
+    # Germany-wide since 2026-09-07: the institute cities outside the belt
+    r"|Berlin|München|Muenchen|Munich|Hamburg|Frankfurt|Stuttgart|Dresden"
+    r"|Leipzig|Karlsruhe|Erlangen|Nürnberg|Nuernberg|Aachen|Darmstadt"
+    r"|Kaiserslautern|Freiburg|Bremen|Hannover|Braunschweig|Oberpfaffenhofen"
+    r"|Göttingen|Goettingen|Jena|Ilmenau|Magdeburg|Rostock|Kiel|Lübeck|Würzburg"
+    r"|Augsburg|Ulm|Saarbrücken|Mainz|Wiesbaden|Kassel|Paderborn|Dortmund"
+    r"|Duisburg|Essen|Bochum|Münster|Bielefeld|Oldenburg|Potsdam|Cottbus"
+    r"|Chemnitz|Halle|Heilbronn|Tübingen|Regensburg|Bayreuth|Erfurt|Lüneburg"
+    r"|Stade|Lampoldshausen|Neustrelitz|Trauen|Weilheim|Jülich|Itzehoe|Fürth)",
     re.IGNORECASE,
 )
-_RMK_CAP = 40
+_RMK_CAP = 80       # doubled 2026-09-07 with the Germany-wide pick
 
 
 def _rmk_page(url: str, source: str) -> list[dict]:
@@ -3361,11 +3406,13 @@ def scrape_research_institutes() -> list[dict]:
                 print(f"  [{source}] sitemap HTTP {r.status_code}")
                 continue
             urls = [u for u in re.findall(r"<loc>(.*?)</loc>", r.text) if "/job/" in u]
-            picked = [u for u in urls
-                      if _RMK_REGION.search(u) and _RMK_STUDENT.search(u)][:_RMK_CAP]
+            # Germany-wide since 2026-09-07: every institute's student roles,
+            # not only the Bonn-area ones; the location filter runs downstream
+            # and the digest shows the city.
+            picked = [u for u in urls if _RMK_STUDENT.search(u)][:_RMK_CAP]
             got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
             results.extend(got)
-            print(f"  [{source}] {len(got)} regional student roles "
+            print(f"  [{source}] {len(got)} student roles "
                   f"from {len(urls)} postings")
         except Exception as e:
             print(f"  [{source}] failed: {e}")
@@ -3661,10 +3708,13 @@ _CSB_SITES = (
     ("https://opportunities.vodafone.com", "Vodafone"),
     ("https://jobs.deloitte.de", "Deloitte"),         # 39 in feed, 8 Düsseldorf/Köln Werkstudent
     ("https://careers.ey.com", "EY"),                 # 38 in feed, 5 belt incl. EY-Parthenon Decision Modelling
+    # Germany-wide English sweep 2026-09-07 (verified live via the RSS endpoint):
+    ("https://jobs.rwe.com", "RWE"),                  # Essen — Working Student IT Security Governance, English ad
+    ("https://careers.eon.com", "E.ON"),              # Essen/Munich — E.ON Digital Technology Working Student ads
 )
 # "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
 _CSB_QUERIES = ("Werkstudent", "Praktikum", "Student")
-_CSB_CAP_PER_SITE = 20
+_CSB_CAP_PER_SITE = 40      # doubled 2026-09-07 with the Germany-wide pick
 
 
 def scrape_csb() -> list[dict]:
@@ -3686,8 +3736,7 @@ def scrape_csb() -> list[dict]:
                         continue
                     seen.add(href)
                     full = href if href.startswith("http") else host.split("/jobs")[0] + href
-                    if _RMK_REGION.search(full):
-                        hrefs.append(full)
+                    hrefs.append(full)      # Germany-wide since 2026-09-07
                 time.sleep(0.5)
             # The RSS feed is more reliable than the HTML search: NRW.BANK's
             # search page returned nothing while its feed carried the live
@@ -3708,8 +3757,7 @@ def scrape_csb() -> list[dict]:
                             rss_titles[link] = tt.group(1).strip()
                         if link not in seen:
                             seen.add(link)
-                            if _RMK_REGION.search(link):
-                                hrefs.append(link)
+                            hrefs.append(link)  # Germany-wide since 2026-09-07
                 except Exception:
                     pass
             picked = hrefs[:_CSB_CAP_PER_SITE]
@@ -3722,7 +3770,7 @@ def scrape_csb() -> list[dict]:
                     j["title"] = rss_titles.get(j["url"], j["title"])
                     j["description"] = _page_text(j["url"]) or j["description"]
             out.extend(got)
-            print(f"  [{source}] {len(got)} commute-belt student roles")
+            print(f"  [{source}] {len(got)} student roles (Germany-wide)")
         except Exception as e:
             print(f"  [{source}] failed: {e}")
     return out

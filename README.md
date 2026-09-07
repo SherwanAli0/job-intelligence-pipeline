@@ -106,9 +106,9 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
 - **What it hunts is configuration, not architecture.** The target changed
   completely once already: it looked for junior full-time roles until its owner
   was admitted to an M.Sc. in Bonn, and now looks only for Werkstudent (working-student), internship and
-  part-time (Teilzeit) IT roles reachable within about an hour of Bonn by train, or
-  remote within Germany. That pivot touched the CV profiles and query lists in
-  [config.py](config.py), one required-employment-form filter, one commute rule,
+  part-time (Teilzeit) IT roles anywhere in Germany, English-language ads only.
+  That pivot touched the CV profiles and query lists in
+  [config.py](config.py), one required-employment-form filter, one location-ranking rule,
   and the labels on the calibration set. The regression suite is what made it
   safe: it caught the spots where the old assumption had leaked into unrelated
   code, including a language filter that treated the word "Werkstudent" itself
@@ -117,10 +117,15 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
   returned an empty digest, and the per-filter drop counters said why: the
   ad-language filter had removed 62 of the 76 reachable student roles. The
   German student market advertises in German, so the language of the
-  advertisement had stopped being evidence about the job. The filter now
-  applies only the explicit language *requirement* to student roles. A funnel
-  that reports what each stage killed turns a silent empty inbox into a
-  one-line diagnosis.
+  advertisement had stopped being evidence about the job, so for three weeks
+  the filter applied only the explicit language *requirement* to student
+  roles. Then the owner, who reads German at B1, decided that digests full of
+  German ads were not worth his time and reversed it: since 2026-09-07 only
+  ads whose body reads as English are sent, stub bodies are fetched in full
+  before being judged, and the search runs Germany-wide with the digest
+  ordered remote → near Bonn → elsewhere, so the smaller English pool is as
+  large as it can be. A funnel that reports what each stage killed turns a
+  silent empty inbox into a one-line diagnosis.
 
 ## Repo tour
 
@@ -136,7 +141,7 @@ answers persisted via Actions cache. Git history was scrubbed accordingly.
 | [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
 | [health_check.py](health_check.py) | Monthly board-rot detector |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
-| [tests/](tests/) | 415 offline tests, run on every push |
+| [tests/](tests/) | 437 offline tests, run on every push |
 
 ## Run your own
 

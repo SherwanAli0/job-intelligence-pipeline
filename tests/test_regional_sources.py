@@ -61,11 +61,14 @@ class TestStellenwerk:
         out = scrapers._stellenwerk_page("https://www.stellenwerk.de/koeln/x-260811-1")
         assert out[0]["company"] == "Kölner Träger gGmbH"
 
-    def test_url_pattern_matches_only_the_three_cities(self):
+    def test_url_pattern_matches_every_city_board(self):
+        """Belt-only until 2026-09-07; Germany-wide since (Hamburg's board
+        carried 21 student tech postings that day against Bonn's 1)."""
         ok = "https://www.stellenwerk.de/bonn-rhein-sieg/werkstudent-data-260811-274000"
         other = "https://www.stellenwerk.de/hamburg/werkstudent-data-260811-274001"
         assert scrapers._STELLENWERK_URL_RE.search(ok)
-        assert not scrapers._STELLENWERK_URL_RE.search(other)
+        assert scrapers._STELLENWERK_URL_RE.search(other)
+        assert not scrapers._STELLENWERK_URL_RE.search("https://www.stellenwerk.de/hamburg/")
 
     def test_dedup_key_is_the_trailing_id(self):
         """Roughly a quarter of postings are cross-listed under several
@@ -128,15 +131,19 @@ class TestResearchInstitutes:
             "Datenpflege-in-IT-Systemen-%28wmd%29/14259/", "DLR")
         assert out[0]["location"] == "Köln, Germany"
 
-    def test_region_and_student_filters_run_on_the_url(self):
+    def test_student_filter_runs_on_the_url_region_no_longer_does(self):
+        """Until 2026-09-07 only belt institutes were picked; since then every
+        Fraunhofer/DLR site counts and the location filter runs downstream."""
+        import inspect
         near = ("https://jobs.fraunhofer.de/job/Sankt-Augustin-Studentische-"
                 "Hilfskraft-KI/1/")
         far = "https://jobs.fraunhofer.de/job/Dresden-Studentische-Hilfskraft-KI/2/"
         senior = ("https://jobs.fraunhofer.de/job/Sankt-Augustin-Abteilungsleiter"
                   "-Institut/3/")
-        assert scrapers._RMK_REGION.search(near) and scrapers._RMK_STUDENT.search(near)
-        assert not scrapers._RMK_REGION.search(far)
+        assert scrapers._RMK_STUDENT.search(near) and scrapers._RMK_STUDENT.search(far)
         assert not scrapers._RMK_STUDENT.search(senior)
+        assert "_RMK_REGION" not in inspect.getsource(scrapers.scrape_research_institutes)
+        assert scrapers._RMK_CITY_RE.search("/job/Dresden-Studentische-Hilfskraft-KI/2/")
 
     def test_both_institutes_are_configured(self):
         hosts = [h for h, _ in scrapers._RMK_SITES]

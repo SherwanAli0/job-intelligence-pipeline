@@ -114,6 +114,8 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "INVERTO":          62,
     "Deloitte":         60,
     "EY":               60,
+    "RWE":              60,
+    "E.ON":             60,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -718,97 +720,53 @@ def _reads_as_english(text: str) -> bool:
     """Long enough to judge AND almost free of German function words.
 
     Deliberately stricter than 'not German': it demands positive evidence, so
-    a two-line stub description can never qualify.
+    a two-line stub description can never qualify. Bilingual ads — German
+    version first and English version second, or the reverse — are judged
+    on each half as well, so an ad that carries a full English version is
+    kept even though the whole text is half German.
     """
     if len(re.findall(r"[a-zäöüß]+", text)) < 25:
         return False
-    return _german_share(text) < _GERMAN_BODY_THRESHOLD / 2
+    if _german_share(text) < _GERMAN_BODY_THRESHOLD / 2:
+        return True
+    half = len(text) // 2
+    for part in (text[:half], text[half:]):
+        if (len(re.findall(r"[a-zäöüß]+", part)) >= 60
+                and _german_share(part) < _GERMAN_BODY_THRESHOLD / 2):
+            return True
+    return False
 
 
 def _is_english_friendly(j: dict) -> bool:
-    """Drop German-language jobs, EXCEPT student roles, which are judged only
-    on whether they explicitly demand fluent German.
+    """Send only ads whose body positively reads as English.
 
-    HISTORY — this rule has now flipped three times. Read this before touching
+    HISTORY — this rule has now flipped FOUR times. Read this before touching
     it, because each flip was a deliberate owner decision, not a bug:
       1. Originally German bodies were dropped for every role.
       2. 2026-08-15: student roles EXEMPTED. The ad-language test had killed
          82% of the commutable Werkstudent market and produced an empty digest.
-      3. 2026-08-16: exemption REVERSED to English-only, after the owner
-         reviewed a digest full of German ads: "only english from now".
-      4. 2026-08-18: exemption RESTORED, on measured evidence. Three
-         consecutive days produced zero emails, and the daily logs showed the
-         language test removing 61 of 81, 61 of 87 and 34 of 62 reachable
-         student roles — consistently ~75% of everything in range, and the
-         single largest cut in the whole chain. Several of the best roles he
-         had verified by hand (InsurLab Applied AI, OSCAR KI-Entwicklung,
-         UNITY AI Engineer, 1&1 AI & Data Automation, Zurich Python/SQL) were
-         German-language ads at employers doing genuinely technical work.
+      3. 2026-08-16: exemption REVERSED to English-only ("only english from
+         now") after a digest full of German ads.
+      4. 2026-08-18: exemption RESTORED after three zero-email days; the
+         language test was removing ~75% of reachable student roles.
+         2026-09-03 extended the exemption to part-time roles.
+      5. 2026-09-07: ENGLISH-ONLY FOR EVERY ROLE TYPE, on the owner's explicit
+         instruction after three weeks of digests full of German ads: "if the
+         description is not in english don't send it to me". He reads German
+         at B1 and will not work through German ads. Paired with the
+         Germany-wide search (_tag_where) so the English pool is as large as
+         it can be. Do not flip this again without his instruction.
 
-    The distinction that makes this safe: the language of the ADVERTISEMENT is
-    not the language of the JOB. What actually locks him out at B1 is an
-    explicit demand for fluent/business/C1 German, and _requires_fluent_german
-    still drops exactly those. Non-student ads keep the strict rule.
+    The test is positive evidence, not absence of German: at least 25 words
+    and under half the German-body threshold in German function words
+    (_reads_as_english, which also judges bilingual ads on their halves).
+    Empty and stub bodies fail — node_filter fetches the full ad for those
+    first (_fill_missing_bodies), so an English ad that arrived as a snippet
+    is not thrown away unread. There is no student exemption and no C1
+    special case any more; the scorer's pre-screen still drops an English ad
+    that demands fluent German.
     """
-    title_lower = j["title"].lower()
-    desc_lower = (j.get("description") or "").lower()
-
-    # Student roles AND part-time tech roles (2026-09-03: measured 49 of 50
-    # reachable part-time IT ads as German-language; the owner chose the
-    # same rule as for student ads) are judged only on an explicit demand
-    # for fluent German. Full-time ads keep the strict body test.
-    if _is_eligible_form(j):
-        return not _requires_fluent_german(desc_lower)
-
-    # A German-language body is disqualifying even when the title is English
-    # and even when the word "english" appears somewhere. Four such jobs were
-    # delivered in one digest (DKB, The Quality Group, paretos, amber): English
-    # titles, fully German bodies, each mentioning English only as a required
-    # or nice-to-have language skill.
-    share = _german_share(desc_lower)
-    if share >= _GERMAN_BODY_THRESHOLD:
-        # Borderline cases are the ones that would be wrongly killed if the
-        # threshold is too low. Recording them makes over-filtering visible in
-        # the logs instead of silent: a genuinely German posting scores 0.15+,
-        # so anything in the 0.08-0.12 band deserves a look.
-        if share < _GERMAN_BODY_THRESHOLD * 1.5:
-            print(f"  [German filter] borderline {share:.2f}: "
-                  f"{(j.get('title') or '')[:70]}")
-        return False
-
-    # Explicit English-team signal → keep. "english" alone is deliberately NOT
-    # enough: "Englischkenntnisse erforderlich" is a German sentence.
-    english_signals = (
-        "working language is english", "language: english", "english-speaking",
-        "team language is english", "our language is english",
-        "all communication in english", "english is our working language",
-        "we work in english", "company language is english",
-    )
-    if any(s in desc_lower for s in english_signals):
-        return True
-
-    # German word in title → drop
-    title_words = set(title_lower.split())
-    if title_words & _GERMAN_TITLE_KEYWORDS:
-        return False
-    if any(frag in title_lower for frag in _GERMAN_TITLE_FRAGMENTS):
-        return False
-
-    # German gender markers in the title mark a German-market posting. The list
-    # was previously only (m/w/d)/(w/m/d)/(d/m/w); real digests also carried
-    # (gn), (f/m/x) and (F/M/*).
-    #
-    # German-MARKET is not the same as German-LANGUAGE, and the distinction
-    # started to matter with the Werkstudent pivot: German employers put
-    # (m/w/d) on nearly every student ad, including ones whose body is written
-    # entirely in English. So the marker only disqualifies when the body does
-    # not independently read as English.
-    if (_RE_GENDER_MARKER.search(title_lower)
-            and "english" not in desc_lower
-            and not _reads_as_english(desc_lower)):
-        return False
-
-    return True
+    return _reads_as_english((j.get("description") or "").lower())
 
 
 # ── Werkstudent mode: student roles only, commutable from Bonn or DE-remote ──
@@ -911,6 +869,66 @@ def _is_commutable_or_remote(j: dict) -> bool:
         return False                    # on-site elsewhere in Germany
     return True                         # unknown → let the scorer judge
 
+
+
+# ── Germany-wide (2026-09-07): location is a ranking signal, not a filter ────
+# Owner decision, paired with the English-only rule: "widen the search area
+# but only send the ones that have an English description". The commute belt
+# (_COMMUTABLE_FROM_BONN) no longer drops anything; it decides the ORDER of
+# the digest — remote first, then the Bonn belt, then the rest of Germany —
+# and every row carries a REMOTE / HYBRID / ON-SITE label plus the city, so
+# he judges a Berlin or Munich role himself. _is_commutable_or_remote stays
+# as the belt definition and for its regression tests.
+
+
+def _tag_where(j: dict) -> dict:
+    """Annotate j with _where (REMOTE / HYBRID / ON-SITE), _belt and
+    _where_rank (0 remote, 1 belt, 2 elsewhere). Mutates and returns j."""
+    loc = (j.get("location") or "").lower()
+    desc = (j.get("description") or "").lower()
+    blob = f"{loc} {desc}"
+    belt = any(c in loc for c in _COMMUTABLE_FROM_BONN)
+    far_city = any(c in loc for c in _NON_COMMUTABLE_DE_CITIES)
+    if _is_full_remote(loc, desc) or ("remote" in loc and not far_city):
+        where = "REMOTE"
+    elif ("remote" in loc or any(h in blob for h in _HYBRID_SIGNALS)
+            or re.search(r"home[- ]?office|mobiles arbeiten|mobile work", blob)):
+        where = "HYBRID"              # an office exists; the city matters
+    else:
+        where = "ON-SITE"
+    j["_where"] = where
+    j["_belt"] = belt
+    j["_where_rank"] = 0 if where == "REMOTE" else (1 if belt else 2)
+    return j
+
+
+_BODY_FETCH_CAP = 300            # HTTP requests per run; no Claude tokens
+_BODY_MIN_WORDS = 25             # below this the language test cannot judge
+
+
+def _fill_missing_bodies(jobs: list[dict]) -> None:
+    """Fetch the full ad for candidates whose body is too short for the
+    language test to judge. Under the English-only rule a stub body is a
+    drop, so without this step an English ad that arrived as a two-line
+    snippet (a quarter of the pool on some days) would be lost unread.
+    Uses the aggregators' paced fetcher (LinkedIn slow lane included).
+    Mutates in place."""
+    from scrapers import _enrich_jobspy_descriptions
+
+    def _words(j):
+        return len(re.findall(r"[a-zäöüß]+", (j.get("description") or "").lower()))
+
+    need = [j for j in jobs
+            if _words(j) < _BODY_MIN_WORDS and (j.get("url") or "").startswith("http")]
+    over = max(0, len(need) - _BODY_FETCH_CAP)
+    need = need[:_BODY_FETCH_CAP]
+    if not need:
+        print("[Body fetch] nothing to fetch — every candidate already has a body")
+        return
+    _enrich_jobspy_descriptions(need, quiet=True)
+    got = sum(1 for j in need if _words(j) >= _BODY_MIN_WORDS)
+    print(f"[Body fetch] {got}/{len(need)} stub-body ads fetched"
+          + (f" ({over} over the {_BODY_FETCH_CAP} cap)" if over else ""))
 
 
 # ── Tech-relevance gate (free) ───────────────────────────────────────────────
@@ -1131,7 +1149,7 @@ _LONG_LIVED_SOURCES = frozenset({
     "Generali", "RheinEnergie", "DER",
     "HDI", "NRWBANK", "StadtKoeln", "GIZ", "LVR", "BaFin", "BARMER", "BundDE",
     "WDR", "Lufthansa", "DZNE", "Uniper", "SWD", "1und1", "Vodafone",
-    "UKB", "rhenag", "DeutscheBahn", "INVERTO", "Deloitte", "EY",
+    "UKB", "rhenag", "DeutscheBahn", "INVERTO", "Deloitte", "EY", "RWE", "E.ON",
 })
 
 
@@ -1499,12 +1517,18 @@ def node_filter(state: dict) -> dict:
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
                              "Employment-form filter (student or part-time tech)")
+    # Fetch the full ad for stub bodies BEFORE the tech gate and the language
+    # test, so neither judges an English ad on a two-line snippet.
+    _fill_missing_bodies(new_jobs)
     new_jobs = _apply_filter(new_jobs, _is_tech_relevant,
                              "Tech-relevance filter (CV keywords)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
-    new_jobs = _apply_filter(new_jobs, _is_commutable_or_remote,
-                             "Commute filter (<=1h from Bonn or DE-remote)")
-    new_jobs = _apply_filter(new_jobs, _is_english_friendly, "English filter")
+    # Germany-wide since 2026-09-07: the belt orders the digest, it no longer
+    # drops. Every job is labelled REMOTE / HYBRID / ON-SITE here.
+    for j in new_jobs:
+        _tag_where(j)
+    new_jobs = _apply_filter(new_jobs, _is_english_friendly,
+                             "English filter (ad must read as English)")
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
     new_jobs = _apply_filter(new_jobs, _not_fulltime_senior, "Senior-title filter")
     new_jobs = _apply_filter(new_jobs, _no_masters_required, "MastersFilter")
@@ -1546,6 +1570,9 @@ def node_rank(state: dict) -> dict:
     good = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
     top = _diversify(good, MAX_RESULTS)
+    # Digest order (2026-09-07): remote first, then the Bonn belt, then the
+    # rest of Germany; score decides within each group.
+    top.sort(key=lambda x: (x.get("_where_rank", 2), -x.get("score", 0)))
 
     from collections import Counter as _C
     mix = dict(_C(j.get("_track", "?") for j in top))
@@ -1563,7 +1590,9 @@ def node_rank(state: dict) -> dict:
     print(f"Near misses (35-{MIN_SCORE - 1}): {near_count} (not sent)")
     print(f"Sending top {len(top)} to notifications\n")
     for j in top[:10]:
-        print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} ({j['source']})")
+        where = (j.get("_where") or "?") + (" · near Bonn" if j.get("_belt") else "")
+        print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} "
+              f"({j['source']}; {where}; {j.get('location', '')})")
 
     try:
         from application_kit import enrich_with_kits

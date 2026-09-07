@@ -12,7 +12,7 @@ from datetime import date as _date
 # Every scraper that takes a time-range parameter (JobSpy hours_old,
 # LinkedIn f_TPR, Arbeitsagentur veroeffentlichtseit) derives it from here,
 # so the window applies at the SOURCE too, not only at the filter.
-CATCHUP_UNTIL = _date(2026, 8, 17)          # exclusive: Monday is fresh mode
+CATCHUP_UNTIL = _date(2026, 9, 8)           # exclusive: one-off 7-day sweep on 2026-09-07 for the English-only, Germany-wide switch; 24h again from the 8th
 _CATCHUP_HOURS = 168                        # 7 days
 _NORMAL_HOURS = 24
 
@@ -49,12 +49,11 @@ software — any of:
 (b) an INTERNSHIP: Praktikum, Pflichtpraktikum, Praxissemester, internship,
 (c) a PART-TIME (Teilzeit) regular role of roughly 20h/week or less.
 All three count equally. NOT full-time (Vollzeit) permanent roles, NOT thesis positions.
-LOCATION: on-site/hybrid must be within ~1 hour of Bonn by train: Bonn, Köln/Cologne,
-Siegburg, Sankt Augustin, Troisdorf, Hennef, Brühl, Wesseling, Hürth, Bornheim,
-Königswinter, Bad Honnef, Remagen, Andernach, Koblenz, Euskirchen, Leverkusen,
-Bergisch Gladbach, Dormagen, Neuss, Düsseldorf — OR remote within Germany.
-On-site roles anywhere else (Berlin, Munich, Hamburg, Aachen, Dortmund, Essen...) are NOT
-attendable alongside studies in Bonn — score them 0-15 unless genuinely Germany-remote.
+LOCATION: anywhere in GERMANY — remote, hybrid or on-site in any German city (decision
+2026-09-07: English-language ads only, Germany-wide; the digest shows city and work mode
+and he judges reachability himself). He lives and studies in Bonn, so Bonn, Köln and
+Düsseldorf are the easiest, but a role in Berlin, Munich, Hamburg or elsewhere in Germany
+must NOT be scored down for its location. Outside Germany remains a hard no.
 
 LANGUAGE REQUIREMENT (critical for scoring):
 - English: C1. STRONGLY prefer English-first roles or English-speaking teams.
@@ -607,6 +606,8 @@ PERSONIO_SLUGS = [
     "cabify",          # Cabify — 3, mobility
     "momox",           # Momox — 2, Berlin recommerce
     "trbo",            # trbo — 1, Munich e-com personalization
+    # ── Germany-wide English sweep 2026-09-07 (verified live) ──
+    "knime",           # KNIME — 10, Berlin/Konstanz data-science platform, English ads
 ]
 
 # ── Workday CXS tenants (modern JSON API) ─────────────────────────────────────
@@ -633,7 +634,7 @@ WORKDAY_CXS_TENANTS = [
     # Bonn-belt employers found in the 2026-09 sector sweep (verified live).
     ("debeka",      "wd3",  "Karriere"),                   # Koblenz — 13 Werkstudent/Praktikant
     ("creditreform","wd103","Verband_Creditreform"),       # Neuss — small, Werkstudent roles
-    ("accenture",   "wd103","AccentureCareers"),          # 15 Werkstudent; Düsseldorf 121 / Köln 12 roles
+    ("accenture",   "wd103","AccentureCareers", "", True),  # 2000 -> 243 DE with the country facet (2026-09-07)          # 15 Werkstudent; Düsseldorf 121 / Köln 12 roles
     ("kone",        "wd3",  "Careers"),                    # 1000  jobs — Hannover area
     ("novartis",    "wd3",  "Novartis_Careers"),           # 760   jobs — Nuremberg
     ("intel",       "wd1",  "External"),                   # 727   jobs — Munich
@@ -641,6 +642,14 @@ WORKDAY_CXS_TENANTS = [
     ("autodesk",    "wd1",  "Ext"),                        # 648   jobs — Munich
     ("pfizer",      "wd1",  "PfizerCareers"),              # 493   jobs — Berlin
     ("workday",     "wd5",  "Workday"),                    # 322   jobs — Munich
+    # ── Germany-wide English sweep 2026-09-07 (verified live). The optional
+    # 4th element is a Workday search string: these tenants hold thousands of
+    # postings, and without it the 200-offset walk would see a random slice.
+    # A 5th element True applies Workday's Germany country facet (tenants
+    # that reject it with HTTP 400 fall back to the plain walk).
+    ("stryker",     "wd1",  "StrykerCareers", "working student"),        # 78 hits (facet: 400) — Freiburg medtech internships in English
+    ("harman",      "wd3",  "HARMAN",         "working student", True),  # 24 -> 9 DE hits — Garching/Karlsbad
+    ("ag",          "wd3",  "Airbus",         "working student", True),  # 327 -> 114 DE hits — Hamburg/Manching/Stade
 ]
 
 # ── Companies on SmartRecruiters (enterprise ATS) ─────────────────────────────
@@ -680,6 +689,8 @@ SMARTRECRUITERS_SLUGS = [
     # ── E-commerce sweep batch (verified live) ──
     "home24",          # Home24 — 9 jobs, furniture e-com
     "picnic",          # Picnic — 2 jobs, online grocery
+    # ── Germany-wide English sweep 2026-09-07 (verified live, country=de) ──
+    "Vattenfall",      # Vattenfall — 72 DE jobs; Working Student Data Engineer Berlin, Werkstudent IT Hamburg
 ]
 
 # ── Major German companies — direct career page scraping ──────────────────────
@@ -779,6 +790,8 @@ ASHBY_SLUGS = [
     "flink",           # Flink — 3 jobs, Berlin grocery
     "choco",           # Choco — 2 jobs, Berlin food supply
     "sellerx",         # SellerX — 1 job, Berlin aggregator
+    # ── Germany-wide English sweep 2026-09-07 (verified live) ──
+    "bettermile",      # Bettermile — 6 jobs, Berlin; Working Student User Operations & Insights
 ]
 
 # ── Recruitee ATS slugs (https://{slug}.recruitee.com/api/offers) ─────────────

@@ -43,19 +43,26 @@ class TestPartTimeIsAnEligibleForm:
         assert main._is_eligible_form(_j("Werkstudent Marketing", "Support the team."))
 
 
-class TestPartTimeLanguageMatchesStudentRule:
-    """Decided 2026-09-03 on measurement: 49 of 50 reachable part-time IT ads
-    were German-language, so a strict rule would have made the part-time
-    addition pointless. Same rule as student ads: only an explicit demand
-    for fluent German drops the ad."""
+class TestPartTimeIsEnglishOnlyToo:
+    """2026-09-03 gave part-time ads the student exemption (49 of 50 were
+    German). 2026-09-07 the owner made the rule English-only for EVERY role
+    type, so a German part-time ad now drops like any other German ad."""
     _GERMAN = ("Für unser Team suchen wir eine Entwicklerin oder einen Entwickler "
                "in Teilzeit. Du arbeitest mit Python und SQL und entwickelst "
                "Auswertungen. Wir bieten flexible Arbeitszeiten und ein junges Team "
                "mit kurzen Wegen und viel Gestaltungsspielraum für dich.")
 
-    def test_german_part_time_tech_ad_survives(self):
-        assert main._is_english_friendly(
+    def test_german_part_time_tech_ad_is_dropped(self):
+        assert not main._is_english_friendly(
             _j("Softwareentwickler (m/w/d) Teilzeit", self._GERMAN))
+
+    def test_english_part_time_tech_ad_survives(self):
+        assert main._is_english_friendly(_j(
+            "Software Developer (part-time, 20h)",
+            "Join our platform team for twenty hours a week. You will build "
+            "services in Python, write SQL against our warehouse and ship "
+            "dashboards for the product team. Flexible hours, English-speaking "
+            "team, hybrid in Cologne with two office days a week."))
 
     def test_german_part_time_ad_demanding_c1_is_dropped(self):
         assert not main._is_english_friendly(
@@ -68,8 +75,8 @@ class TestPartTimeLanguageMatchesStudentRule:
             _j("Softwareentwickler (m/w/d) Vollzeit",
                self._GERMAN.replace("in Teilzeit", "in Vollzeit")))
 
-    def test_german_werkstudent_ad_is_still_exempt(self):
-        assert main._is_english_friendly(
+    def test_german_werkstudent_ad_is_no_longer_exempt(self):
+        assert not main._is_english_friendly(
             _j("Werkstudent Softwareentwicklung (m/w/d)",
                self._GERMAN.replace("in Teilzeit", "als Werkstudent")))
 

@@ -92,8 +92,8 @@ class TestGermanLanguageBodies:
         """)
         assert not _survives_pipeline(j)
 
-    def test_lidl_german_internship_survives_again(self):
-        """This fixture has now flipped THREE times; each flip was a
+    def test_lidl_german_internship_is_dropped_again(self):
+        """This fixture has now flipped FOUR times; each flip was a
         deliberate owner decision and the history matters more than the
         current value. (1) Pinned as a leak in the full-time era. (2) Allowed
         on 2026-08-16 morning when internships became targets and German
@@ -101,15 +101,16 @@ class TestGermanLanguageBodies:
         when the owner set the rule to English-only. (4) Restored on
         2026-08-18 after three consecutive zero-email days, when the logs
         showed the language test cutting ~75% of all reachable student roles.
-        Nothing here demands fluent German, so it belongs in the digest and
-        the scorer judges the BWL/VWL study-field mismatch."""
+        (5) Dropped again on 2026-09-07 when the owner made the rule
+        English-only for EVERY role type, Germany-wide: the ad is written in
+        German, so it goes, whatever it demands."""
         j = _job("Praktikum Data Analytics", """
             Als Teil unseres Lidl Plus international Teams arbeitest du an
             unserem digitalen Vorteilsprogramm. Ab August für 6 Monate.
             Studium im Bereich BWL, VWL, Mathematik / Statistik.
             Pflichtpraktikum: 1.000 € p.M. Erste Erfahrungen mit SQL, Python.
         """)
-        assert _survives_pipeline(j)
+        assert not _survives_pipeline(j)
 
 
 class TestMultiYearExperienceWithoutDigits:
@@ -181,6 +182,7 @@ class TestGoodJobsStillSurvive:
         j = _job("VIE - Data Analyst", """
             Graduate programme for recent graduates. Our team language is English.
             The ideal candidate has 3 years of experience in a similar role.
+            You will rotate through analytics teams and learn our data stack.
         """)
         assert _survives_pipeline(j)
 
@@ -189,14 +191,16 @@ class TestGoodJobsStillSurvive:
         'senior OPTIONAL' — juniors are explicitly considered."""
         j = _job("(Senior) Applied Scientist", """
             We welcome candidates at all levels. The team language is English.
-            Python and machine learning experience is valued.
+            Python and machine learning experience is valued. You will design
+            experiments and ship models together with the product team.
         """)
         assert _survives_pipeline(j)
 
     def test_german_word_in_a_company_name_is_not_a_german_job(self):
         j = _job("Machine Learning Engineer", """
             Join Deutsche Bank Technology Centre. The working language is English
-            across all engineering teams. We welcome junior applicants.
+            across all engineering teams. We welcome junior applicants. You will
+            build and maintain machine learning services written in Python.
         """)
         assert _survives_pipeline(j)
 
@@ -207,7 +211,8 @@ class TestGoodJobsStillSurvive:
         j = _job("AI Product Engineer", """
             Berlin-based team, our working language is English. We welcome
             junior engineers building production systems. Working knowledge of
-            German a bonus, not required.
+            German a bonus, not required. You will ship features end to end
+            with the product and data teams.
         """)
         assert _survives_pipeline(j)
 
@@ -303,7 +308,8 @@ class TestWerkstudentIsNowTheTarget:
     def test_english_working_student_title_now_survives(self):
         j = _job("Working Student (f/m/d) Python & AI Automation", """
             Support our Market Intelligence team. Our working language is
-            English. You are enrolled at a university.
+            English. You are enrolled at a university. You will automate our
+            reporting in Python and keep the team dashboards current.
         """, location="Köln, Germany")
         assert main._is_student_role(j)
         assert _survives_pipeline(j)
@@ -357,18 +363,18 @@ class TestGermanMarketIsNotGermanLanguage:
         """, location="Bonn, Germany")
         assert main._is_english_friendly(j)
 
-    def test_german_bodied_student_ad_survives(self):
-        """Flipped three times; current state is the exemption (2026-08-18,
-        restored on measured evidence — see the _is_english_friendly
-        docstring). A German BODY no longer drops a student role; only an
-        explicit fluent-German demand does."""
+    def test_german_bodied_student_ad_is_dropped(self):
+        """Flipped four times; current state (2026-09-07) is ENGLISH-ONLY for
+        every role type, on the owner's explicit instruction — see the
+        _is_english_friendly docstring. A German BODY drops a student role
+        exactly as it drops a full-time one."""
         j = _job("Werkstudent Data Science (m/w/d)", """
             Du unterstützt unser Team bei der Entwicklung von Datenprodukten
             und arbeitest mit uns an der Auswertung von Kundendaten. Du bist
             eingeschrieben an einer Hochschule und hast bereits erste
             Kenntnisse in Python sowie Freude an der Arbeit mit Daten.
         """, location="Köln, Germany")
-        assert main._is_english_friendly(j)
+        assert not main._is_english_friendly(j)
 
     def test_german_bodied_FULL_TIME_ad_is_still_dropped(self):
         """A German body is disqualifying for every role type."""
@@ -380,13 +386,13 @@ class TestGermanMarketIsNotGermanLanguage:
         """, location="Köln, Germany")
         assert not main._is_english_friendly(j)
 
-    def test_short_stub_student_ad_is_kept_for_the_scorer_to_judge(self):
-        """A two-line stub carries no language evidence either way. Under the
-        student exemption that is not grounds for a silent drop; the scorer
-        sees it and the explicit-C1 check still applies."""
+    def test_short_stub_student_ad_fails_the_language_test(self):
+        """A two-line stub carries no English evidence, so it fails — which
+        is exactly why node_filter fetches the full ad for stubs
+        (_fill_missing_bodies) before this test runs."""
         j = _job("Werkstudent Data Science (m/w/d)", "Werkstudent gesucht.",
                  location="Köln, Germany")
-        assert main._is_english_friendly(j)
+        assert not main._is_english_friendly(j)
 
     def test_short_stub_NON_student_ad_still_cannot_claim_english(self):
         """_reads_as_english demands positive evidence, so a two-line stub
@@ -396,12 +402,12 @@ class TestGermanMarketIsNotGermanLanguage:
         assert not main._is_english_friendly(j)
 
 
-class TestStudentAdsJudgedOnDemandNotLanguage:
-    """This rule has flipped three times — the history lives in the
-    _is_english_friendly docstring. Current state (2026-08-18): a student ad
-    is judged on whether it DEMANDS fluent German, not on which language it
-    happens to be written in. Restored after three zero-email days in which
-    the language test removed ~75% of all reachable student roles."""
+class TestEnglishOnlyForEveryRoleType:
+    """This rule has flipped four times — the history lives in the
+    _is_english_friendly docstring. Current state (2026-09-07, owner's
+    explicit instruction): only ads whose body READS AS ENGLISH are sent,
+    for student, part-time and full-time roles alike. Everything German
+    drops, whatever it demands."""
 
     _GERMAN_BODY = """
         Als Werkstudent unterstützt du unser Data-Team bei der Entwicklung
@@ -411,10 +417,10 @@ class TestStudentAdsJudgedOnDemandNotLanguage:
         Arbeitszeiten passend zu deinem Stundenplan und ein junges Team.
     """
 
-    def test_german_language_werkstudent_ad_survives(self):
+    def test_german_language_werkstudent_ad_is_dropped(self):
         j = _job("Werkstudent Data Analytics (m/w/d)", self._GERMAN_BODY,
                  location="Köln, Germany")
-        assert main._is_english_friendly(j)
+        assert not main._is_english_friendly(j)
 
     def test_german_werkstudent_ad_demanding_c1_still_drops(self):
         """The boundary that carries the whole rule."""
@@ -555,10 +561,11 @@ class TestBonnRegionIsRecognisedAsGermany:
 
 
 class TestCommutableFromBonn:
-    """He studies in Bonn, so an on-site role is only real if he can get
-    there and back around lectures. The rule is an explicit ~1h-by-train
-    list, NOT 'anywhere in NRW': Bielefeld and Münster are in NRW and are
-    over two hours away."""
+    """He studies in Bonn; the belt is an explicit ~1h-by-train list, NOT
+    'anywhere in NRW': Bielefeld and Münster are in NRW and over two hours
+    away. Since 2026-09-07 this function no longer DROPS anything in the
+    pipeline — the search is Germany-wide and the belt only orders the
+    digest (see _tag_where) — but the belt definition itself is pinned here."""
 
     def _at(self, location, description="Werkstudent role, English team."):
         return _job("Werkstudent Data Science", description, location=location)
@@ -611,10 +618,10 @@ class TestRemoteFromAnywhereInGermany:
     and home office ones and the face to face must be in places around bonn".
 
     So the employer's city stops mattering the moment a role is genuinely
-    remote — but hybrid must still sit in the belt, because hybrid means office
-    days. "Teilweise Home-Office" is the most common phrase on German ads and
-    it is HYBRID, not remote; reading it as remote would quietly re-admit every
-    Munich and Berlin role."""
+    remote — hybrid means office days. "Teilweise Home-Office" is the most
+    common phrase on German ads and it is HYBRID, not remote. Since 2026-09-07
+    this decides the digest ORDER (remote first) rather than dropping; the
+    remote/hybrid distinction is pinned here because the label depends on it."""
 
     def _j(self, loc, desc=""):
         return _job("Werkstudent Data Science", desc or "Student role.",
@@ -659,6 +666,8 @@ class TestEnrolledStudentPhrasingSurvives:
         j = _job("Werkstudent Data Science", """
             You are enrolled in a Bachelor's or Master's programme in computer
             science, data science or a related field. English-speaking team.
+            You will support our analytics work in Python and SQL for up to
+            twenty hours a week alongside your lectures.
         """, location="Bonn, Germany")
         assert main._no_masters_required(j)
         assert _survives_pipeline(j)

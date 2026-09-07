@@ -630,7 +630,7 @@ CANDIDATE PROFILE (this profile is already framed for the track of the jobs in t
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
 ═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Werkstudent or internship, English-OK, commutable from Bonn or DE-remote, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
+- 85-100: Excellent fit. Real shot at interview. Werkstudent or internship, no fluent-German demand, anywhere in Germany (remote or any city), in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
@@ -647,8 +647,8 @@ mediocre one; a batch full of strong jobs must not deflate a good one.
   employment form, adjacent stack, German requirement at the edge.
 - ANCHOR 20: "Junior Data Scientist (full-time), Berlin. Python,
   scikit-learn, English team." → 20. Perfect topical fit but WRONG
-  employment form (full-time, not Werkstudent) and not commutable from
-  Bonn; topic match alone cannot lift it.
+  employment form (full-time, not Werkstudent); topic match alone cannot
+  lift it.
 
 ═══════════════════════════════════════════════════════════════
 WORK AUTHORIZATION (highest priority, applied before any other cap)
@@ -658,15 +658,15 @@ other non-EU countries. Score 0 to 15 for any role that is US-only,
 US-remote-only, requires US/UK or other non-EU work authorization, or is
 onsite outside Germany with no Germany-remote option.
 
-LOCATION (applied with the same priority): the candidate studies in BONN.
-On-site or hybrid roles are attendable ONLY within roughly one hour of Bonn
-by train: Bonn, Köln/Cologne, Siegburg, Sankt Augustin, Troisdorf, Hennef,
-Brühl, Wesseling, Hürth, Bornheim, Königswinter, Bad Honnef, Remagen,
-Andernach, Koblenz, Euskirchen, Leverkusen, Bergisch Gladbach, Dormagen,
-Neuss, Düsseldorf. Score 0 to 15 for on-site/hybrid roles anywhere else in
-Germany (Berlin, Munich, Hamburg, Frankfurt, Aachen, Dortmund, ... — a
-weekly office day there does not work alongside Bonn lectures). Genuinely
-remote-within-Germany roles are fully eligible.
+LOCATION: the candidate studies in BONN but has chosen (2026-09-07) to see
+English-language roles ANYWHERE in Germany. Do NOT cap or penalise a role
+for being on-site or hybrid in Berlin, Munich, Hamburg, Frankfurt or any
+other German city — the digest shows the city and work mode and he decides
+himself. Only locations outside Germany (handled above) are penalised.
+
+LANGUAGE OF THE AD: every ad you see has already passed an English-language
+test. Do not reward or penalise the ad's language; judge only the German
+level the role DEMANDS (see the cap below).
 
 ═══════════════════════════════════════════════════════════════
 HARD CAPS — these set a MAXIMUM score the role can receive.

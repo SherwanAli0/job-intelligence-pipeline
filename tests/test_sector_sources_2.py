@@ -142,7 +142,7 @@ class TestSectorBatch3Config:
         assert "redcare-pharmacy" in SMARTRECRUITERS_SLUGS
         assert "RedcarePharmacy" not in SMARTRECRUITERS_SLUGS, "CamelCase id is a test board"
         assert "SopraSteria1" in SMARTRECRUITERS_SLUGS
-        assert ("accenture", "wd103", "AccentureCareers") in WORKDAY_CXS_TENANTS
+        assert ("accenture", "wd103", "AccentureCareers") in {t[:3] for t in WORKDAY_CXS_TENANTS}
 
     def test_inverto_deloitte_ey_wired(self):
         import main
