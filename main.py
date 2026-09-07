@@ -871,23 +871,70 @@ def _is_commutable_or_remote(j: dict) -> bool:
 
 
 
-# ── Germany-wide (2026-09-07): location is a ranking signal, not a filter ────
-# Owner decision, paired with the English-only rule: "widen the search area
-# but only send the ones that have an English description". The commute belt
-# (_COMMUTABLE_FROM_BONN) no longer drops anything; it decides the ORDER of
-# the digest — remote first, then the Bonn belt, then the rest of Germany —
-# and every row carries a REMOTE / HYBRID / ON-SITE label plus the city, so
-# he judges a Berlin or Munich role himself. _is_commutable_or_remote stays
-# as the belt definition and for its regression tests.
+# ── Focus area (2026-09-07, second decision of the day) ─────────────────────
+# The morning's rule was Germany-wide with the belt only ordering the digest.
+# After the first English-only digest (55 jobs, mostly Berlin and Munich
+# on-site) the owner narrowed it: "from now on we focus on hybrid, remote and
+# NRW and Bonn only". So:
+#   REMOTE   anywhere in Germany            -> kept, rank 0
+#   ON-SITE / HYBRID in the Bonn belt       -> kept, rank 1 ("near Bonn")
+#   ON-SITE / HYBRID elsewhere in NRW       -> kept, rank 2 ("NRW")
+#   HYBRID elsewhere in Germany             -> kept, rank 3 (city shown)
+#   ON-SITE with a known city outside NRW   -> DROPPED (_is_in_focus_area)
+#   unknown location                        -> kept (absence of evidence)
+# The belt reaches into Rhineland-Palatinate (Koblenz, Remagen, Andernach),
+# which is why the belt list is checked before the NRW list.
+_NRW_SIGNALS = (
+    "nordrhein-westfalen", "north rhine-westphalia", "nrw", ", nw,", ", nw ",
+    "köln", "cologne", "koeln", "bonn", "düsseldorf", "duesseldorf", "dusseldorf",
+    "dortmund", "essen", "duisburg", "bochum", "wuppertal", "bielefeld", "münster",
+    "muenster", "gelsenkirchen", "mönchengladbach", "moenchengladbach", "aachen",
+    "krefeld", "oberhausen", "hagen", "hamm", "mülheim", "muelheim", "leverkusen",
+    "solingen", "herne", "neuss", "paderborn", "recklinghausen", "bottrop",
+    "remscheid", "moers", "siegen", "bergisch gladbach", "witten", "iserlohn",
+    "gütersloh", "guetersloh", "lüdenscheid", "düren", "dueren", "ratingen",
+    "lünen", "marl", "velbert", "minden", "viersen", "rheine", "troisdorf",
+    "dorsten", "castrop-rauxel", "arnsberg", "detmold", "gladbeck", "bocholt",
+    "bergheim", "dinslaken", "unna", "herford", "grevenbroich", "sankt augustin",
+    "st. augustin", "siegburg", "hürth", "huerth", "euskirchen", "meckenheim",
+    "wachtberg", "rheinbach", "brühl", "bruehl", "wesseling", "bornheim",
+    "königswinter", "koenigswinter", "bad honnef", "hennef", "pulheim", "kerpen",
+    "frechen", "langenfeld", "hilden", "erkrath", "monheim", "dormagen", "kaarst",
+    "meerbusch", "willich", "kempen", "jülich", "juelich", "eschweiler", "stolberg",
+    "alsdorf", "würselen", "herzogenrath", "bad godesberg", "sankt augustin",
+)
+# Known German cities and states OUTSIDE NRW. Only these drop an on-site role;
+# "Deutschland" or an empty field is unknown and stays.
+_OUTSIDE_NRW_SIGNALS = (
+    "berlin", "münchen", "muenchen", "munich", "hamburg", "frankfurt", "stuttgart",
+    "leipzig", "dresden", "nürnberg", "nuernberg", "nuremberg", "hannover",
+    "hanover", "karlsruhe", "mannheim", "heidelberg", "bremen", "kiel", "freiburg",
+    "augsburg", "regensburg", "ulm", "kassel", "erfurt", "jena", "braunschweig",
+    "wolfsburg", "ingolstadt", "darmstadt", "wiesbaden", "mainz", "saarbrücken",
+    "saarbruecken", "rostock", "magdeburg", "potsdam", "lübeck", "luebeck",
+    "würzburg", "wuerzburg", "göttingen", "goettingen", "walldorf", "heilbronn",
+    "tübingen", "tuebingen", "konstanz", "oberkochen", "garching", "erlangen",
+    "ludwigshafen", "chemnitz", "halle", "cottbus", "oldenburg", "osnabrück",
+    "osnabrueck", "hildesheim", "parsdorf", "ottobrunn", "taufkirchen",
+    "friedrichshafen", "stade", "manching", "bayern", "bavaria",
+    "baden-württemberg", "baden-wuerttemberg", "baden wuerttemberg", "hessen",
+    "hesse", "niedersachsen", "lower saxony", "sachsen", "saxony", "thüringen",
+    "thuringia", "schleswig-holstein", "brandenburg", "mecklenburg", "saarland",
+    "rheinland-pfalz", "rhineland-palatinate", "sachsen-anhalt",
+    # Indeed's state codes
+    ", by,", ", be,", ", hh,", ", bw,", ", he,", ", ni,", ", sn,", ", th,",
+    ", sh,", ", bb,", ", mv,", ", sl,", ", rp,", ", st,", ", hb,",
+)
 
 
 def _tag_where(j: dict) -> dict:
-    """Annotate j with _where (REMOTE / HYBRID / ON-SITE), _belt and
-    _where_rank (0 remote, 1 belt, 2 elsewhere). Mutates and returns j."""
+    """Annotate j with _where (REMOTE / HYBRID / ON-SITE), _belt, _nrw and
+    _where_rank (0 remote, 1 belt, 2 NRW, 3 elsewhere). Mutates and returns j."""
     loc = (j.get("location") or "").lower()
     desc = (j.get("description") or "").lower()
     blob = f"{loc} {desc}"
     belt = any(c in loc for c in _COMMUTABLE_FROM_BONN)
+    nrw = belt or any(c in loc for c in _NRW_SIGNALS)
     far_city = any(c in loc for c in _NON_COMMUTABLE_DE_CITIES)
     if _is_full_remote(loc, desc) or ("remote" in loc and not far_city):
         where = "REMOTE"
@@ -898,8 +945,21 @@ def _tag_where(j: dict) -> dict:
         where = "ON-SITE"
     j["_where"] = where
     j["_belt"] = belt
-    j["_where_rank"] = 0 if where == "REMOTE" else (1 if belt else 2)
+    j["_nrw"] = nrw
+    j["_where_rank"] = 0 if where == "REMOTE" else (1 if belt else (2 if nrw else 3))
     return j
+
+
+def _is_in_focus_area(j: dict) -> bool:
+    """Owner's focus (2026-09-07): remote or hybrid anywhere in Germany,
+    on-site only in NRW or the Bonn belt. An on-site role with a known city
+    outside NRW is dropped; an unknown location is kept for the scorer."""
+    if j.get("_where") in ("REMOTE", "HYBRID"):
+        return True
+    if j.get("_nrw"):
+        return True
+    loc = (j.get("location") or "").lower()
+    return not any(c in loc for c in _OUTSIDE_NRW_SIGNALS)
 
 
 _BODY_FETCH_CAP = 300            # HTTP requests per run; no Claude tokens
@@ -1523,10 +1583,13 @@ def node_filter(state: dict) -> dict:
     new_jobs = _apply_filter(new_jobs, _is_tech_relevant,
                              "Tech-relevance filter (CV keywords)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
-    # Germany-wide since 2026-09-07: the belt orders the digest, it no longer
-    # drops. Every job is labelled REMOTE / HYBRID / ON-SITE here.
+    # Every job is labelled REMOTE / HYBRID / ON-SITE plus belt/NRW here, then
+    # the focus-area rule keeps remote + hybrid anywhere in Germany and
+    # on-site only in NRW or the Bonn belt (owner, 2026-09-07).
     for j in new_jobs:
         _tag_where(j)
+    new_jobs = _apply_filter(new_jobs, _is_in_focus_area,
+                             "Focus-area filter (remote/hybrid DE, on-site NRW+Bonn)")
     new_jobs = _apply_filter(new_jobs, _is_english_friendly,
                              "English filter (ad must read as English)")
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
@@ -1570,9 +1633,9 @@ def node_rank(state: dict) -> dict:
     good = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
     top = _diversify(good, MAX_RESULTS)
-    # Digest order (2026-09-07): remote first, then the Bonn belt, then the
-    # rest of Germany; score decides within each group.
-    top.sort(key=lambda x: (x.get("_where_rank", 2), -x.get("score", 0)))
+    # Digest order (2026-09-07): remote, then the Bonn belt, then the rest of
+    # NRW, then hybrid elsewhere; score decides within each group.
+    top.sort(key=lambda x: (x.get("_where_rank", 3), -x.get("score", 0)))
 
     from collections import Counter as _C
     mix = dict(_C(j.get("_track", "?") for j in top))
@@ -1590,7 +1653,8 @@ def node_rank(state: dict) -> dict:
     print(f"Near misses (35-{MIN_SCORE - 1}): {near_count} (not sent)")
     print(f"Sending top {len(top)} to notifications\n")
     for j in top[:10]:
-        where = (j.get("_where") or "?") + (" · near Bonn" if j.get("_belt") else "")
+        where = (j.get("_where") or "?") + (" · near Bonn" if j.get("_belt")
+                                            else " · NRW" if j.get("_nrw") else "")
         print(f"  [{j['score']:3d}] {j['title']} @ {j['company']} "
               f"({j['source']}; {where}; {j.get('location', '')})")
 

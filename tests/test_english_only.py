@@ -100,10 +100,12 @@ class TestGermanyWideIsRankingNotFiltering:
         assert "Commute filter" not in src
         assert "_tag_where" in src
 
-    def test_berlin_onsite_english_working_student_reaches_the_scorer(self):
-        j = _j("Working Student Data Engineering", ENGLISH, location="Berlin, Germany")
+    def test_berlin_hybrid_english_working_student_reaches_the_scorer(self):
+        j = _j("Working Student Data Engineering", ENGLISH + " Hybrid, two office days.",
+               location="Berlin, Germany")
         assert main._is_attendable_from_germany(j)
         assert main._is_english_friendly(j)
+        assert main._is_in_focus_area(main._tag_where(j))
         disq, _r, _c = scorer._hard_disqualify(j)
         assert not disq
 
@@ -113,7 +115,9 @@ class TestGermanyWideIsRankingNotFiltering:
         assert belt["_where"] == "ON-SITE" and belt["_belt"] and belt["_where_rank"] == 1
         hyb = main._tag_where(_j("W", ENGLISH + " Hybrid: two days in the office.",
                                  location="Berlin, Germany"))
-        assert hyb["_where"] == "HYBRID" and not hyb["_belt"] and hyb["_where_rank"] == 2
+        assert hyb["_where"] == "HYBRID" and not hyb["_belt"] and hyb["_where_rank"] == 3
+        nrw = main._tag_where(_j("W", ENGLISH, location="Dortmund, North Rhine-Westphalia, Germany"))
+        assert nrw["_where"] == "ON-SITE" and nrw["_nrw"] and not nrw["_belt"] and nrw["_where_rank"] == 2
         # Ashby-style "Berlin (Remote)": an office exists, so it is hybrid,
         # not remote — the city still matters.
         assert main._tag_where(_j("W", ENGLISH, location="Berlin (Remote)"))["_where"] == "HYBRID"
@@ -133,6 +137,61 @@ class TestGermanyWideIsRankingNotFiltering:
         ]
         out = main.node_rank({"scored": scored})
         assert [j["id"] for j in out["top"]] == ["r", "k", "b"]
+
+
+class TestFocusArea:
+    """Second decision of 2026-09-07, after the first Germany-wide digest:
+    "from now on we focus on hybrid, remote and NRW and Bonn only"."""
+
+    def _f(self, loc, extra=""):
+        return main._is_in_focus_area(main._tag_where(_j("W", ENGLISH + extra, location=loc)))
+
+    def test_remote_anywhere_is_kept(self):
+        assert self._f("Munich, Bavaria, Germany", " This role is 100% remote within Germany.")
+        assert self._f("Remote, Germany")
+
+    def test_hybrid_anywhere_is_kept(self):
+        assert self._f("Berlin, Germany", " Hybrid: two days in the office.")
+        assert self._f("Hamburg, Germany", " Homeoffice möglich.")
+        assert self._f("Berlin (Remote)")
+
+    def test_onsite_outside_nrw_is_dropped(self):
+        for loc in ("Munich, Bavaria, Germany", "Berlin, BE, DE", "Frankfurt am Main",
+                    "Stuttgart, Baden-Württemberg, Germany", "Parsdorf, Bavaria, Germany",
+                    "Garching - Bavaria, Germany", "Karlsruhe, Baden-Württemberg, Germany"):
+            assert not self._f(loc), loc
+
+    def test_onsite_in_nrw_and_the_belt_is_kept(self):
+        for loc in ("Bonn, NW, DE", "Cologne, North Rhine-Westphalia, Germany",
+                    "Dortmund, Germany", "Aachen, Germany", "Essen, NW, DE",
+                    "Nordrhein-Westfalen, Düsseldorf", "Koblenz, Germany",
+                    "Remagen", "Sankt Augustin, Germany", "Bielefeld"):
+            assert self._f(loc), loc
+
+    def test_unknown_location_is_kept(self):
+        assert self._f("")
+        assert self._f("Deutschland")
+        assert self._f("Germany")
+
+    def test_filter_is_wired_after_tagging_and_before_the_language_test(self):
+        src = inspect.getsource(main.node_filter)
+        assert src.index("_tag_where") < src.index("_is_in_focus_area") < src.index("_is_english_friendly")
+
+    def test_digest_order_is_remote_belt_nrw_then_hybrid_elsewhere(self, monkeypatch):
+        monkeypatch.setattr(main, "enrich_with_kits", lambda top: None, raising=False)
+        mk = lambda i, loc, extra="", score=50: dict(main._tag_where(
+            _j(i, ENGLISH + extra, location=loc, id=i)), score=score, _track="AI")
+        scored = [mk("hyb-berlin", "Berlin", " Hybrid role.", 99),
+                  mk("nrw", "Dortmund, Germany", "", 70),
+                  mk("belt", "Köln, Germany", "", 60),
+                  mk("remote", "Remote, Germany", "", 45)]
+        out = main.node_rank({"scored": scored})
+        assert [j["id"] for j in out["top"]] == ["remote", "belt", "nrw", "hyb-berlin"]
+
+    def test_prompt_and_profile_say_nrw(self):
+        prompt = scorer._system_prompt("profile")
+        assert "on-site roles only in North Rhine-" in prompt
+        assert "ON-SITE only in" in _CV_SHARED
 
 
 class TestDigestShowsWhere:

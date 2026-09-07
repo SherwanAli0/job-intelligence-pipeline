@@ -630,7 +630,7 @@ CANDIDATE PROFILE (this profile is already framed for the track of the jobs in t
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
 ═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Werkstudent or internship, no fluent-German demand, anywhere in Germany (remote or any city), in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
+- 85-100: Excellent fit. Real shot at interview. Werkstudent or internship, no fluent-German demand, remote/hybrid in Germany or on-site in NRW, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
@@ -658,11 +658,14 @@ other non-EU countries. Score 0 to 15 for any role that is US-only,
 US-remote-only, requires US/UK or other non-EU work authorization, or is
 onsite outside Germany with no Germany-remote option.
 
-LOCATION: the candidate studies in BONN but has chosen (2026-09-07) to see
-English-language roles ANYWHERE in Germany. Do NOT cap or penalise a role
-for being on-site or hybrid in Berlin, Munich, Hamburg, Frankfurt or any
-other German city — the digest shows the city and work mode and he decides
-himself. Only locations outside Germany (handled above) are penalised.
+LOCATION: the candidate studies in BONN. His rule (2026-09-07): remote or
+hybrid roles ANYWHERE in Germany, on-site roles only in North Rhine-
+Westphalia (Bonn, Köln, Düsseldorf, Dortmund, Essen, Aachen, Münster ...)
+or the Bonn belt (Koblenz, Remagen, Andernach). On-site roles elsewhere are
+removed BEFORE you see them, so do NOT cap or penalise a role for its German
+city — a hybrid role in Munich or Berlin is in scope by his decision; the
+digest shows the city and work mode and he judges the commute himself. Only
+locations outside Germany (handled above) are penalised.
 
 LANGUAGE OF THE AD: every ad you see has already passed an English-language
 test. Do not reward or penalise the ad's language; judge only the German

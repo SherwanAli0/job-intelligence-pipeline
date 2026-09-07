@@ -49,11 +49,12 @@ software — any of:
 (b) an INTERNSHIP: Praktikum, Pflichtpraktikum, Praxissemester, internship,
 (c) a PART-TIME (Teilzeit) regular role of roughly 20h/week or less.
 All three count equally. NOT full-time (Vollzeit) permanent roles, NOT thesis positions.
-LOCATION: anywhere in GERMANY — remote, hybrid or on-site in any German city (decision
-2026-09-07: English-language ads only, Germany-wide; the digest shows city and work mode
-and he judges reachability himself). He lives and studies in Bonn, so Bonn, Köln and
-Düsseldorf are the easiest, but a role in Berlin, Munich, Hamburg or elsewhere in Germany
-must NOT be scored down for its location. Outside Germany remains a hard no.
+LOCATION (decision 2026-09-07): REMOTE or HYBRID anywhere in Germany, ON-SITE only in
+North Rhine-Westphalia or the Bonn belt (Bonn, Köln, Düsseldorf, Dortmund, Essen, Aachen,
+Münster, Koblenz ...). On-site roles elsewhere are filtered out before scoring. He lives and
+studies in Bonn, so Bonn/Köln/Düsseldorf are the easiest, but a remote or hybrid role in
+Berlin, Munich or Hamburg must NOT be scored down for its location — English-language ads
+only, and he judges the commute himself. Outside Germany remains a hard no.
 
 LANGUAGE REQUIREMENT (critical for scoring):
 - English: C1. STRONGLY prefer English-first roles or English-speaking teams.

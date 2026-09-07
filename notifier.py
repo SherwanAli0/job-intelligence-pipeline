@@ -112,7 +112,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
         # primary: work mode / belt (remote, near Bonn, rest of Germany —
         # 2026-09-07), then score (desc), then fresher first (None → far past)
         fresh_rank = h if h is not None else 1e9
-        return (j.get("_where_rank", 2), -j.get("score", 0), fresh_rank)
+        return (j.get("_where_rank", 3), -j.get("score", 0), fresh_rank)
     jobs = sorted(jobs, key=_sort_key)
 
     # Near misses (35–44, flagged by main.py) render in their own dimmed
@@ -184,7 +184,8 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
         where_html = ""
         if where:
             wcol = {"REMOTE": "#059669", "HYBRID": "#d97706"}.get(where, "#6b7280")
-            wtxt = where + (" · near Bonn" if j.get("_belt") else "")
+            wtxt = where + (" · near Bonn" if j.get("_belt")
+                            else " · NRW" if j.get("_nrw") else "")
             where_html = (
                 f'<span style="background:{wcol};color:#fff;padding:1px 6px;'
                 f'border-radius:8px;font-size:10px;font-weight:700;margin-right:6px;">{wtxt}</span>'
@@ -281,7 +282,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
     <div style="background:#1e3a5f;padding:24px 28px;">
       <h1 style="color:#fff;margin:0;font-size:20px;">🎯 Job Digest — {today}</h1>
       <p style="color:#93c5fd;margin:6px 0 0;font-size:14px;">
-        {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · remote first, then near Bonn{fresh_summary}
+        {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · remote first, then near Bonn, then NRW{fresh_summary}
       </p>
     </div>
     {warn_html}
