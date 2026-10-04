@@ -75,7 +75,10 @@ _BACKGROUND_SCRAPERS = {"scrape_jobspy", "scrape_web_search"}
 # How long to wait for a background source once everything else is done. They
 # have already had the full sequential scrape to work in, so this is a final
 # grace period rather than the budget itself.
-BACKGROUND_JOIN_SECONDS = int(os.environ.get("JOBHUNTER_BACKGROUND_JOIN", "420"))
+# 420s -> 900s on 2026-10-04: JobSpy now runs EVERY query on the one daily run
+# (see _jobspy_active_queries), and a 21-query slice was already taking 23-29
+# minutes. The extra grace costs at most eight minutes of Fargate time.
+BACKGROUND_JOIN_SECONDS = int(os.environ.get("JOBHUNTER_BACKGROUND_JOIN", "900"))
 
 
 def _start_scraper(scraper):
@@ -268,23 +271,39 @@ def job(title, company, location, url, source, description="", posted_at="",
 
 def _jobspy_active_queries() -> list[str]:
     """
-    Rotate query halves across the two daily runs so ALL queries get coverage
-    every day without doubling per-run rate-limit exposure:
-      morning run  (5 UTC)  → first half of SEARCH_QUERIES
-      afternoon run (13 UTC) → second half
-    Manual runs pick the half matching the current UTC hour.
+    Every query, every run, interleaved by employment form.
+
+    This used to return HALF the list, chosen by the UTC hour, so that two
+    daily runs covered everything between them. The afternoon run was switched
+    off on 2026-08-18 and the split was never removed: the 10:00 run always
+    drew slice A, and every internship and part-time query sat in slice B.
+    Production printed "query slice A (1-21) of 42" on every run for six
+    weeks, so Indeed and JobSpy-LinkedIn were never once asked for an
+    internship or a part-time role.
+
+    The order is round-robin across the three forms (student, internship,
+    part-time). JobSpy is time-boxed and salvages whatever finished, so a slow
+    LinkedIn day now costs depth on every form equally instead of erasing
+    whichever form happened to be listed last.
     """
-    from datetime import datetime, timezone
-    n = len(SEARCH_QUERIES)
-    mid = (n + 1) // 2
-    if datetime.now(timezone.utc).hour < 12:
-        active = SEARCH_QUERIES[:mid]
-        label = f"A (1-{mid})"
-    else:
-        active = SEARCH_QUERIES[mid:]
-        label = f"B ({mid + 1}-{n})"
-    print(f"  [JobSpy] query slice {label} of {n} total")
-    return active
+    groups: dict[str, list[str]] = {"student": [], "intern": [], "part": []}
+    for q in SEARCH_QUERIES:
+        ql = q.lower()
+        if "teilzeit" in ql or "part-time" in ql or "part time" in ql:
+            groups["part"].append(q)
+        elif re.search(r"praktik|praxissemester|intern", ql):
+            groups["intern"].append(q)
+        else:
+            groups["student"].append(q)
+    lanes = [groups["student"], groups["intern"], groups["part"]]
+    order: list[str] = []
+    while any(lanes):
+        for lane in lanes:
+            if lane:
+                order.append(lane.pop(0))
+    print(f"  [JobSpy] all {len(order)} queries, interleaved by form "
+          f"(student / internship / part-time)")
+    return order
 
 
 # Phase two of JobSpy scraping: fetch full descriptions, in parallel, only for
@@ -364,12 +383,22 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False) -> None:
           + (f", {truncated} over the {_JOBSPY_DESC_CAP} cap" if truncated else "") + ")")
 
 
-def _jobspy_rows_to_jobs(df, results: list[dict]) -> None:
-    """Convert a JobSpy dataframe into job() dicts, appending to results."""
+def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None) -> None:
+    """Convert a JobSpy dataframe into job() dicts, appending to results.
+
+    `seen_urls` carries the URLs earlier queries already produced. The queries
+    overlap heavily ("Werkstudent Data Science" / "Werkstudent Data Analyst" /
+    "Working Student Data Analytics" return many of the same postings), and
+    every repeated row used to cost another description fetch. Skipping them
+    is what makes room for all 42 queries inside the time box."""
     for _, row in df.iterrows():
         url = str(row.get("job_url", "")) or str(row.get("url", ""))
         if not url:
             continue
+        if seen_urls is not None:
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
         posted = row.get("date_posted", "") or ""
         # job_url_direct = the "apply on company site" link JobSpy resolves —
         # applying at the ATS source (vs the LinkedIn/Indeed relay) lands in the
@@ -401,6 +430,7 @@ def scrape_jobspy() -> list[dict]:
         results.clear()
         _JOBSPY_DESC_STATS[:] = [0, 0, 0]
         active = _jobspy_active_queries()
+        seen_urls: set[str] = set()
 
         # LinkedIn + Indeed — the reliable pair (glassdoor = Cloudflare blocked)
         for query in active:
@@ -439,7 +469,7 @@ def scrape_jobspy() -> list[dict]:
                     linkedin_fetch_description=False,
                 )
                 before = len(results)
-                _jobspy_rows_to_jobs(df, results)
+                _jobspy_rows_to_jobs(df, results, seen_urls)
                 # Enrich THIS query's jobs immediately rather than batching all
                 # enrichment to the end. LinkedIn's response time is highly
                 # variable (measured 1s to 87s for the same query shape), so a

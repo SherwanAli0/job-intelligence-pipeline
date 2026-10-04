@@ -120,7 +120,11 @@ class TestMainUsesStorage:
         monkeypatch.setitem(sys.modules, "storage", storage)
         import main
 
-        main.save_seen({"job-1": "2026-07-20", "job-2": "2026-07-20"})
+        # Today's date, not a literal: save_seen prunes ids not re-seen for
+        # 60 days, so a hard-coded July date started failing in September.
+        from datetime import date
+        today = date.today().isoformat()
+        main.save_seen({"job-1": today, "job-2": today})
         assert "state/seen_jobs.json" in s3.objects
         assert set(main.load_seen()) == {"job-1", "job-2"}
 
