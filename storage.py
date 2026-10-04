@@ -47,8 +47,35 @@ def _key(name: str) -> str:
     return f"{PREFIX}/{base}" if PREFIX else base
 
 
+class StorageUnavailable(RuntimeError):
+    """State could not be READ, for a reason other than "it does not exist
+    yet". Deliberately not swallowed: see read_text."""
+
+
+def _is_missing(e: Exception) -> bool:
+    """Is this S3 error "no such object" (normal on a first run)?"""
+    try:
+        code = str(e.response["Error"]["Code"])          # botocore ClientError
+    except Exception:
+        code = ""
+    if code in ("NoSuchKey", "404", "NotFound"):
+        return True
+    text = f"{type(e).__name__} {e}"
+    return "NoSuchKey" in text or "404" in text
+
+
 def read_text(name: str) -> str | None:
-    """File contents, or None if it doesn't exist yet."""
+    """File contents, or None if it doesn't exist yet.
+
+    Any OTHER read failure raises StorageUnavailable. This used to return
+    None too, and every caller treats None as "empty history": one access
+    error or timeout made the pipeline see all ~10,000 scraped jobs as new,
+    score a multiple of the usual volume, re-email roles sent weeks ago, and
+    then overwrite the run history and the emailed-log with a single line.
+    Stopping the run costs one day; carrying on cost the state. Callers for
+    whom the data is optional (run history, source registry, answer bank)
+    catch the exception themselves.
+    """
     if not using_s3():
         p = Path(name)
         return p.read_text(encoding="utf-8") if p.exists() else None
@@ -56,13 +83,9 @@ def read_text(name: str) -> str | None:
         obj = _s3().get_object(Bucket=BUCKET, Key=_key(name))
         return obj["Body"].read().decode("utf-8")
     except Exception as e:
-        # A missing object is normal on a first run; anything else is worth
-        # seeing in the logs rather than silently starting from empty state.
-        if type(e).__name__ not in ("NoSuchKey", "ClientError"):
-            print(f"  [Storage] read {name} failed: {e}")
-        elif "NoSuchKey" not in str(e) and "404" not in str(e):
-            print(f"  [Storage] read {name} failed: {e}")
-        return None
+        if _is_missing(e):
+            return None
+        raise StorageUnavailable(f"could not read {name} from {describe()}: {e}") from e
 
 
 def write_text(name: str, text: str) -> None:
@@ -104,7 +127,18 @@ def append_line(name: str, line: str) -> None:
 # S3 conditional writes (If-None-Match: *) make the claim atomic: exactly one
 # concurrent caller can create the object, everyone else gets 412.
 
-_CLAIM_TTL_SECONDS = 90 * 60   # a crashed run must not lock the pipeline forever
+# A crashed run must not lock the pipeline forever, but the TTL has to outlast
+# a HEALTHY run. It was 90 minutes, which is the batch wait alone: the run of
+# 2026-09-07 took 2h03 (40 min scrape + 86 min in Anthropic's batch queue) and
+# so outlived its own claim by half an hour, during which a manual start
+# would have sent a second digest. Scrape (<= 60 min) + batch (<= 90 min) +
+# straggler re-scoring and margin.
+_CLAIM_TTL_SECONDS = 4 * 60 * 60
+
+# Claims this PROCESS holds, name -> owner token. release() deletes a claim
+# only when the token still matches, so a run that overran its TTL and was
+# taken over cannot delete the newer run's claim on its way out.
+_OWNED_CLAIMS: dict[str, str] = {}
 
 
 def _now_epoch() -> float:
@@ -120,8 +154,10 @@ def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
     A claim older than ttl_seconds is treated as abandoned (the holder crashed)
     and taken over, so a failed run cannot wedge the pipeline permanently.
     """
+    import uuid
     key = f"{name}.claim"
-    payload = json.dumps({"claimed_at": _now_epoch(), "ttl": ttl_seconds})
+    owner = uuid.uuid4().hex
+    payload = json.dumps({"claimed_at": _now_epoch(), "ttl": ttl_seconds, "owner": owner})
 
     if not using_s3():
         # Local runs are single-process; keep the same interface without
@@ -135,19 +171,30 @@ def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
             except Exception:
                 pass
         p.write_text(payload, encoding="utf-8")
+        _OWNED_CLAIMS[name] = owner
         return True
 
     try:
         _s3().put_object(Bucket=BUCKET, Key=_key(key),
                          Body=payload.encode("utf-8"), IfNoneMatch="*")
+        _OWNED_CLAIMS[name] = owner
         return True
     except Exception as e:
         if "PreconditionFailed" not in str(e) and "412" not in str(e):
             # Not a lost race — don't let an unrelated S3 error silently
-            # block the run.
+            # block the run. No claim was written, so nothing is owned and
+            # release() will leave the object alone. If S3 is genuinely
+            # unreachable the run stops at its first state read instead.
             print(f"  [Claim] could not evaluate {name}: {e}")
             return True
-        held_raw = read_text(key)
+        try:
+            held_raw = read_text(key)
+        except StorageUnavailable as err:
+            # The claim exists (412) but cannot be read. It used to be parsed
+            # as "{}", i.e. claimed in 1970, and taken over — stealing a claim
+            # that could be seconds old. Not knowing is not abandonment.
+            print(f"  [Claim] {name} exists but could not be read ({err}) — exiting")
+            return False
         try:
             held = json.loads(held_raw or "{}")
             age = _now_epoch() - float(held.get("claimed_at", 0))
@@ -158,17 +205,33 @@ def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
             return False
         print(f"  [Claim] taking over abandoned {name} claim ({int(age)}s old)")
         write_text(key, payload)
+        _OWNED_CLAIMS[name] = owner
         return True
 
 
 def release(name: str) -> None:
     """Drop a claim so the next scheduled run can start immediately."""
     key = f"{name}.claim"
+    owner = _OWNED_CLAIMS.pop(name, None)
     try:
         if not using_s3():
             p = Path(key)
             if p.exists():
                 p.unlink()
+            return
+        if owner is None:
+            return                       # this process never wrote the claim
+        held_raw = read_text(key)
+        if held_raw is None:
+            return                       # already gone
+        try:
+            held_owner = json.loads(held_raw).get("owner")
+        except Exception:
+            held_owner = None
+        if held_owner != owner:
+            # This run outlived its TTL and another run took the claim over.
+            # Deleting it now would unlock the pipeline under that run.
+            print(f"  [Claim] {name} is now held by another run — leaving it in place")
             return
         _s3().delete_object(Bucket=BUCKET, Key=_key(key))
     except Exception as e:

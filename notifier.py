@@ -310,6 +310,11 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
 </html>"""
 
 
+# Seconds to wait after each failed SMTP attempt; the last entry is 0 because
+# nothing follows it. Three attempts in total.
+_SMTP_RETRY_WAITS = (5, 20, 0)
+
+
 def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     """Send the digest. Returns True only on confirmed delivery — main.py uses
     this to decide whether jobs may be marked 'seen' (a failed send must not
@@ -338,15 +343,27 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     html = _build_html(jobs, warnings)
     msg.attach(MIMEText(html, "html"))
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(gmail_user, gmail_pass)
-            server.sendmail(gmail_user, gmail_to, msg.as_string())
-        print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh) to {gmail_to}")
-        return True
-    except Exception as e:
-        print(f"  [Email] Failed: {e}")
-        return False
+    # Three attempts with a short backoff: a dropped connection or a
+    # transient 4xx from Gmail should not cost the day's digest. A persistent
+    # failure (revoked app password) still ends in False, and main.main()
+    # then fails the run so it is visible.
+    import time as _time
+    last_error = None
+    for attempt, wait in enumerate(_SMTP_RETRY_WAITS, start=1):
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(gmail_user, gmail_pass)
+                server.sendmail(gmail_user, gmail_to, msg.as_string())
+            print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh) to {gmail_to}"
+                  + (f" (attempt {attempt})" if attempt > 1 else ""))
+            return True
+        except Exception as e:
+            last_error = e
+            print(f"  [Email] attempt {attempt}/{len(_SMTP_RETRY_WAITS)} failed: {e}")
+            if wait:
+                _time.sleep(wait)
+    print(f"  [Email] Failed: {last_error}")
+    return False
 
 
 # ── Notion ─────────────────────────────────────────────────────────────────────

@@ -29,20 +29,46 @@ client = None
 # instead — the same "measure, don't estimate" discipline that decided Fargate
 # over Lambda.
 TOKEN_USAGE: dict = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
-                     "by_model": {}, "batched": False}
+                     "cache_write_1h": 0, "by_model": {}, "batched": False}
 
-# USD per million tokens. Batch requests bill at 50%; cached reads at ~10% of
-# the input rate, cache writes at 125%.
+# USD per million tokens. Multipliers on the input rate: cache read 0.1x,
+# cache write 1.25x for the default 5-minute TTL and 2x for the 1-hour TTL
+# (the batch path uses 1h). The Message Batches API bills everything at 50%.
 _PRICES = {
     "claude-haiku-4-5-20251001": {"in": 1.00, "out": 5.00},
-    "claude-sonnet-5": {"in": 2.00, "out": 10.00},   # intro pricing to 2026-08-31
 }
 _DEFAULT_PRICE = {"in": 3.00, "out": 15.00}
+_CACHE_READ_MULT = 0.10
+_CACHE_WRITE_5M_MULT = 1.25
+_CACHE_WRITE_1H_MULT = 2.00
+_BATCH_DISCOUNT = 0.5
+
+
+def _cache_write_1h_tokens(usage, cache_write: int, batched: bool) -> int:
+    """How many of the cache-write tokens used the 1-hour TTL. The API reports
+    the split under usage.cache_creation; when it is absent, fall back to what
+    this code requests: 1h on the batch path, 5m on the sync path."""
+    cc = getattr(usage, "cache_creation", None)
+    if cc is not None:
+        v = (cc.get("ephemeral_1h_input_tokens") if isinstance(cc, dict)
+             else getattr(cc, "ephemeral_1h_input_tokens", None))
+        if v is not None:
+            try:
+                return min(cache_write, int(v or 0))
+            except Exception:
+                pass
+    return cache_write if batched else 0
 
 
 def _record_usage(model: str, usage, batched: bool = False) -> None:
     """Accumulate token usage from a Messages API response. Never raises: cost
-    telemetry must not be able to break a scoring run."""
+    telemetry must not be able to break a scoring run.
+
+    Batched and synchronous calls are kept in SEPARATE buckets. They used to
+    share one bucket per model with a sticky "batched" flag, so the 50%
+    discount was applied to synchronous fallback calls as well, and every
+    cache write was priced at the 5-minute rate although the batch path
+    requests the 1-hour TTL."""
     try:
         if usage is None:
             return
@@ -50,15 +76,19 @@ def _record_usage(model: str, usage, batched: bool = False) -> None:
         o = int(getattr(usage, "output_tokens", 0) or 0)
         cr = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
         cw = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        cw1h = _cache_write_1h_tokens(usage, cw, batched)
         TOKEN_USAGE["input"] += i
         TOKEN_USAGE["output"] += o
         TOKEN_USAGE["cache_read"] += cr
         TOKEN_USAGE["cache_write"] += cw
+        TOKEN_USAGE["cache_write_1h"] += cw1h
         TOKEN_USAGE["batched"] = TOKEN_USAGE["batched"] or batched
-        m = TOKEN_USAGE["by_model"].setdefault(model, {"in": 0, "out": 0, "cache_read": 0,
-                                                       "cache_write": 0, "batched": batched})
-        m["in"] += i; m["out"] += o; m["cache_read"] += cr; m["cache_write"] += cw
-        m["batched"] = m["batched"] or batched
+        key = f"{model}|batch" if batched else model
+        m = TOKEN_USAGE["by_model"].setdefault(
+            key, {"model": model, "in": 0, "out": 0, "cache_read": 0,
+                  "cache_write": 0, "cache_write_1h": 0, "batched": batched})
+        m["in"] += i; m["out"] += o; m["cache_read"] += cr
+        m["cache_write"] += cw; m["cache_write_1h"] += cw1h
     except Exception:
         pass
 
@@ -66,13 +96,16 @@ def _record_usage(model: str, usage, batched: bool = False) -> None:
 def estimated_cost_usd() -> float:
     """Cost of this run from measured token counts, in USD."""
     total = 0.0
-    for model, u in TOKEN_USAGE["by_model"].items():
-        p = _PRICES.get(model, _DEFAULT_PRICE)
-        discount = 0.5 if u.get("batched") else 1.0
+    for key, u in TOKEN_USAGE["by_model"].items():
+        p = _PRICES.get(u.get("model") or key.split("|")[0], _DEFAULT_PRICE)
+        discount = _BATCH_DISCOUNT if u.get("batched") else 1.0
+        w1h = int(u.get("cache_write_1h", 0) or 0)
+        w5m = max(0, int(u.get("cache_write", 0) or 0) - w1h)
         total += (u["in"] / 1e6) * p["in"] * discount
         total += (u["out"] / 1e6) * p["out"] * discount
-        total += (u["cache_read"] / 1e6) * p["in"] * 0.10 * discount
-        total += (u["cache_write"] / 1e6) * p["in"] * 1.25 * discount
+        total += (u["cache_read"] / 1e6) * p["in"] * _CACHE_READ_MULT * discount
+        total += (w5m / 1e6) * p["in"] * _CACHE_WRITE_5M_MULT * discount
+        total += (w1h / 1e6) * p["in"] * _CACHE_WRITE_1H_MULT * discount
     return round(total, 4)
 
 

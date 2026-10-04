@@ -61,7 +61,14 @@ def _norm_q(label: str) -> str:
 
 def load_bank() -> dict:
     import storage
-    raw = storage.read_text(str(BANK_FILE))
+    try:
+        raw = storage.read_text(str(BANK_FILE))
+    except storage.StorageUnavailable as e:
+        # The answer bank is a convenience; an unreadable one must not stop
+        # the digest. (It is also not saved over in that case: enrich_with_kits
+        # only writes when it has added an answer.)
+        print(f"  [AppKit] answer bank unavailable: {e}")
+        return {}
     if raw:
         try:
             return json.loads(raw)

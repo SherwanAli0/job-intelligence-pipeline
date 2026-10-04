@@ -1212,7 +1212,6 @@ WORKDAY_TENANTS = [
     ("bosch", "bosch_external", "Bosch"),
     ("deutschetelekom", "telekom_career", "Deutsche Telekom"),
     ("allianz", "allianz", "Allianz"),
-    ("sap", "SAP", "SAP"),
     ("continental", "conti_career", "Continental"),
     ("infineon", "infineon_careers", "Infineon"),
     ("zalando", "zalando", "Zalando"),

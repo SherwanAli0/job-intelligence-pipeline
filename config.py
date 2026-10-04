@@ -17,10 +17,17 @@ _CATCHUP_HOURS = 168                        # 7 days
 _NORMAL_HOURS = 24
 
 
+def is_catchup(today=None) -> bool:
+    """True on a catch-up day (before CATCHUP_UNTIL). Besides the wider
+    freshness window, a catch-up run re-evaluates employer boards without an
+    age cap and blocks everything ever emailed — see main._is_fresh_enough
+    and main._ever_shown_keys. `today` is injectable for tests."""
+    return (today or _date.today()) < CATCHUP_UNTIL
+
+
 def max_posting_age_hours(today=None) -> int:
     """Freshness cap in hours. `today` is injectable for tests."""
-    t = today or _date.today()
-    return _CATCHUP_HOURS if t < CATCHUP_UNTIL else _NORMAL_HOURS
+    return _CATCHUP_HOURS if is_catchup(today) else _NORMAL_HOURS
 
 
 # ── CV profiles (used by Claude for scoring) ──────────────────────────────────
@@ -702,7 +709,10 @@ SMARTRECRUITERS_SLUGS = [
 # type: "workday" | "successfactors" | "generic"
 COMPANY_PAGES = [
     {"name": "Siemens",            "url": "https://jobs.siemens.com/careers?location=Germany&search=data+science",                          "type": "generic"},
-    {"name": "SAP",                "url": "https://jobs.sap.com/search/?q=data+scientist&locname=Germany&country=DE",                         "type": "generic"},
+    # SAP retired 2026-10-04: this page returned 13 rows a run until
+    # 2026-09-21 and nothing since (it is a SuccessFactors site whose markup
+    # changed), and its query was full-time "data scientist" roles anyway.
+    # The source name is in main._RETIRED_SOURCES so its alarm stays quiet.
     {"name": "BMW Group",          "url": "https://www.bmwgroup.jobs/de/en/jobfinder.html?search=data+science",                               "type": "generic"},
     {"name": "Bosch",              "url": "https://careers.bosch.com/en/jobs/?q=data+scientist&location=Germany",                              "type": "generic"},
     {"name": "Continental",        "url": "https://jobs.continental.com/en/search/?q=data+scientist&location=Germany",                         "type": "generic"},

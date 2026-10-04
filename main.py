@@ -1020,8 +1020,12 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     need = [j for j in jobs
             if (j.get("_stub") or _words(j) < _BODY_MIN_WORDS)
             and (j.get("url") or "").startswith("http")]
-    over = need[_BODY_FETCH_CAP:]
-    need = need[:_BODY_FETCH_CAP]
+    # A catch-up day re-reads weeks of employer boards at once; the normal
+    # cap would leave most of that backlog unread.
+    from config import is_catchup
+    cap = _BODY_FETCH_CAP * 5 if is_catchup() else _BODY_FETCH_CAP
+    over = need[cap:]
+    need = need[:cap]
     if not need:
         print("[Body fetch] nothing to fetch — every candidate already has a body")
         return []
@@ -1041,7 +1045,7 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     for j in unresolved:
         j["_body_unresolved"] = True
     print(f"[Body fetch] {got}/{len(need)} stub-body ads fetched"
-          + (f" ({len(over)} over the {_BODY_FETCH_CAP} cap)" if over else "")
+          + (f" ({len(over)} over the {cap} cap)" if over else "")
           + (f"; {len(unresolved)} unresolved, eligible for a retry" if unresolved else ""))
     return [j["id"] for j in unresolved if j.get("id")]
 
@@ -1309,8 +1313,44 @@ _LONG_LIVED_SOURCES = frozenset({
 })
 
 
+# Employer-own boards reached through an ATS feed. They keep the freshness cap
+# on a normal day (they carry thousands of rows and a real posting date), but
+# on a CATCH-UP day they are re-evaluated without it: a role that a since-
+# fixed scraper bug hid for weeks is still open and still worth one look,
+# and the block-list below keeps anything already emailed from coming back.
+_EMPLOYER_ATS_SOURCES = frozenset({
+    "Greenhouse", "Lever", "Ashby", "Personio", "Recruitee",
+    "SmartRecruiters", "Workday-CXS", "Workday", "Amazon",
+})
+
+
+def _ever_shown_keys() -> set[str]:
+    """company::title of every job ever emailed, from the append-only shown
+    log. digested_keys.json keeps 30 days, which is right for a normal day
+    and far too short for a catch-up run that resets seen_jobs: a role
+    emailed in August and still open would be sent again. Raises
+    storage.StorageUnavailable rather than return an empty set, because an
+    empty block-list on a catch-up day means resending everything."""
+    raw = storage.read_text(SHOWN_FILE.name)
+    keys: set[str] = set()
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            k = json.loads(line).get("key")
+        except Exception:
+            continue
+        if k:
+            keys.add(k)
+    return keys
+
+
 def _is_fresh_enough(j: dict) -> bool:
     if j.get("source") in _LONG_LIVED_SOURCES:
+        return True
+    from config import is_catchup
+    if is_catchup() and j.get("source") in _EMPLOYER_ATS_SOURCES:
         return True
     age_days = _job_age_days(j)
     if age_days is None:
@@ -1366,7 +1406,12 @@ _HISTORY_WINDOW = 30    # runs of history considered for the median
 
 
 def _load_run_history() -> list[dict]:
-    raw = storage.read_text(str(STATS_FILE))
+    try:
+        raw = storage.read_text(str(STATS_FILE))
+    except storage.StorageUnavailable as e:
+        # Health telemetry only: never worth aborting a run for.
+        print(f"  [Stats] run history unavailable: {e}")
+        return []
     if not raw:
         return []
     out = []
@@ -1419,6 +1464,19 @@ def _record_run_stats(stats: dict) -> None:
         print(f"  [Stats] could not record run stats: {e}")
 
 
+# Sources switched off ON PURPOSE. Removing a scraper does not silence its
+# alarms: the median check keeps firing until enough zero runs dilute the
+# window, and the registry below never forgets a source at all — HiringCafe
+# was disabled on 2026-09-04 and still raised a warning in every digest a
+# month later. A warning that is always there teaches the reader to skip the
+# warning line, which is the opposite of what it is for. Both checks skip
+# these names. Remove a name from this set when its source is re-enabled.
+_RETIRED_SOURCES = frozenset({
+    "HiringCafe",   # Cloudflare challenge since 2026-09-01; no bot-evasion in this repo
+    "SAP",          # generic company-page entry, dead since 2026-09-22 (see config.COMPANY_PAGES)
+})
+
+
 def _dead_source_warnings(history: list[dict], current: dict) -> list[str]:
     """Sources whose history says they deliver, but which have now been at
     zero for _DEAD_RUNS consecutive runs — the silent-death signature."""
@@ -1431,6 +1489,8 @@ def _dead_source_warnings(history: list[dict], current: dict) -> list[str]:
         known.update((h.get("sources") or {}).keys())
     recent = history[-(_DEAD_RUNS - 1):]
     for src in sorted(known):
+        if src in _RETIRED_SOURCES:
+            continue
         series = [int((h.get("sources") or {}).get(src, 0)) for h in history]
         med = statistics.median(series)
         if med < _DEAD_MIN_MEDIAN:
@@ -1476,6 +1536,8 @@ def _absent_source_warnings_from(registry: dict, current: dict, now=None) -> lis
     now = now or datetime.now(timezone.utc)
     out = []
     for src, e in sorted(registry.items()):
+        if src in _RETIRED_SOURCES:
+            continue
         if int(e.get("typical", 0)) < _REGISTRY_MIN_TYPICAL:
             continue
         if int(current.get(src, 0)) > 0:
@@ -1665,8 +1727,16 @@ def node_filter(state: dict) -> dict:
         return kept
 
     # Already emailed under another URL? (Adzuna re-mints links daily.)
-    digested = load_digested()
-    new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in digested,
+    blocked = set(load_digested())
+    import config as _cfg
+    if _cfg.is_catchup():
+        # A catch-up run usually follows a seen_jobs reset, so the 30-day
+        # digest memory is not enough: block everything EVER emailed.
+        ever = _ever_shown_keys()
+        print(f"[Catch-up] blocking {len(ever)} company+title keys from the "
+              f"full emailed log (30-day memory holds {len(blocked)})")
+        blocked |= ever
+    new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in blocked,
                              "Already-digested filter (company+title)")
     # Stale postings never reach the digest; the whole point is applying fast.
     new_jobs = _apply_filter(new_jobs, _is_fresh_enough,
@@ -1730,7 +1800,14 @@ def node_rank(state: dict) -> dict:
 
     good = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
-    top = _diversify(good, MAX_RESULTS)
+    import config as _cfg
+    # A catch-up day delivers a backlog once; cutting it at the daily cap
+    # would bury the overflow for good (it is marked seen like everything else).
+    cap = MAX_RESULTS * 3 if _cfg.is_catchup() else MAX_RESULTS
+    top = _diversify(good, cap)
+    if len(good) > len(top):
+        print(f"[Digest cap] {len(good) - len(top)} jobs scored >= {MIN_SCORE} "
+              f"but were cut by the {cap}-job cap")
     # Digest order (2026-09-07): remote, then the Bonn belt, then the rest of
     # NRW, then hybrid elsewhere; score decides within each group.
     top.sort(key=lambda x: (x.get("_where_rank", 3), -x.get("score", 0)))
@@ -1879,7 +1956,15 @@ def main(dry_run: bool = False) -> None:
     })
     # Recursion limit guards a malformed graph; this pipeline is a straight
     # line with one branch, so the default would suffice.
-    app.invoke({"dry_run": dry_run}, {"recursion_limit": 25})
+    final = app.invoke({"dry_run": dry_run}, {"recursion_limit": 25})
+
+    # A digest that could not be sent used to end the run with status "ok" and
+    # exit code 0 — identical, from the outside, to a quiet day with nothing
+    # to send. node_persist has already run by now and left seen_jobs
+    # untouched, so raising here changes only what the run REPORTS.
+    if not dry_run and isinstance(final, dict) and final.get("email_ok") is False:
+        raise RuntimeError("digest email could not be delivered; state was left "
+                           "untouched so today's matches are retried next run")
 
 
 if __name__ == "__main__":
