@@ -143,6 +143,9 @@ class TestResearchInstitutes:
         assert scrapers._RMK_STUDENT.search(near) and scrapers._RMK_STUDENT.search(far)
         assert not scrapers._RMK_STUDENT.search(senior)
         assert "_RMK_REGION" not in inspect.getsource(scrapers.scrape_research_institutes)
+        # It orders the URLs (home region first, in _rmk_pick) but does not
+        # gate: the Dresden role is still picked, the senior one is not.
+        assert scrapers._rmk_pick([far, senior, near]) == [near, far]
         assert scrapers._RMK_CITY_RE.search("/job/Dresden-Studentische-Hilfskraft-KI/2/")
 
     def test_both_institutes_are_configured(self):

@@ -1626,6 +1626,14 @@ def _extract_location_hint(text: str) -> str:
 
 def _fetch_full_description(url: str) -> str:
     """Visit a URL and extract meaningful text from the page."""
+    # SmartRecruiters: the public posting-detail API returns the ad as
+    # structured sections, which is both more reliable and lighter than
+    # scraping the rendered job page.
+    m = _SR_URL_RE.search(url or "")
+    if m:
+        text = _sr_posting_text(m.group(1), m.group(2))
+        if text:
+            return text
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
         if r.status_code != 200:
@@ -1914,98 +1922,132 @@ _SR_API = "https://api.smartrecruiters.com/v1/companies/{slug}/postings"
 # We keep description as the company industry + function as a stub; main.py
 # filters and Claude will see title + this stub.
 
+# Kept for reference and for callers that still pre-screen titles; the
+# scraper itself no longer filters on it (see _SR_QUERIES).
 _SR_RELEVANT_KEYWORDS = (
     "data", "ai", "ml", "machine learning", "artificial intelligence",
     "scientist", "analyst", "intern", "praktikum", "research", "applied",
     "engineer", "developer", "software", "python", "junior", "graduate",
     "associate", "computer", "informatik",
+    "werkstudent", "working student", "student", "praktik", "hiwi",
+    "trainee", "teilzeit", "part-time", "part time",
 )
+
+# The postings API takes a free-text `q`. Until 2026-10-04 the scraper walked
+# the first 500 German postings of each company and kept titles matching an
+# AI/data keyword list that had NO student-form terms: "Werkstudent IT" and
+# "Working Student Cloud Infrastructure" were dropped at the scraper, and
+# Bosch (720+ German postings) and Bertelsmann (900+) were cut off half-way.
+# Asking the API for the employment forms the pipeline actually hunts is both
+# complete and smaller. Verified live for BoschGroup: 44 / 36 / 88 / 179 hits
+# for the first four queries, against 720 German postings in total.
+_SR_QUERIES = ("working student", "werkstudent", "intern", "praktikum",
+               "student", "teilzeit", "part-time")
+_SR_MAX_PER_QUERY = 1000          # ten pages; no configured company is near it
+
+_SR_URL_RE = re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)/(\d+)")
+
+
+def _sr_posting_text(slug: str, pid: str) -> str:
+    """The ad itself, from the public posting-detail API. The listing carries
+    no description, so without this a SmartRecruiters row is metadata only."""
+    try:
+        r = requests.get(f"{_SR_API.format(slug=slug)}/{pid}", timeout=15)
+        if r.status_code != 200:
+            return ""
+        secs = ((r.json().get("jobAd") or {}).get("sections") or {})
+        parts = []
+        # The job text first: the language test should read the ad, not the
+        # company boilerplate that follows it.
+        for k in ("jobDescription", "qualifications", "additionalInformation",
+                  "companyDescription"):
+            html_txt = (secs.get(k) or {}).get("text") or ""
+            if html_txt:
+                parts.append(BeautifulSoup(html_txt, "html.parser")
+                             .get_text(separator=" ", strip=True))
+        return "\n".join(p for p in parts if p)[:5000]
+    except Exception:
+        return ""
 
 
 def scrape_smartrecruiters() -> list[dict]:
     """
-    Iterate SMARTRECRUITERS_SLUGS, fetch Germany-filtered postings, return jobs.
-    Description is left as a short industry+function stub since fetching the
-    full description per posting would be 5000+ extra HTTP calls (Bosch alone
-    has 4641 postings before filtering).
+    For each company, ask the postings API for the student and part-time
+    forms (country=de), page each answer to its end, and merge by posting id.
+    The description is a metadata stub flagged `_stub`: main._fill_missing_
+    bodies fetches the real ad (via _sr_posting_text) for the rows that pass
+    the employment-form filter, and the language test never judges the stub.
     """
     results: list[dict] = []
     for slug in SMARTRECRUITERS_SLUGS:
+        seen_ids: set[str] = set()
         try:
-            offset = 0
-            company_total = 0
-            while True:
-                r = requests.get(
-                    _SR_API.format(slug=slug),
-                    params={
-                        "country": "de",  # Germany at API level
-                        "limit": 100,
-                        "offset": offset,
-                    },
-                    timeout=15,
-                )
-                if r.status_code != 200:
-                    break
-                data = r.json()
-                postings = data.get("content", []) or []
-                if not postings:
-                    break
-
-                for p in postings:
-                    title = p.get("name", "") or ""
-                    title_low = title.lower()
-                    # Pre-filter to AI/ML/data-relevant roles — Bosch has
-                    # thousands of roles; we only want the relevant ones
-                    if not any(k in title_low for k in _SR_RELEVANT_KEYWORDS):
-                        continue
-
-                    loc_obj = p.get("location", {}) or {}
-                    location = (
-                        loc_obj.get("fullLocation", "")
-                        or ", ".join(filter(None, [
-                            loc_obj.get("city", ""),
-                            loc_obj.get("country", ""),
-                        ]))
-                        or "Germany"
+            for q in _SR_QUERIES:
+                offset = 0
+                while offset < _SR_MAX_PER_QUERY:
+                    r = requests.get(
+                        _SR_API.format(slug=slug),
+                        params={"country": "de", "q": q, "limit": 100, "offset": offset},
+                        timeout=15,
                     )
-                    pid = p.get("id", "")
-                    url = f"https://jobs.smartrecruiters.com/{slug}/{pid}" if pid else ""
+                    if r.status_code != 200:
+                        break
+                    postings = (r.json().get("content") or [])
+                    if not postings:
+                        break
+                    for p in postings:
+                        pid = str(p.get("id") or "")
+                        title = p.get("name", "") or ""
+                        if not pid or not title or pid in seen_ids:
+                            continue
+                        seen_ids.add(pid)
 
-                    # Build description stub from available metadata
-                    industry = (p.get("industry") or {}).get("label", "")
-                    function = (p.get("function") or {}).get("label", "")
-                    department = (p.get("department") or {}).get("label", "")
-                    experience = (p.get("experienceLevel") or {}).get("label", "")
-                    employment = (p.get("typeOfEmployment") or {}).get("label", "")
-                    desc_parts = [
-                        f"Industry: {industry}" if industry else "",
-                        f"Function: {function}" if function else "",
-                        f"Department: {department}" if department else "",
-                        f"Experience level: {experience}" if experience else "",
-                        f"Employment type: {employment}" if employment else "",
-                        f"View full job: {url}" if url else "",
-                    ]
-                    desc = "\n".join(filter(None, desc_parts))
+                        loc_obj = p.get("location", {}) or {}
+                        location = (
+                            loc_obj.get("fullLocation", "")
+                            or ", ".join(filter(None, [
+                                loc_obj.get("city", ""),
+                                loc_obj.get("country", ""),
+                            ]))
+                            or "Germany"
+                        )
+                        if loc_obj.get("remote") and "remote" not in location.lower():
+                            location = f"{location} (Remote)"
+                        url = f"https://jobs.smartrecruiters.com/{slug}/{pid}"
 
-                    results.append(job(
-                        title=title,
-                        company=slug,
-                        location=location,
-                        url=url,
-                        source="SmartRecruiters",
-                        description=desc,
-                        posted_at=p.get("releasedDate", "") or "",
-                    ))
-                    company_total += 1
+                        # Listing metadata only. Useful to the employment-form
+                        # filter ("Employment type: Part-time"), never to the
+                        # language test — hence the _stub flag below.
+                        industry = (p.get("industry") or {}).get("label", "")
+                        function = (p.get("function") or {}).get("label", "")
+                        department = (p.get("department") or {}).get("label", "")
+                        experience = (p.get("experienceLevel") or {}).get("label", "")
+                        employment = (p.get("typeOfEmployment") or {}).get("label", "")
+                        desc_parts = [
+                            f"Industry: {industry}" if industry else "",
+                            f"Function: {function}" if function else "",
+                            f"Department: {department}" if department else "",
+                            f"Experience level: {experience}" if experience else "",
+                            f"Employment type: {employment}" if employment else "",
+                        ]
+                        row = job(
+                            title=title,
+                            company=slug,
+                            location=location,
+                            url=url,
+                            source="SmartRecruiters",
+                            description="\n".join(filter(None, desc_parts)),
+                            posted_at=p.get("releasedDate", "") or "",
+                        )
+                        row["_stub"] = True
+                        results.append(row)
 
-                # Pagination
-                if len(postings) < 100:
-                    break
-                offset += 100
-                if offset >= 500:  # safety cap at 500 postings per company
-                    break
-                time.sleep(0.3)
-            time.sleep(0.5)
+                    if len(postings) < 100:
+                        break
+                    offset += 100
+                    time.sleep(0.3)
+                time.sleep(0.2)
+            time.sleep(0.3)
         except Exception as e:
             print(f"  [SmartRecruiters/{slug}] failed: {e}")
             continue
@@ -2036,8 +2078,21 @@ _WD_AI_KEYWORDS = (
     # Student/part-time employment forms: since the Werkstudent pivot these ARE
     # the target, and Debeka/Creditreform titles carry no AI keyword at all.
     "werkstudent", "working student", "studentische", "hilfskraft", "teilzeit",
-    "part-time", "software", "informatik",
+    "part-time", "software", "informatik", "student", "trainee",
 )
+
+# Search strings run on every tenant that has no explicit one. Before this,
+# 15 global tenants (NVIDIA, Salesforce, Intel, Philips, Sanofi, ...) were
+# walked 200 postings deep in Workday's default order and the first 30 titles
+# matching ANY keyword above were kept — "Senior Software Engineer" filled the
+# slots and a German working-student role was reached only by luck.
+_WD_STUDENT_SEARCHES = ("working student", "intern", "werkstudent")
+_WD_STUDENT_TITLE = re.compile(
+    r"werkstudent|working\s+student|student|\bintern(ship)?s?\b|praktik|trainee"
+    r"|hiwi|hilfskraft|teilzeit|part[- ]time", re.IGNORECASE)
+_WD_KEEP_PER_TENANT = 30          # detail fetches per tenant
+_WD_WALK_LIMIT = 200              # postings walked for the plain (no-search) pass
+_WD_SEARCH_LIMIT = 100            # postings walked per search string
 
 # Workday's shared reference id for Germany in the locationCountry facet
 # (the same id on every tenant that supports the facet).
@@ -2097,90 +2152,107 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     # Stryker hold thousands of postings, and the 200-offset walk below would
     # otherwise only ever see a random slice of them.
     search_text = entry[3] if len(entry) >= 4 else ""
-    # Optional 5th element: restrict to Germany with Workday's shared country
-    # facet id. Verified live 2026-09-07: Airbus 327 -> 114, Accenture
-    # 2000 -> 243, HARMAN 24 -> 9. Stryker, NVIDIA and Abbott answer HTTP 400
-    # to the facet, so it is opt-in per tenant and a 400 falls back to the
-    # unfiltered walk instead of losing the tenant.
-    facets = {"locationCountry": [_WD_COUNTRY_DE]} if len(entry) == 5 and entry[4] else {}
     host = f"{tenant}.{region}.myworkdayjobs.com"
     list_url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
-    per_tenant_fetched = 0
-    per_tenant_added = 0
-    offset = 0
 
+    # Phase 1 — LIST. Collect candidates across every pass before spending a
+    # single detail request, so the detail budget can go to the best ones.
+    #
+    # The Germany country facet is tried on EVERY tenant (2026-10-04; it used
+    # to be opt-in). Verified live: Sanofi and Adobe accept it (49 and 7
+    # German postings — the whole German list fits in one walk), NVIDIA,
+    # Salesforce, Intel and Philips answer HTTP 400, which falls back to the
+    # plain request, as does a facet that matches nothing.
+    searches = [search_text] if search_text else [*_WD_STUDENT_SEARCHES, ""]
+    cands: dict[str, dict] = {}
     try:
-        while offset < 200:  # safety cap: never walk past 200 postings per tenant
-            payload = dict(_WD_PAYLOAD)
-            payload["appliedFacets"] = facets
-            payload["searchText"] = search_text
-            payload["offset"] = offset
-            payload["limit"] = 20
-            r = requests.post(
-                list_url,
-                json=payload,
-                headers=_wd_headers(host),
-                timeout=15,
-            )
-            if r.status_code == 400 and facets:
-                facets = {}                 # tenant rejects the facet: retry plain
-                continue
-            if r.status_code != 200:
-                break
-            data = r.json()
-            postings = data.get("jobPostings", []) or []
-            if not postings:
-                break
-
-            for jp in postings:
-                title = (jp.get("title") or "").strip()
-                if not title:
+        for search in searches:
+            facets = {"locationCountry": [_WD_COUNTRY_DE]}
+            limit = _WD_SEARCH_LIMIT if search else _WD_WALK_LIMIT
+            offset = 0
+            while offset < limit:
+                payload = dict(_WD_PAYLOAD)
+                payload["appliedFacets"] = facets
+                payload["searchText"] = search
+                payload["offset"] = offset
+                payload["limit"] = 20
+                r = requests.post(list_url, json=payload,
+                                  headers=_wd_headers(host), timeout=15)
+                if r.status_code == 400 and facets:
+                    facets = {}             # tenant rejects the facet: retry plain
                     continue
-                title_low = title.lower()
-
-                # Pre-filter at title level to AI/ML/data-relevant only.
-                # NVIDIA has 2000 jobs total; we only want maybe 30 of them.
-                if not any(k in title_low for k in _WD_AI_KEYWORDS):
-                    continue
-                # Cap at ~30 relevant jobs per tenant to keep scrape fast
-                if per_tenant_added >= 30:
+                if r.status_code != 200:
                     break
-
-                location = (
-                    jp.get("locationsText", "")
-                    or (jp.get("locations") or [{}])[0].get("descriptor", "")
-                    or ""
-                )
-                posted = jp.get("postedOn", "") or ""
-                external_path = jp.get("externalPath", "") or ""
-                job_url = f"https://{host}{external_path}" if external_path else list_url
-
-                # Pull full description (one extra GET per relevant job)
-                desc = _wd_fetch_description(host, tenant, site, external_path)
-                if not desc:
-                    # Fallback stub if description fetch failed
-                    desc = f"View full job on Workday: {job_url}"
-
-                out.append(job(
-                    title=title,
-                    company=tenant,
-                    location=location,
-                    url=job_url,
-                    source="Workday-CXS",
-                    description=desc,
-                    posted_at=posted,
-                ))
-                per_tenant_added += 1
-                time.sleep(0.15)  # rate-limit description fetches
-
-            per_tenant_fetched += len(postings)
-            if per_tenant_added >= 30 or len(postings) < 20:
-                break
-            offset += 20
-            time.sleep(0.3)
+                postings = r.json().get("jobPostings", []) or []
+                if not postings:
+                    if facets and offset == 0:
+                        facets = {}         # facet matched nothing here: retry plain
+                        continue
+                    break
+                for jp in postings:
+                    title = (jp.get("title") or "").strip()
+                    if not title:
+                        continue
+                    if not any(k in title.lower() for k in _WD_AI_KEYWORDS):
+                        continue
+                    path = jp.get("externalPath", "") or ""
+                    cands.setdefault(path or title, {
+                        "title": title,
+                        "location": (jp.get("locationsText", "")
+                                     or (jp.get("locations") or [{}])[0].get("descriptor", "")
+                                     or ""),
+                        "posted": jp.get("postedOn", "") or "",
+                        "path": path,
+                        "de_facet": bool(facets),
+                    })
+                if len(postings) < 20:
+                    break
+                offset += 20
+                time.sleep(0.3)
     except Exception as e:
         print(f"  [WD-CXS/{tenant}] failed: {e}")
-        return out
+
+    # Phase 2 — RANK. Student-form titles first; within those, postings known
+    # to be in Germany (facet hit or a German place in the location text),
+    # then unknown ("2 Locations"), then clearly elsewhere.
+    def _rank(c: dict) -> tuple:
+        student = 0 if _WD_STUDENT_TITLE.search(c["title"]) else 1
+        loc = c["location"]
+        if c["de_facet"] or _de_place(loc):
+            where = 0
+        elif not loc or re.search(r"\d+\s+locations?", loc, re.IGNORECASE) or "remote" in loc.lower():
+            where = 1
+        else:
+            where = 2
+        return (student, where)
+
+    picked = sorted(cands.values(), key=_rank)[:_WD_KEEP_PER_TENANT]
+
+    # Phase 3 — DETAIL. One GET per kept posting.
+    for c in picked:
+        try:
+            job_url = f"https://{host}{c['path']}" if c["path"] else list_url
+            desc = _wd_fetch_description(host, tenant, site, c["path"])
+            location = c["location"]
+            if c["de_facet"] and not _de_place(location):
+                # The facet proved Germany; "2 Locations" alone would be
+                # judged as unknown by the geography filters.
+                location = f"{location}, Germany" if location else "Germany"
+            row = job(
+                title=c["title"],
+                company=tenant,
+                location=location,
+                url=job_url,
+                source="Workday-CXS",
+                description=desc or f"View full job on Workday: {job_url}",
+                posted_at=c["posted"],
+            )
+            if not desc:
+                row["_stub"] = True       # a link is not an ad body
+            out.append(row)
+            time.sleep(0.15)  # rate-limit description fetches
+        except Exception:
+            continue
     return out
 
 
@@ -2257,7 +2329,12 @@ def scrape_adzuna() -> list[dict]:
                     "results_per_page": 50,
                     "what":             query,
                     "where":            "Deutschland",  # Germany
-                    "max_days_old":     14,             # last 2 weeks only
+                    # Newest first with a short window (2026-10-04). The page
+                    # used to be relevance-sorted over 14 days: nearly every
+                    # query filled its 50 slots with ads the freshness filter
+                    # then discarded, while fresh ads sat on page 2, unread.
+                    "sort_by":          "date",
+                    "max_days_old":     max(3, _max_age_hours() // 24),
                     "content-type":     "application/json",
                 },
                 headers=HEADERS,
@@ -3475,7 +3552,18 @@ _RMK_CITY_RE = re.compile(
     r"|Stade|Lampoldshausen|Neustrelitz|Trauen|Weilheim|Jülich|Itzehoe|Fürth)",
     re.IGNORECASE,
 )
-_RMK_CAP = 80       # doubled 2026-09-07 with the Germany-wide pick
+_RMK_CAP = 120      # 40 -> 80 on 2026-09-07 (Germany-wide), 120 on 2026-10-04
+# Other NRW institute cities. With _RMK_REGION (the Bonn belt) these are
+# sorted to the front before the cap is applied: when the belt pre-filter was
+# removed on 2026-09-07 the cap simply took the first 80 student URLs in
+# sitemap order, so Sankt Augustin and Wachtberg — the reason this source
+# exists — were no longer guaranteed a slot.
+_RMK_NRW = re.compile(
+    r"/job/(Aachen|Dortmund|Duisburg|Oberhausen|Paderborn|Schmallenberg|Lemgo"
+    r"|Essen|Bochum|M%C3%BCnster|Muenster|Bielefeld|J%C3%BClich|Juelich"
+    r"|Gelsenkirchen|Wuppertal|Siegen)",
+    re.IGNORECASE,
+)
 
 
 def _rmk_page(url: str, source: str) -> list[dict]:
@@ -3516,6 +3604,18 @@ def _rmk_page(url: str, source: str) -> list[dict]:
         return []
 
 
+def _rmk_pick(urls: list[str]) -> list[str]:
+    """Student-role URLs, home region first, capped.
+
+    Ordering only — nothing is filtered by region. Stable sort: Bonn belt,
+    then the rest of NRW, then everything else in sitemap order, so the cap
+    can only ever cut the last group."""
+    student = [u for u in urls if _RMK_STUDENT.search(u)]
+    student.sort(key=lambda u: 0 if _RMK_REGION.search(u)
+                 else 1 if _RMK_NRW.search(u) else 2)
+    return student[:_RMK_CAP]
+
+
 def scrape_research_institutes() -> list[dict]:
     results: list[dict] = []
     for host, source in _RMK_SITES:
@@ -3528,7 +3628,7 @@ def scrape_research_institutes() -> list[dict]:
             # Germany-wide since 2026-09-07: every institute's student roles,
             # not only the Bonn-area ones; the location filter runs downstream
             # and the digest shows the city.
-            picked = [u for u in urls if _RMK_STUDENT.search(u)][:_RMK_CAP]
+            picked = _rmk_pick(urls)
             got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
             results.extend(got)
             print(f"  [{source}] {len(got)} student roles "
@@ -3832,8 +3932,12 @@ _CSB_SITES = (
     ("https://careers.eon.com", "E.ON"),              # Essen/Munich — E.ON Digital Technology Working Student ads
 )
 # "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
-_CSB_QUERIES = ("Werkstudent", "Praktikum", "Student")
-_CSB_CAP_PER_SITE = 40      # doubled 2026-09-07 with the Germany-wide pick
+# "Student" first (2026-10-04): links are queued in query order and the cap
+# cuts the tail, so with the German forms first the English "Working Student"
+# and "Student Assistant" ads — the ones the English-only rule can actually
+# send — were the ones cut. Deloitte and EY alone carry ~39 student links.
+_CSB_QUERIES = ("Student", "Werkstudent", "Praktikum")
+_CSB_CAP_PER_SITE = 60      # 20 -> 40 on 2026-09-07, 60 on 2026-10-04
 
 
 def scrape_csb() -> list[dict]:
@@ -3921,7 +4025,7 @@ _BEESITE_QUERY = {
 _BEESITE_STUDENT = re.compile(
     r"werkstudent|working student|studentische|hilfskraft|praktik|\bintern\b|internship"
     r"|teilzeit|part-time|duales studium", re.IGNORECASE)
-_BEESITE_CAP = 25
+_BEESITE_CAP = 60      # 25 -> 60 on 2026-10-04: Lufthansa alone lists ~90 student roles
 
 
 def _page_text(url: str) -> str:

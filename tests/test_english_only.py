@@ -257,12 +257,18 @@ class TestGermanyWideSources:
             return R()
         monkeypatch.setattr(scrapers.requests, "post", fake_post)
         scrapers._workday_cxs_tenant(("ag", "wd3", "Airbus", "working student"))
+        explicit = [p["searchText"] for p in payloads]
+        payloads.clear()
         scrapers._workday_cxs_tenant(("nvidia", "wd5", "NVIDIAExternalCareerSite"))
-        assert payloads[0]["searchText"] == "working student"
-        assert payloads[1]["searchText"] == ""
-        assert payloads[0]["appliedFacets"] == {} == payloads[1]["appliedFacets"]
+        default = [p["searchText"] for p in payloads]
+        # An explicit search string is the only pass for that tenant...
+        assert set(explicit) == {"working student"}
+        # ...and since 2026-10-04 a tenant WITHOUT one gets the student
+        # searches plus the plain walk, instead of the plain walk alone.
+        assert set(default) == {*scrapers._WD_STUDENT_SEARCHES, ""}
+        assert default[0] == scrapers._WD_STUDENT_SEARCHES[0]
 
-    def test_germany_facet_is_opt_in_and_falls_back_on_400(self, monkeypatch):
+    def test_germany_facet_is_tried_and_falls_back_on_400(self, monkeypatch):
         import scrapers
         calls = []
 
@@ -280,11 +286,22 @@ class TestGermanyWideSources:
         scrapers._workday_cxs_tenant(("stryker", "wd1", "StrykerCareers", "working student", True))
         assert calls[0] == {"locationCountry": [scrapers._WD_COUNTRY_DE]}
         assert calls[1] == {}, "a 400 on the facet must retry without it"
+        # The facet is no longer opt-in: a tenant configured without the flag
+        # is offered it too, with the same fallback.
+        calls.clear()
+        scrapers._workday_cxs_tenant(("stryker", "wd1", "StrykerCareers", "working student"))
+        assert calls[0] == {"locationCountry": [scrapers._WD_COUNTRY_DE]} and calls[1] == {}
 
     def test_belt_gates_are_gone_from_csb_and_institutes(self):
         import scrapers
         assert "_RMK_REGION" not in inspect.getsource(scrapers.scrape_csb)
         assert "_RMK_REGION" not in inspect.getsource(scrapers.scrape_research_institutes)
+        # Since 2026-10-04 _RMK_REGION ORDERS the URLs before the cap (home
+        # region first, in _rmk_pick). It must never filter: a Dresden
+        # student role is still picked.
+        far = "https://jobs.fraunhofer.de/job/Dresden-Studentische-Hilfskraft-KI/2/"
+        near = "https://jobs.fraunhofer.de/job/Sankt-Augustin-Studentische-Hilfskraft-KI/1/"
+        assert scrapers._rmk_pick([far, near]) == [near, far]
         assert scrapers._CSB_CAP_PER_SITE >= 40
 
     def test_arbeitsagentur_runs_a_nationwide_english_pass_first(self):

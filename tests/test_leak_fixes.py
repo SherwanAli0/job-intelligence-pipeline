@@ -278,3 +278,174 @@ class TestDedupKeepsTheReachableCopy:
         a, b = self._pair()
         main._dedup_cross_source([a, b])
         assert "_where" not in a and "_where" not in b
+
+
+# ── Step 4: caps and keyword gates that hid student roles ────────────────────
+
+class TestSmartRecruitersAsksForStudentForms:
+    def _run(self, monkeypatch, pages):
+        """pages: {(slug, q, offset): [postings]}"""
+        calls = []
+
+        def fake_get(url, params=None, timeout=None, **kw):
+            slug = url.rstrip("/").split("/")[-2]
+            calls.append((slug, params["q"], params["offset"], params["country"]))
+            return _Resp({"content": pages.get((slug, params["q"], params["offset"]), [])})
+        monkeypatch.setattr(scrapers.requests, "get", fake_get)
+        monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(scrapers, "SMARTRECRUITERS_SLUGS", ["BoschGroup"])
+        return scrapers.scrape_smartrecruiters(), calls
+
+    def _p(self, pid, name, **kw):
+        return {"id": pid, "name": name, "location": {"fullLocation": "Stuttgart, Germany"},
+                "releasedDate": "2026-10-04T07:00:00.000Z", **kw}
+
+    def test_titles_without_an_ai_keyword_are_no_longer_dropped(self, monkeypatch):
+        """The exact examples config.py gives for adding these companies."""
+        titles = ["Werkstudent IT", "Working Student Cloud Infrastructure",
+                  "Werkstudent CRM-Datenanalyse", "Werkstudent (m/w/d) KI-Automatisierung"]
+        out, _ = self._run(monkeypatch, {("BoschGroup", "werkstudent", 0):
+                                         [self._p(str(i), t) for i, t in enumerate(titles)]})
+        assert [j["title"] for j in out] == titles
+
+    def test_every_student_and_part_time_form_is_queried_for_germany(self, monkeypatch):
+        _, calls = self._run(monkeypatch, {})
+        assert {c[1] for c in calls} == set(scrapers._SR_QUERIES)
+        assert {"working student", "werkstudent", "intern", "praktikum", "teilzeit"} <= {c[1] for c in calls}
+        assert {c[3] for c in calls} == {"de"}
+
+    def test_a_query_is_paged_to_its_end_not_capped_at_500(self, monkeypatch):
+        pages = {("BoschGroup", "praktikum", off): [self._p(f"{off}-{i}", f"Praktikum {off}-{i}")
+                                                    for i in range(100)]
+                 for off in range(0, 700, 100)}
+        pages[("BoschGroup", "praktikum", 700)] = [self._p("last", "Praktikum last")]
+        out, _ = self._run(monkeypatch, pages)
+        assert len(out) == 701
+
+    def test_the_same_posting_from_two_queries_is_emitted_once(self, monkeypatch):
+        p = self._p("42", "Working Student / Werkstudent Data")
+        out, _ = self._run(monkeypatch, {("BoschGroup", "working student", 0): [p],
+                                         ("BoschGroup", "werkstudent", 0): [p]})
+        assert len(out) == 1 and out[0]["url"] == "https://jobs.smartrecruiters.com/BoschGroup/42"
+
+    def test_rows_are_flagged_as_stubs_so_the_real_ad_is_fetched(self, monkeypatch):
+        out, _ = self._run(monkeypatch, {("BoschGroup", "intern", 0): [self._p(
+            "7", "Intern Data Science", typeOfEmployment={"label": "Part-time"})]})
+        assert out[0]["_stub"] is True
+        assert "Employment type: Part-time" in out[0]["description"]
+        assert not main._is_english_friendly(out[0])
+
+    def test_the_body_fetcher_uses_the_posting_detail_api(self, monkeypatch):
+        seen = []
+
+        def fake_get(url, **kw):
+            seen.append(url)
+            return _Resp({"jobAd": {"sections": {
+                "companyDescription": {"text": "<p>About us</p>"},
+                "jobDescription": {"text": "<p>You build data pipelines in Python.</p>"},
+                "qualifications": {"text": "<ul><li>Enrolled student</li></ul>"}}}})
+        monkeypatch.setattr(scrapers.requests, "get", fake_get)
+        text = scrapers._fetch_full_description("https://jobs.smartrecruiters.com/BoschGroup/744000152913528")
+        assert seen == ["https://api.smartrecruiters.com/v1/companies/BoschGroup/postings/744000152913528"]
+        assert text.startswith("You build data pipelines in Python.")
+        assert "Enrolled student" in text and text.rstrip().endswith("About us")
+
+
+class TestWorkdayPutsStudentRolesFirst:
+    def _tenant(self, monkeypatch, answer):
+        """answer(search, facet, offset) -> (status, [postings])"""
+        calls = []
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            facet = bool(json["appliedFacets"])
+            calls.append((json["searchText"], facet, json["offset"]))
+            status, postings = answer(json["searchText"], facet, json["offset"])
+            r = _Resp({"jobPostings": postings}, status)
+            return r
+        monkeypatch.setattr(scrapers.requests, "post", fake_post)
+        monkeypatch.setattr(scrapers, "_wd_fetch_description", lambda *a: ENGLISH)
+        monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
+        return calls
+
+    def _jp(self, title, loc="Germany, Munich", i=0):
+        return {"title": title, "locationsText": loc, "externalPath": f"/job/x/{title}-{i}",
+                "postedOn": "Posted Today"}
+
+    def test_a_tenant_without_a_search_string_gets_the_student_searches(self, monkeypatch):
+        calls = self._tenant(monkeypatch, lambda s, f, o: (200, []))
+        scrapers._workday_cxs_tenant(("nvidia", "wd5", "NVIDIAExternalCareerSite"))
+        assert {c[0] for c in calls} == {"working student", "intern", "werkstudent", ""}
+
+    def test_student_titles_take_the_detail_slots_before_senior_ones(self, monkeypatch):
+        def answer(search, facet, offset):
+            if facet:
+                return 400, []                       # NVIDIA-style: facet rejected
+            if search == "" and offset < 200:
+                return 200, [self._jp(f"Senior Software Engineer {offset}-{i}", "US, CA, Santa Clara", i)
+                             for i in range(20)]
+            if search == "working student" and offset == 0:
+                return 200, [self._jp("Working Student AI Research", "Germany, Munich")]
+            return 200, []
+        self._tenant(monkeypatch, answer)
+        out = scrapers._workday_cxs_tenant(("nvidia", "wd5", "NVIDIAExternalCareerSite"))
+        assert len(out) == scrapers._WD_KEEP_PER_TENANT
+        assert out[0]["title"] == "Working Student AI Research"
+
+    def test_facet_is_tried_everywhere_and_a_400_falls_back(self, monkeypatch):
+        calls = self._tenant(monkeypatch, lambda s, f, o: (400, []) if f else (200, []))
+        scrapers._workday_cxs_tenant(("intel", "wd1", "External"))
+        assert ("intern", True, 0) in calls and ("intern", False, 0) in calls
+
+    def test_german_postings_rank_above_foreign_ones_within_student_titles(self, monkeypatch):
+        def answer(search, facet, offset):
+            if facet:
+                return 400, []
+            if search == "intern" and offset == 0:
+                return 200, ([self._jp(f"Intern Hardware {i}", "US, CA, Santa Clara", i) for i in range(19)]
+                             + [self._jp("Intern Deep Learning", "Germany, Munich", 99)])
+            return 200, []
+        self._tenant(monkeypatch, answer)
+        monkeypatch.setattr(scrapers, "_WD_KEEP_PER_TENANT", 5)
+        out = scrapers._workday_cxs_tenant(("nvidia", "wd5", "NVIDIAExternalCareerSite"))
+        assert out[0]["title"] == "Intern Deep Learning"
+
+    def test_a_facet_hit_is_labelled_germany_for_the_geography_filters(self, monkeypatch):
+        self._tenant(monkeypatch, lambda s, f, o: (200, [self._jp("Working Student Data", "2 Locations")])
+                     if (f and s == "working student" and o == 0) else (200, []))
+        out = scrapers._workday_cxs_tenant(("sanofi", "wd3", "SanofiCareers"))
+        assert out and out[0]["location"] == "2 Locations, Germany"
+
+    def test_an_explicit_search_string_is_still_the_only_pass(self, monkeypatch):
+        calls = self._tenant(monkeypatch, lambda s, f, o: (200, []))
+        scrapers._workday_cxs_tenant(("stryker", "wd1", "StrykerCareers", "working student"))
+        assert {c[0] for c in calls} == {"working student"}
+
+
+class TestSlicesKeepTheHomeRegion:
+    def test_belt_and_nrw_institutes_are_never_cut_by_the_cap(self, monkeypatch):
+        far = [f"https://jobs.fraunhofer.de/job/Dresden-Studentische-Hilfskraft-{i}/" for i in range(300)]
+        belt = ["https://jobs.fraunhofer.de/job/Sankt-Augustin-Studentische-Hilfskraft-KI/1/",
+                "https://jobs.fraunhofer.de/job/Wachtberg-Student-Assistant-Radar/2/"]
+        nrw = ["https://jobs.fraunhofer.de/job/Aachen-Werkstudent-Lasertechnik/3/"]
+        sitemap = "".join(f"<loc>{u}</loc>" for u in far + belt + nrw)
+
+        class _R:
+            status_code = 200
+            text = sitemap
+        picked = []
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **kw: _R())
+        monkeypatch.setattr(scrapers, "_RMK_SITES", (("https://jobs.fraunhofer.de", "Fraunhofer"),))
+        monkeypatch.setattr(scrapers, "_parallel_collect",
+                            lambda items, fn, label: picked.extend(items) or [])
+        scrapers.scrape_research_institutes()
+        assert picked[:2] == belt and picked[2] == nrw[0]
+        assert len(picked) == scrapers._RMK_CAP
+
+    def test_english_student_form_is_queried_first_on_csb_sites(self):
+        assert scrapers._CSB_QUERIES[0] == "Student"
+        assert scrapers._CSB_CAP_PER_SITE >= 60 and scrapers._BEESITE_CAP >= 60
+
+    def test_adzuna_asks_for_the_newest_ads(self):
+        src = inspect.getsource(scrapers.scrape_adzuna)
+        assert '"sort_by":' in src and '"date"' in src
+        assert '"max_days_old":     14' not in src
