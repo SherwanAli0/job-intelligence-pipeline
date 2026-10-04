@@ -68,7 +68,7 @@ class TestStubBodiesAreFetchedBeforeJudging:
         import scrapers
         seen = []
 
-        def fake_enrich(jobs, quiet=False):
+        def fake_enrich(jobs, quiet=False, screen_titles=True):
             for j in jobs:
                 seen.append(j["id"])
                 j["description"] = ENGLISH
@@ -83,7 +83,7 @@ class TestStubBodiesAreFetchedBeforeJudging:
         import scrapers
         counted = []
         monkeypatch.setattr(scrapers, "_enrich_jobspy_descriptions",
-                            lambda jobs, quiet=False: counted.extend(jobs))
+                            lambda jobs, quiet=False, screen_titles=True: counted.extend(jobs))
         monkeypatch.setattr(main, "_BODY_FETCH_CAP", 3)
         main._fill_missing_bodies([_j("W", "x", id=str(i)) for i in range(10)])
         assert len(counted) == 3

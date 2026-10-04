@@ -765,7 +765,14 @@ def _is_english_friendly(j: dict) -> bool:
     is not thrown away unread. There is no student exemption and no C1
     special case any more; the scorer's pre-screen still drops an English ad
     that demands fluent German.
+
+    A row still flagged `_stub` carries source metadata, not the ad
+    (SmartRecruiters builds "Industry: ... Function: ..." from the listing).
+    That text is English whatever language the ad is in, so it is never
+    judged: the ad stays out until its real body has been fetched.
     """
+    if j.get("_stub"):
+        return False
     return _reads_as_english((j.get("description") or "").lower())
 
 
@@ -966,29 +973,94 @@ _BODY_FETCH_CAP = 300            # HTTP requests per run; no Claude tokens
 _BODY_MIN_WORDS = 25             # below this the language test cannot judge
 
 
-def _fill_missing_bodies(jobs: list[dict]) -> None:
+def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     """Fetch the full ad for candidates whose body is too short for the
     language test to judge. Under the English-only rule a stub body is a
     drop, so without this step an English ad that arrived as a two-line
     snippet (a quarter of the pool on some days) would be lost unread.
     Uses the aggregators' paced fetcher (LinkedIn slow lane included).
-    Mutates in place."""
+    Mutates in place.
+
+    Returns the ids whose body is STILL unresolved — the fetch failed, or the
+    ad was beyond the per-run cap. node_persist keeps those ids out of
+    seen_jobs for a few runs (_body_retry_update), because a failed fetch is
+    not a verdict on the job. Measured in production over 14 runs: 154 of 387
+    fetches failed (40%), about 11 student-form candidates a day, and every
+    one was marked seen and never looked at again.
+    """
     from scrapers import _enrich_jobspy_descriptions
 
     def _words(j):
         return len(re.findall(r"[a-zäöüß]+", (j.get("description") or "").lower()))
 
     need = [j for j in jobs
-            if _words(j) < _BODY_MIN_WORDS and (j.get("url") or "").startswith("http")]
-    over = max(0, len(need) - _BODY_FETCH_CAP)
+            if (j.get("_stub") or _words(j) < _BODY_MIN_WORDS)
+            and (j.get("url") or "").startswith("http")]
+    over = need[_BODY_FETCH_CAP:]
     need = need[:_BODY_FETCH_CAP]
     if not need:
         print("[Body fetch] nothing to fetch — every candidate already has a body")
-        return
-    _enrich_jobspy_descriptions(need, quiet=True)
-    got = sum(1 for j in need if _words(j) >= _BODY_MIN_WORDS)
+        return []
+    before = {id(j): (j.get("description") or "") for j in need}
+    # No title screen here: these rows already passed the employment-form
+    # filter, so a seniority word in the title is no reason to skip them.
+    _enrich_jobspy_descriptions(need, quiet=True, screen_titles=False)
+    unresolved = []
+    for j in need:
+        changed = (j.get("description") or "") != before[id(j)]
+        if _words(j) >= _BODY_MIN_WORDS and (changed or not j.get("_stub")):
+            j.pop("_stub", None)         # a real body arrived
+        else:
+            unresolved.append(j)
+    got = len(need) - len(unresolved)
+    unresolved += over
+    for j in unresolved:
+        j["_body_unresolved"] = True
     print(f"[Body fetch] {got}/{len(need)} stub-body ads fetched"
-          + (f" ({over} over the {_BODY_FETCH_CAP} cap)" if over else ""))
+          + (f" ({len(over)} over the {_BODY_FETCH_CAP} cap)" if over else "")
+          + (f"; {len(unresolved)} unresolved, eligible for a retry" if unresolved else ""))
+    return [j["id"] for j in unresolved if j.get("id")]
+
+
+# ── Retry memory for unresolved bodies ───────────────────────────────────────
+# node_persist marks every scraped id as seen. For an ad whose body could not
+# be fetched that turned one throttled LinkedIn response into a permanent
+# loss. These ids are therefore left OUT of seen_jobs for a bounded number of
+# runs; this file only counts the attempts so a page that can never be
+# fetched (JavaScript-only, login wall) stops being retried.
+_BODY_RETRY_FILE = Path("body_retry.json")
+_BODY_RETRY_MAX = 3              # total attempts, including the first
+
+
+def _body_retry_update(unresolved_ids: list[str]) -> set[str]:
+    """Record one more attempt for each unresolved id. Returns the ids that
+    still have attempts left and must therefore NOT be marked seen."""
+    ids = [i for i in dict.fromkeys(unresolved_ids or []) if i]
+    try:
+        raw = storage.read_text(str(_BODY_RETRY_FILE))
+        attempts = dict(json.loads(raw)) if raw else {}
+    except Exception:
+        attempts = {}
+    keep: set[str] = set()
+    nxt: dict[str, int] = {}
+    for i in ids:
+        n = int(attempts.get(i, 0) or 0) + 1
+        if n < _BODY_RETRY_MAX:
+            nxt[i] = n
+            keep.add(i)
+    try:
+        # Only ids unresolved in THIS run are carried: anything that resolved,
+        # vanished or aged out drops off by itself, so the file stays tiny.
+        storage.write_text(str(_BODY_RETRY_FILE), json.dumps(nxt, indent=1))
+    except Exception as e:
+        # If the attempt count cannot be remembered, fall back to the old
+        # behaviour (mark seen) rather than risk retrying a page forever.
+        print(f"  [Body retry] could not save retry state ({e}) — marking seen")
+        return set()
+    if ids:
+        print(f"[Body retry] {len(keep)} unresolved ads left unseen for a retry, "
+              f"{len(ids) - len(keep)} given up after {_BODY_RETRY_MAX} attempts")
+    return keep
 
 
 # ── Tech-relevance gate (free) ───────────────────────────────────────────────
@@ -1578,8 +1650,9 @@ def node_filter(state: dict) -> dict:
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
                              "Employment-form filter (student or part-time tech)")
     # Fetch the full ad for stub bodies BEFORE the tech gate and the language
-    # test, so neither judges an English ad on a two-line snippet.
-    _fill_missing_bodies(new_jobs)
+    # test, so neither judges an English ad on a two-line snippet. Ids whose
+    # body could not be fetched are remembered for node_persist.
+    body_unresolved = _fill_missing_bodies(new_jobs)
     new_jobs = _apply_filter(new_jobs, _is_tech_relevant,
                              "Tech-relevance filter (CV keywords)")
     new_jobs = _apply_filter(new_jobs, _is_attendable_from_germany, "Location filter (Germany-attendable)")
@@ -1607,7 +1680,8 @@ def node_filter(state: dict) -> dict:
     if not new_jobs:
         print("Nothing new today - skipping scoring and notification.")
 
-    return {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track}
+    return {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track,
+            "body_unresolved": body_unresolved}
 
 
 def node_score(state: dict) -> dict:
@@ -1699,7 +1773,10 @@ def node_persist(state: dict) -> dict:
         # last-seen date and only genuinely vanished ids age into pruning.
         from datetime import date as _date
         today = _date.today().isoformat()
-        seen.update({j["id"]: today for j in all_jobs})
+        # ...except ads whose body could not be fetched this run: those stay
+        # unseen for a bounded number of retries (_body_retry_update).
+        retry = _body_retry_update(state.get("body_unresolved") or [])
+        seen.update({j["id"]: today for j in all_jobs if j["id"] not in retry})
         save_seen(seen)
         # Remember what was actually EMAILED by company+title, so the same
         # posting can never return under a fresh tracking URL or via another

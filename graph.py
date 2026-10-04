@@ -41,6 +41,7 @@ class RunState(TypedDict, total=False):
     src_counts: dict[str, int]
     health_warnings: list[str]
     drop_by_filter_track: Any
+    body_unresolved: list[str]
     dq_counts: Any
     track_mix: dict[str, int]
     scraped: int

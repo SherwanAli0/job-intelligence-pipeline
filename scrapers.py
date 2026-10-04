@@ -323,16 +323,23 @@ _JOBSPY_DESC_WORKERS = 6      # polite concurrency against one host
 _JOBSPY_DESC_CAP = 700        # hard ceiling on requests per run
 
 
-def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False) -> None:
-    """Fill in descriptions for title-plausible jobs. Mutates in place."""
+def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
+                                screen_titles: bool = True) -> None:
+    """Fill in descriptions for title-plausible jobs. Mutates in place.
+
+    `screen_titles=False` is for main._fill_missing_bodies: its candidates have
+    already passed the employment-form filter, so a seniority word in the
+    title ("Intern - Office of the Chief Data Officer", "Praktikum Expert
+    Systems") is no reason to skip the fetch — skipping there meant the ad
+    could only ever fail the language test."""
     from filters import title_is_worth_fetching
 
     need, skipped_title, already = [], 0, 0
     for j in jobs:
-        if len(j.get("description") or "") >= 400:
+        if len(j.get("description") or "") >= 400 and not j.get("_stub"):
             already += 1
             continue
-        if not title_is_worth_fetching(j.get("title", "")):
+        if screen_titles and not title_is_worth_fetching(j.get("title", "")):
             skipped_title += 1
             continue
         need.append(j)
