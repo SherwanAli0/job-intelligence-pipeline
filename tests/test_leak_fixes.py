@@ -154,3 +154,127 @@ class TestUnresolvedBodiesAreRetried:
         assert '"body_unresolved": body_unresolved' in src
         from graph import RunState
         assert "body_unresolved" in RunState.__annotations__
+
+
+# ── Step 3: German cities survive the Greenhouse / Lever scrapers ────────────
+
+class _Resp:
+    def __init__(self, payload, status=200):
+        self._p, self.status_code = payload, status
+
+    def json(self):
+        return self._p
+
+
+def _gh(monkeypatch, jobs):
+    monkeypatch.setattr(scrapers.requests, "get", lambda *a, **kw: _Resp({"jobs": jobs}))
+    return scrapers._greenhouse_board("trivago")
+
+
+def _lv(monkeypatch, postings):
+    monkeypatch.setattr(scrapers.requests, "get", lambda *a, **kw: _Resp(postings))
+    return scrapers._lever_board("acme")
+
+
+class TestGermanCitiesSurviveTheAtsGate:
+    @pytest.mark.parametrize("loc", [
+        "Düsseldorf", "Köln", "Cologne", "Bonn", "Bielefeld", "Berlin", "Munich",
+        "Aachen", "Cologne, Germany", "Germany", "Remote - Germany", "Remote", "",
+    ])
+    def test_greenhouse_keeps_german_and_remote_locations(self, monkeypatch, loc):
+        out = _gh(monkeypatch, [{"title": "Working Student - Data & Insights",
+                                 "location": {"name": loc}, "absolute_url": "u", "content": "x"}])
+        assert len(out) == 1, loc
+
+    @pytest.mark.parametrize("loc", ["New York", "Copenhagen", "Nashville, Tennessee",
+                                     "London, England", "Amsterdam"])
+    def test_greenhouse_still_drops_foreign_cities(self, monkeypatch, loc):
+        assert _gh(monkeypatch, [{"title": "T", "location": {"name": loc},
+                                  "absolute_url": "u", "content": "x"}]) == []
+
+    def test_greenhouse_secondary_german_office_rescues_a_foreign_primary(self, monkeypatch):
+        out = _gh(monkeypatch, [{"title": "T", "location": {"name": "Amsterdam"},
+                                 "offices": [{"name": "Cologne",
+                                              "location": "Cologne, North Rhine-Westphalia, Germany"}],
+                                 "absolute_url": "u", "content": "x"}])
+        assert len(out) == 1
+        assert out[0]["location"].startswith("Cologne, North Rhine-Westphalia, Germany")
+        assert "Amsterdam" in out[0]["location"]
+
+    def test_one_null_location_does_not_abort_the_board(self, monkeypatch):
+        out = _gh(monkeypatch, [
+            {"title": "A", "location": {"name": "Cologne, Germany"}, "absolute_url": "a", "content": ""},
+            {"title": "B", "location": None, "absolute_url": "b", "content": ""},
+            {"title": "C", "location": {"name": None}, "absolute_url": "c", "content": None},
+            {"title": "D", "location": {"name": "Düsseldorf, Germany"}, "absolute_url": "d", "content": ""},
+        ])
+        assert [j["title"] for j in out] == ["A", "B", "C", "D"]
+
+    @pytest.mark.parametrize("loc", ["Düsseldorf", "Munich", "Berlin", "Köln", "Remote", ""])
+    def test_lever_keeps_german_and_remote_locations(self, monkeypatch, loc):
+        out = _lv(monkeypatch, [{"text": "Working Student", "categories": {"location": loc},
+                                 "hostedUrl": "u", "descriptionPlain": "x"}])
+        assert len(out) == 1, loc
+
+    def test_lever_country_field_and_secondary_locations(self, monkeypatch):
+        out = _lv(monkeypatch, [
+            {"text": "A", "categories": {"location": "Oberhaching"}, "country": "DE", "hostedUrl": "a"},
+            {"text": "B", "categories": {"location": "Paris", "allLocations": ["Paris", "Cologne, Germany"]},
+             "hostedUrl": "b"},
+            {"text": "C", "categories": {"location": "Copenhagen Office"}, "country": "DK", "hostedUrl": "c"},
+        ])
+        assert [j["title"] for j in out] == ["A", "B"]
+        assert out[0]["location"] == "Oberhaching, Germany"
+        assert out[1]["location"].startswith("Cologne, Germany")
+
+    def test_lever_workplace_type_reaches_the_remote_hybrid_tagging(self, monkeypatch):
+        out = _lv(monkeypatch, [{"text": "Working Student", "categories": {"location": "Munich"},
+                                 "workplaceType": "hybrid", "hostedUrl": "u",
+                                 "descriptionPlain": ENGLISH}])
+        j = main._tag_where(dict(out[0], id="x"))
+        assert j["_where"] == "HYBRID" and main._is_in_focus_area(j)
+
+    def test_a_dusseldorf_working_student_now_reaches_the_scorer_stage(self, monkeypatch):
+        """The exact posting that was invisible on 2026-10-04."""
+        out = _gh(monkeypatch, [{"title": "Working Student - Data & Insights",
+                                 "location": {"name": "Düsseldorf"},
+                                 "absolute_url": "https://x/1", "content": ENGLISH}])
+        j = dict(out[0], id="x")
+        assert main._is_eligible_form(j) and main._is_tech_relevant(j)
+        assert main._is_attendable_from_germany(j)
+        assert main._is_in_focus_area(main._tag_where(j))
+        assert main._is_english_friendly(j)
+
+
+class TestDedupKeepsTheReachableCopy:
+    def _pair(self, munich_src="Greenhouse", koeln_src="Greenhouse", munich_desc="x", koeln_desc="x"):
+        a = _j("Working Student Data (m/f/d)", desc=munich_desc, id="muc", company="X GmbH",
+               location="Munich, Bavaria, Germany", source=munich_src)
+        b = _j("Working Student Data (m/f/d)", desc=koeln_desc, id="cgn", company="X GmbH",
+               location="Köln, Germany", source=koeln_src)
+        return a, b
+
+    def test_koeln_beats_munich_whatever_the_order(self):
+        a, b = self._pair()
+        assert [j["id"] for j in main._dedup_cross_source([a, b])] == ["cgn"]
+        assert [j["id"] for j in main._dedup_cross_source([b, a])] == ["cgn"]
+
+    def test_focus_beats_source_priority_and_description_length(self):
+        a, b = self._pair(munich_src="Greenhouse", koeln_src="WebSearch", munich_desc="long " * 200)
+        assert main._SOURCE_PRIORITY.get("Greenhouse", 0) > main._SOURCE_PRIORITY.get("WebSearch", 0)
+        assert [j["id"] for j in main._dedup_cross_source([a, b])] == ["cgn"]
+
+    def test_two_reachable_copies_still_resolve_by_priority(self):
+        a = _j("Working Student Data", id="lo", company="X", location="Köln", source="WebSearch")
+        b = _j("Working Student Data", id="hi", company="X", location="Bonn", source="Greenhouse")
+        assert [j["id"] for j in main._dedup_cross_source([a, b])] == ["hi"]
+
+    def test_the_survivor_then_passes_the_filter_chain_geography(self):
+        a, b = self._pair()
+        kept = main._dedup_cross_source([a, b])[0]
+        assert main._is_in_focus_area(main._tag_where(kept))
+
+    def test_probing_does_not_tag_the_job(self):
+        a, b = self._pair()
+        main._dedup_cross_source([a, b])
+        assert "_where" not in a and "_where" not in b

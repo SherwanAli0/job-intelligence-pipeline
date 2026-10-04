@@ -168,10 +168,29 @@ def _normalize_company(s: str) -> str:
     return s
 
 
+def _in_focus(j: dict) -> bool:
+    """Would this copy survive the focus-area rule? Probes a copy, so the job
+    itself is not tagged here. Unknown wins, as in the filter itself."""
+    try:
+        probe = dict(j)
+        _tag_where(probe)
+        return _is_in_focus_area(probe)
+    except Exception:
+        return True
+
+
 def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
     """
     Collapse duplicates across sources keyed on (normalized company, title).
-    Keeps one row per logical job, preferring the highest-priority source.
+    Keeps one row per logical job.
+
+    Which copy survives matters, because the key carries no location and this
+    runs BEFORE the geography filters. An employer that posts the same title
+    in Munich and in Köln produced one survivor; when that was the Munich
+    copy, the focus-area filter then dropped it and the Köln job was gone —
+    every day, for as long as the Munich copy stayed listed. So the copy that
+    is inside the focus area wins first; source priority and description
+    length only break ties between copies that are equally reachable.
     """
     best: dict[str, dict] = {}
     for j in jobs:
@@ -181,6 +200,11 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
         prior = best.get(key)
         if prior is None:
             best[key] = j
+            continue
+        cur_focus, prv_focus = _in_focus(j), _in_focus(prior)
+        if cur_focus != prv_focus:
+            if cur_focus:
+                best[key] = j
             continue
         cur_pri = _SOURCE_PRIORITY.get(j.get("source", ""), 0)
         prv_pri = _SOURCE_PRIORITY.get(prior.get("source", ""), 0)

@@ -749,6 +749,53 @@ def scrape_hn_who_is_hiring() -> list[dict]:
 
 # ── 4. Greenhouse API ──────────────────────────────────────────────────────────
 
+# ── Germany-or-remote test shared by the Greenhouse and Lever scrapers ───────
+# Both used to keep a posting only when its location string contained
+# "germany", "deutschland" or "remote". A location written as a bare city —
+# "Düsseldorf", "Köln", "Bielefeld", which is how most German employers write
+# it — matched nothing and was dropped inside the scraper, before any shared
+# filter saw it. Measured live on 2026-10-04: 698 German-city postings dropped
+# across the Greenhouse boards, trivago's entire Düsseldorf board among them,
+# on the very boards that were added FOR their Köln and Düsseldorf offices.
+#
+# This is a recall gate only. The real geography decision (Germany-attendable,
+# remote / hybrid / on-site, NRW) is made once, downstream, on every source
+# alike. Whole-word matching keeps "Tennessee" and "Copenhagen" from passing
+# on the strength of "essen" and "hagen".
+_DE_EXTRA_PLACES = (
+    "aachen", "augsburg", "bielefeld", "braunschweig", "bremen", "chemnitz",
+    "darmstadt", "dresden", "duisburg", "erfurt", "erlangen", "freiburg",
+    "garching", "gelsenkirchen", "göttingen", "gütersloh", "halle", "hannover",
+    "hanover", "heidelberg", "heilbronn", "ingolstadt", "jena", "karlsruhe",
+    "kassel", "kiel", "krefeld", "lübeck", "magdeburg", "mainz", "mannheim",
+    "mönchengladbach", "münster", "nürnberg", "nuremberg", "oberhausen",
+    "oldenburg", "osnabrück", "paderborn", "potsdam", "regensburg", "rostock",
+    "saarbrücken", "ulm", "walldorf", "wiesbaden", "wolfsburg", "wuppertal",
+    "würzburg", "koeln", "duesseldorf", "dusseldorf", "muenchen",
+    "north rhine-westphalia", "lower saxony", "niedersachsen", "thüringen",
+    "schleswig-holstein", "brandenburg", "saarland",
+)
+_DE_PLACE_RE = None
+
+
+def _de_place(loc: str) -> bool:
+    """True when the string names Germany or a German city/state."""
+    global _DE_PLACE_RE
+    if _DE_PLACE_RE is None:
+        from filters import GERMANY_TERMS
+        terms = sorted(set(GERMANY_TERMS) | set(_DE_EXTRA_PLACES), key=len, reverse=True)
+        _DE_PLACE_RE = re.compile(
+            r"(?<![a-zäöüß])(" + "|".join(re.escape(t) for t in terms) + r")(?![a-zäöüß])",
+            re.IGNORECASE)
+    return bool(_DE_PLACE_RE.search(loc or ""))
+
+
+def _de_or_remote(loc: str) -> bool:
+    """Recall gate for a PRIMARY location: German, remote, or unstated."""
+    loc = (loc or "").strip()
+    return (not loc) or ("remote" in loc.lower()) or _de_place(loc)
+
+
 def _greenhouse_board(slug: str) -> list[dict]:
     out = []
     try:
@@ -757,19 +804,35 @@ def _greenhouse_board(slug: str) -> list[dict]:
             timeout=15,
         )
         data = r.json()
-        for j in data.get("jobs", []):
-            title = j.get("title", "")
-            location = j.get("location", {}).get("name", "")
-            url = j.get("absolute_url", "")
-            description = BeautifulSoup(j.get("content", ""), "html.parser").get_text()[:5000]
-            posted_at = j.get("updated_at", "") or j.get("first_published", "") or ""
-
-            # Only include Germany-based roles (or remote)
-            loc_lower = location.lower()
-            if "germany" in loc_lower or "deutschland" in loc_lower or "remote" in loc_lower or not location:
-                out.append(job(title, slug.title(), location, url, "Greenhouse", description, posted_at))
     except Exception:
         return out
+    for j in data.get("jobs", []) or []:
+        # One malformed row must not cost the rest of the board: a posting
+        # with a null location used to raise here and the bare except then
+        # returned only the rows before it.
+        try:
+            title = j.get("title", "") or ""
+            primary = ((j.get("location") or {}).get("name") or "").strip()
+            # Secondary locations: a role listed as "Amsterdam" with a Cologne
+            # office attached is a Cologne role too.
+            german_offices: list[str] = []
+            for o in (j.get("offices") or []):
+                for v in ((o or {}).get("location"), (o or {}).get("name")):
+                    if v and _de_place(str(v)) and str(v) not in german_offices:
+                        german_offices.append(str(v))
+                        break
+            if _de_or_remote(primary):
+                location = primary
+            elif german_offices:
+                location = "; ".join(german_offices[:2] + [primary])
+            else:
+                continue
+            url = j.get("absolute_url", "") or ""
+            description = BeautifulSoup(j.get("content", "") or "", "html.parser").get_text()[:5000]
+            posted_at = j.get("updated_at", "") or j.get("first_published", "") or ""
+            out.append(job(title, slug.title(), location, url, "Greenhouse", description, posted_at))
+        except Exception:
+            continue
     return out
 
 
@@ -789,15 +852,34 @@ def _lever_board(slug: str) -> list[dict]:
             timeout=15,
         )
         postings = r.json()
-        for p in postings:
-            location = p.get("categories", {}).get("location", "")
-            loc_lower = location.lower()
-            if "germany" not in loc_lower and "deutschland" not in loc_lower and "remote" not in loc_lower and location:
+    except Exception:
+        return out
+    for p in postings if isinstance(postings, list) else []:
+        try:
+            cat = p.get("categories") or {}
+            primary = (cat.get("location") or "").strip()
+            german_extra = [str(x) for x in (cat.get("allLocations") or [])
+                            if x and str(x) != primary and _de_place(str(x))]
+            country = (p.get("country") or "").strip().upper()
+            if _de_or_remote(primary):
+                location = primary
+            elif country == "DE":
+                # Lever's own country field says Germany; the city is simply
+                # one this list does not know (Oberhaching, Unterföhring ...).
+                location = f"{primary}, Germany"
+            elif german_extra:
+                location = "; ".join(german_extra[:2] + [primary])
+            else:
                 continue
-            title = p.get("text", "")
-            url = p.get("hostedUrl", "")
+            # Lever states the work arrangement as a field. Carry it in the
+            # location so the remote / hybrid tagging downstream can read it.
+            wt = (p.get("workplaceType") or "").strip().lower()
+            if wt in ("remote", "hybrid") and wt not in location.lower():
+                location = f"{location} ({wt.title()})" if location else wt.title()
+            title = p.get("text", "") or ""
+            url = p.get("hostedUrl", "") or ""
             description = BeautifulSoup(
-                p.get("descriptionPlain", "") or p.get("description", ""), "html.parser"
+                p.get("descriptionPlain", "") or p.get("description", "") or "", "html.parser"
             ).get_text()[:5000]
             # Lever createdAt is epoch ms
             created_ms = p.get("createdAt")
@@ -809,8 +891,8 @@ def _lever_board(slug: str) -> list[dict]:
                 except Exception:
                     posted_at = ""
             out.append(job(title, slug.title(), location, url, "Lever", description, posted_at))
-    except Exception:
-        return out
+        except Exception:
+            continue
     return out
 
 
