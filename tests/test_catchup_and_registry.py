@@ -18,18 +18,24 @@ import scrapers
 # ── Catch-up window ──────────────────────────────────────────────────────────
 
 class TestCatchupWindow:
-    """The window has been opened twice: 2026-08-16 (the Werkstudent pivot)
-    and 2026-09-07 (the English-only, Germany-wide switch). Each time the
-    revert is the calendar, not a deploy."""
+    """The window has been opened three times: 2026-08-16 (the Werkstudent
+    pivot), 2026-09-07 (the English-only, Germany-wide switch) and 2026-10-05
+    (the recovery run after the leak fixes). Each time the revert is the
+    calendar, not a deploy."""
 
-    def test_switch_day_is_a_seven_day_sweep(self):
-        assert config.max_posting_age_hours(date(2026, 9, 7)) == 168
+    def test_recovery_day_is_a_seven_day_sweep(self):
+        assert config.max_posting_age_hours(date(2026, 10, 5)) == 168
+        assert config.max_filter_age_hours(date(2026, 10, 5)) == 168
+        assert config.is_catchup(date(2026, 10, 5))
 
-    def test_next_day_reverts_to_24h_without_a_deploy(self):
-        assert config.max_posting_age_hours(date(2026, 9, 8)) == 24
+    def test_next_day_reverts_without_a_deploy(self):
+        assert config.max_posting_age_hours(date(2026, 10, 6)) == 24
+        assert config.max_filter_age_hours(date(2026, 10, 6)) == 48
+        assert not config.is_catchup(date(2026, 10, 6))
 
-    def test_every_later_day_is_24h(self):
-        assert config.max_posting_age_hours(date(2026, 10, 1)) == 24
+    def test_every_later_day_is_normal(self):
+        assert config.max_posting_age_hours(date(2026, 11, 1)) == 24
+        assert not config.is_catchup(date(2026, 11, 1))
 
     def test_freshness_filter_honours_the_window(self, monkeypatch):
         from datetime import timedelta

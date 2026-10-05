@@ -12,7 +12,7 @@ from datetime import date as _date
 # Every scraper that takes a time-range parameter (JobSpy hours_old,
 # LinkedIn f_TPR, Arbeitsagentur veroeffentlichtseit) derives it from here,
 # so the window applies at the SOURCE too, not only at the filter.
-CATCHUP_UNTIL = _date(2026, 9, 8)           # exclusive: one-off 7-day sweep on 2026-09-07 for the English-only, Germany-wide switch; 24h again from the 8th
+CATCHUP_UNTIL = _date(2026, 10, 6)          # exclusive: one-off recovery run on 2026-10-05 after the leak fixes (seen_jobs reset, everything ever emailed blocked); normal again from the 6th
 _CATCHUP_HOURS = 168                        # 7 days
 _NORMAL_HOURS = 24
 

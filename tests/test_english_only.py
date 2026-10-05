@@ -85,6 +85,10 @@ class TestStubBodiesAreFetchedBeforeJudging:
         monkeypatch.setattr(scrapers, "_enrich_jobspy_descriptions",
                             lambda jobs, quiet=False, screen_titles=True: counted.extend(jobs))
         monkeypatch.setattr(main, "_BODY_FETCH_CAP", 3)
+        import config
+        # A normal day: on a catch-up day the cap is deliberately five times
+        # larger, and this test must not depend on the calendar.
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
         main._fill_missing_bodies([_j("W", "x", id=str(i)) for i in range(10)])
         assert len(counted) == 3
 
