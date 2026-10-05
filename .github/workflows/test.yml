@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install -r requirements.txt -c constraints.txt
           pip install pytest
 
       - name: Run test suite (offline — no secrets needed)

@@ -12,10 +12,12 @@
 FROM public.ecr.aws/lambda/python:3.11
 
 # Dependencies first: this layer is cached and only rebuilt when
-# requirements.txt changes, so code edits rebuild in seconds rather than
-# re-compiling pandas every time.
-COPY requirements.txt ${LAMBDA_TASK_ROOT}/
-RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+# requirements.txt or constraints.txt changes, so code edits rebuild in
+# seconds rather than re-compiling pandas every time. constraints.txt pins
+# the exact versions of the last image that ran cleanly; without it every
+# build took whatever was newest that day (see the file's header).
+COPY requirements.txt constraints.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt -c ${LAMBDA_TASK_ROOT}/constraints.txt
 
 # Application code. State and secrets are NOT baked in: state lives in S3 via
 # storage.py and secrets come from SSM via secrets_loader.py, both driven by
