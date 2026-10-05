@@ -1319,7 +1319,7 @@ def _record_shown(top: list[dict], near: list[dict]) -> None:
 # ages are kept — several boards omit dates, and absent evidence is not age.
 # Base value only — _is_fresh_enough consults config.max_posting_age_hours(),
 # which widens to 7 days during the one-time 2026-08-16 catch-up window.
-_MAX_POSTING_AGE_HOURS = 24
+_MAX_POSTING_AGE_HOURS = 48     # log label only; the live value is config.max_filter_age_hours()
 
 # ...with one exception, for a reason the aggregator-era rule did not foresee.
 #
@@ -1392,8 +1392,8 @@ def _is_fresh_enough(j: dict) -> bool:
     age_days = _job_age_days(j)
     if age_days is None:
         return True
-    from config import max_posting_age_hours
-    return age_days * 24 <= max_posting_age_hours()
+    from config import max_filter_age_hours
+    return age_days * 24 <= max_filter_age_hours()
 
 
 SEEN_FILE = Path("seen_jobs.json")
@@ -1629,7 +1629,13 @@ def _job_age_days(j: dict):
         elif " " in s and ":" in s:
             dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
         else:
-            dt = datetime.strptime(s[:10], "%Y-%m-%d")
+            # A date with no time (LinkedIn guest cards, JobSpy Indeed,
+            # Arbeitsagentur) could be any moment of that day. Ageing it from
+            # midnight made yesterday's postings 32h old at the 10:00 run and
+            # dropped them; it is aged from the END of its day instead.
+            from datetime import timedelta
+            dt = (datetime.strptime(s[:10], "%Y-%m-%d")
+                  + timedelta(days=1) - timedelta(seconds=1))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)

@@ -67,16 +67,16 @@ class TestCatchupRecovery:
 
     def test_employer_boards_are_uncapped_only_on_a_catchup_day(self, monkeypatch):
         monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
-        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 24)
+        monkeypatch.setattr(config, "max_filter_age_hours", lambda today=None: 24)
         assert not main._is_fresh_enough(self._old("Greenhouse"))
         monkeypatch.setattr(config, "is_catchup", lambda today=None: True)
-        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 168)
+        monkeypatch.setattr(config, "max_filter_age_hours", lambda today=None: 168)
         for src in ("Greenhouse", "Lever", "Personio", "SmartRecruiters", "Workday-CXS", "Ashby"):
             assert main._is_fresh_enough(self._old(src)), src
 
     def test_aggregators_keep_a_window_even_on_a_catchup_day(self, monkeypatch):
         monkeypatch.setattr(config, "is_catchup", lambda today=None: True)
-        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 168)
+        monkeypatch.setattr(config, "max_filter_age_hours", lambda today=None: 168)
         assert not main._is_fresh_enough(self._old("linkedin", days=40))
         assert main._is_fresh_enough(self._old("linkedin", days=5))
 

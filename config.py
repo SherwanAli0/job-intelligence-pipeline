@@ -26,8 +26,22 @@ def is_catchup(today=None) -> bool:
 
 
 def max_posting_age_hours(today=None) -> int:
-    """Freshness cap in hours. `today` is injectable for tests."""
+    """SOURCE window in hours: what scrapers ask JobSpy, LinkedIn and the
+    Arbeitsagentur for. `today` is injectable for tests."""
     return _CATCHUP_HOURS if is_catchup(today) else _NORMAL_HOURS
+
+
+# FILTER cap. The pipeline runs once a day, so a 24h filter cap equals the
+# run interval with no slack: a posting published just after its source was
+# scraped yesterday is just over 24h old at today's filter step, and a missed
+# run lost a whole day. 48h covers both. Repeats stay blocked by seen_jobs and
+# the emailed-key memory, so a wider window cannot resend anything.
+_FILTER_HOURS = 48
+
+
+def max_filter_age_hours(today=None) -> int:
+    """Freshness cap applied by main._is_fresh_enough. `today` is injectable."""
+    return _CATCHUP_HOURS if is_catchup(today) else _FILTER_HOURS
 
 
 # ── CV profiles (used by Claude for scoring) ──────────────────────────────────

@@ -274,7 +274,7 @@ class TestFreshnessCap:
     @pytest.fixture(autouse=True)
     def _normal_mode(self, monkeypatch):
         import config
-        monkeypatch.setattr(config, "max_posting_age_hours",
+        monkeypatch.setattr(config, "max_filter_age_hours",
                             lambda today=None: 24)
 
     def _aged(self, hours):

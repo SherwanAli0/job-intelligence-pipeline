@@ -36,9 +36,9 @@ class TestCatchupWindow:
         j = {"title": "Werkstudent Data", "company": "X", "location": "Bonn",
              "url": "u", "source": "linkedin", "description": "d",
              "posted_at": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()}
-        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 168)
+        monkeypatch.setattr(config, "max_filter_age_hours", lambda today=None: 168)
         assert main._is_fresh_enough(j)
-        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 24)
+        monkeypatch.setattr(config, "max_filter_age_hours", lambda today=None: 24)
         assert not main._is_fresh_enough(j)
 
 

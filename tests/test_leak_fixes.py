@@ -160,7 +160,7 @@ class TestUnresolvedBodiesAreRetried:
         monkeypatch.setattr(main, "_fill_missing_bodies", lambda js: [])
         monkeypatch.setattr(main, "_skill_radar", lambda js: None)
         monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
-        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 24)
+        monkeypatch.setattr(config, "max_filter_age_hours", lambda today=None: 24)
         out = main.node_filter({"seen": {}, "all_jobs": jobs})
         fresh_drops = out["drop_by_filter_track"]
         label = [k for k in fresh_drops if k.startswith("Freshness")][0]
@@ -502,3 +502,42 @@ class TestPlaceNamesMatchWholeWords:
     def test_hessen_remote_is_remote_not_hybrid(self):
         j = main._tag_where(_j("W", ENGLISH, location="Hessen (Remote)"))
         assert j["_where"] == "REMOTE"
+# ── Freshness for ONE run a day ──────────────────────────────────────────────
+
+class TestFreshnessForOneRunADay:
+    def _at(self, monkeypatch, now):
+        import datetime as _dt
+
+        class _Frozen(_dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now if tz else now.replace(tzinfo=None)
+        monkeypatch.setattr(_dt, "datetime", _Frozen)
+
+    def test_yesterdays_date_only_posting_is_fresh_at_the_10am_run(self, monkeypatch):
+        from datetime import datetime, timezone
+        self._at(monkeypatch, datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc))
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
+        j = _j(posted_at="2026-10-05")
+        assert main._job_age_days(j) * 24 == pytest.approx(8.0, abs=0.01)
+        assert main._is_fresh_enough(j)
+
+    def test_a_date_only_posting_from_three_days_ago_is_not(self, monkeypatch):
+        from datetime import datetime, timezone
+        self._at(monkeypatch, datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc))
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
+        assert not main._is_fresh_enough(_j(posted_at="2026-10-03"))
+
+    def test_the_filter_cap_has_slack_for_one_missed_run(self):
+        from datetime import date
+        assert config.max_filter_age_hours(date(2026, 10, 20)) == 48
+        assert config.max_posting_age_hours(date(2026, 10, 20)) == 24, \
+            "the SOURCE window stays 24h so the scrape does not grow"
+
+    def test_a_full_timestamp_keeps_its_exact_age(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
+        ts = (datetime.now(timezone.utc) - timedelta(hours=47)).isoformat()
+        assert main._is_fresh_enough(_j(posted_at=ts))
+        ts = (datetime.now(timezone.utc) - timedelta(hours=49)).isoformat()
+        assert not main._is_fresh_enough(_j(posted_at=ts))

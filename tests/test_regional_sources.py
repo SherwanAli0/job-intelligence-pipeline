@@ -229,7 +229,7 @@ class TestLongLivedSourceFreshness:
         cap to 168h, which is not what this test is about."""
         import config
         import main
-        monkeypatch.setattr(config, "max_posting_age_hours",
+        monkeypatch.setattr(config, "max_filter_age_hours",
                             lambda today=None: 24)
         for src in ("Adzuna", "linkedin", "HiringCafe", "Arbeitsagentur"):
             assert not main._is_fresh_enough(self._aged(src, 6)), src
