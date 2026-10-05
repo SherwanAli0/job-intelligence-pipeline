@@ -1,12 +1,12 @@
 # SHERWAN ALI
-**AI / LLM Engineer · Junior**
-Bochum, Germany · sherwan2.ali@gmail.com
+**AI / LLM Engineer · Working Student**
+Bonn, Germany · sherwan2.ali@gmail.com
 github.com/SherwanAli0 · linkedin.com/in/sherwan-ali · German residence permit, full work authorization
 
 > Use this version for: **AI Engineer, LLM Engineer, GenAI, Applied AI, AI Agent, AI/Software Engineer** roles.
 
 ## PROFILE
-Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) who recently built and shipped LLM features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker, prompt and system-prompt versioning — and builds agentic tools of his own. Strong Python, PyTorch, and open-source-LLM (LLaMA / Qwen / Gemma) foundations. English C1, German B1. Available immediately.
+Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) who recently built and shipped LLM features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker, prompt and system-prompt versioning — and builds agentic tools of his own. Strong Python, PyTorch, and open-source-LLM (LLaMA / Qwen / Gemma) foundations. M.Sc. Artificial Intelligence student at the University of Bonn (from 10.2026), enrolled and eligible for Werkstudent roles. English C1, German B1. Available up to 20 h/week during the semester, more during semester breaks.
 
 ## EXPERIENCE
 **Software and AI Intern — iseremo GmbH, Düsseldorf** · 04.2026 – 06.2026
@@ -39,6 +39,8 @@ MovieLens 100k, 10-fold cross-validation; matched published MAE to four decimals
 - **Data:** SQL, Pandas, NumPy, Seaborn.
 
 ## EDUCATION
+**M.Sc. Artificial Intelligence — University of Bonn** · from 10.2026
+
 **B.Sc. Computer Engineering — Üsküdar University, Istanbul** · graduated 07.2026 · final grade 1.8 (German scale) / GPA 3.45. Programme delivered in English.
 
 ## CERTIFICATIONS

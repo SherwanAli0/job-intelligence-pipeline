@@ -1,12 +1,12 @@
 # SHERWAN ALI
-**Machine Learning Engineer · Junior**
-Bochum, Germany · sherwan2.ali@gmail.com
+**Machine Learning Engineer · Working Student**
+Bonn, Germany · sherwan2.ali@gmail.com
 github.com/SherwanAli0 · linkedin.com/in/sherwan-ali · German residence permit, full work authorization
 
 > Use this version for: **ML Engineer, Applied Scientist, MLOps, Deep Learning, Computer Vision, NLP, Research Engineer** roles.
 
 ## PROFILE
-Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with hands-on model training, evaluation and reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data, training, logits/metrics, cross-validation, CI — in Python with PyTorch, scikit-learn and XGBoost, containerized with Docker and automated with GitHub Actions. English C1, German B1. Available immediately.
+Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with hands-on model training, evaluation and reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data, training, logits/metrics, cross-validation, CI — in Python with PyTorch, scikit-learn and XGBoost, containerized with Docker and automated with GitHub Actions. M.Sc. Artificial Intelligence student at the University of Bonn (from 10.2026), enrolled and eligible for Werkstudent roles. English C1, German B1. Available up to 20 h/week during the semester, more during semester breaks.
 
 ## PROJECTS
 **Reproducibility Audit & Extension of CSRBoost** (graduation thesis, solo) · github.com/SherwanAli0/csrboost-audit
@@ -40,6 +40,8 @@ Production agentic pipeline: ingests 8,000+ postings per run from 28+ sources (7
 - **Data:** SQL, Pandas, NumPy, Seaborn.
 
 ## EDUCATION
+**M.Sc. Artificial Intelligence — University of Bonn** · from 10.2026
+
 **B.Sc. Computer Engineering — Üsküdar University, Istanbul** · graduated 07.2026 · final grade 1.8 (German scale) / GPA 3.45. Programme delivered in English.
 Coursework: Machine Learning, Deep Learning, Computer Vision, Statistics, Data Mining.
 

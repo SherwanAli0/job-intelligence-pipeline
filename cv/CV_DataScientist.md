@@ -1,12 +1,12 @@
 # SHERWAN ALI
-**Data Scientist · Junior**
-Bochum, Germany · sherwan2.ali@gmail.com
+**Data Scientist · Working Student**
+Bonn, Germany · sherwan2.ali@gmail.com
 github.com/SherwanAli0 · linkedin.com/in/sherwan-ali · German residence permit, full work authorization
 
 > Use this version for: **Data Scientist, Data Analyst, BI Analyst, Analytics Engineer, Quantitative Analyst** roles.
 
 ## PROFILE
-Data-focused Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with strong statistical and experimentation grounding. Comfortable across the full analysis loop — hypothesis, study design, cross-validation, metric evaluation and reproducible reporting — with SQL, Python and Google-certified data-analytics tooling (Tableau, regression, statistics). English C1, German B1. Available immediately.
+Data-focused Computer Engineering graduate (Üsküdar University, Istanbul, 07.2026, final grade 1.8 German scale / GPA 3.45) with strong statistical and experimentation grounding. Comfortable across the full analysis loop — hypothesis, study design, cross-validation, metric evaluation and reproducible reporting — with SQL, Python and Google-certified data-analytics tooling (Tableau, regression, statistics). M.Sc. Artificial Intelligence student at the University of Bonn (from 10.2026), enrolled and eligible for Werkstudent roles. English C1, German B1. Available up to 20 h/week during the semester, more during semester breaks.
 
 ## PROJECTS
 **Reproducibility Audit & Extension of CSRBoost** (graduation thesis, solo) · github.com/SherwanAli0/csrboost-audit
@@ -39,6 +39,8 @@ Production agentic pipeline: ingests 8,000+ postings per run from 28+ sources (7
 - **Also:** PyTorch / TensorFlow, LLMs, Docker, Git, GitHub Actions (CI/CD).
 
 ## EDUCATION
+**M.Sc. Artificial Intelligence — University of Bonn** · from 10.2026
+
 **B.Sc. Computer Engineering — Üsküdar University, Istanbul** · graduated 07.2026 · final grade 1.8 (German scale) / GPA 3.45. Programme delivered in English.
 Coursework: Statistics, Data Mining, Machine Learning, Database Systems, Deep Learning, Computer Vision.
 

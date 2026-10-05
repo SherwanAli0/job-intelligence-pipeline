@@ -14,5 +14,6 @@ shown_jobs.jsonl
 
 # Stray scrape debris from probing sources by hand
 uk.html
+tk.html
 zz.tmp
 *.tmp
