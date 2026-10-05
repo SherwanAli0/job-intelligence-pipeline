@@ -991,7 +991,20 @@ _BA_ANCHOR = "Bonn"                    # radius searches are centred on the uni 
 _BA_RADIUS_KM = 75                     # covers Köln, Düsseldorf, Koblenz, Leverkusen
 _BA_PAGE_SIZE = 100
 _BA_MAX_PAGES = 5                      # 500 hits per query is far past the useful tail
-_BA_PUBLISHED_WITHIN_DAYS = 3          # the 24h digest cap does the final trimming
+# Publication windows the search API accepts, in days. Measured 2026-10-05:
+# 0, 1, 7, 14 and 28 filter; any other value (2, 3, 5, 30, 100 ...) is
+# silently IGNORED and returns the whole unfiltered list. The pipeline used
+# to send 3, so a normal run read the first 500 of ~3,900 "Werkstudent"
+# listings in an order that is not newest-first: it reached 38 of the 74
+# postings from the last day, and 20 of 274 for "Praktikum".
+_BA_WINDOWS = (1, 7, 14, 28)
+
+
+def _ba_window_days() -> int:
+    """Smallest accepted window that covers the source window: 1 day on a
+    normal run, 7 on a catch-up day."""
+    need = max(1, -(-_max_age_hours() // 24))          # ceil, at least a day
+    return next((w for w in _BA_WINDOWS if w >= need), _BA_WINDOWS[-1])
 
 # The API matches "Werkstudent Data Science" loosely and cheerfully returns
 # Werkstudent roles in law, purchasing and gastronomy. Two reasons that
@@ -1121,9 +1134,7 @@ def scrape_arbeitsagentur() -> list[dict]:
                 r = requests.get(
                     _BA_SEARCH_URL,
                     params={"was": query, "size": _BA_PAGE_SIZE, "page": page,
-                            "veroeffentlichtseit": max(
-                                _BA_PUBLISHED_WITHIN_DAYS,
-                                _max_age_hours() // 24),
+                            "veroeffentlichtseit": _ba_window_days(),
                             **params},
                     headers={**HEADERS, "X-API-Key": _BA_API_KEY},
                     timeout=20,

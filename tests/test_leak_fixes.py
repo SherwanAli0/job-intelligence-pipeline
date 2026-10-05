@@ -541,3 +541,29 @@ class TestFreshnessForOneRunADay:
         assert main._is_fresh_enough(_j(posted_at=ts))
         ts = (datetime.now(timezone.utc) - timedelta(hours=49)).isoformat()
         assert not main._is_fresh_enough(_j(posted_at=ts))
+
+
+# ── Arbeitsagentur: a window the API accepts ─────────────────────────────────
+
+class TestArbeitsagenturWindow:
+    """The API ignores any window other than 0/1/7/14/28 days. The pipeline
+    sent 3, so it read an unfiltered, not-newest-first slice."""
+
+    @pytest.mark.parametrize("hours,days", [(24, 1), (48, 7), (168, 7), (200, 14), (400, 28), (9999, 28)])
+    def test_window_snaps_to_an_accepted_value(self, monkeypatch, hours, days):
+        monkeypatch.setattr(scrapers, "_max_age_hours", lambda today=None: hours)
+        assert scrapers._ba_window_days() == days
+        assert scrapers._ba_window_days() in (0, 1, 7, 14, 28)
+
+    def test_the_request_carries_the_snapped_window(self, monkeypatch):
+        sent = []
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            sent.append(dict(params or {}))
+            return _Resp({"ergebnisliste": []})
+        monkeypatch.setattr(scrapers.requests, "get", fake_get)
+        monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(scrapers, "_max_age_hours", lambda today=None: 24)
+        scrapers.scrape_arbeitsagentur()
+        windows = {p.get("veroeffentlichtseit") for p in sent if "was" in p}
+        assert windows == {1}
