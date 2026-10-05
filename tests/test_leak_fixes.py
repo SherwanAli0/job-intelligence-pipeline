@@ -471,3 +471,34 @@ class TestSlicesKeepTheHomeRegion:
         src = inspect.getsource(scrapers.scrape_adzuna)
         assert '"sort_by":' in src and '"date"' in src
         assert '"max_days_old":     14' not in src
+
+
+# ── Place names match whole words ────────────────────────────────────────────
+
+class TestPlaceNamesMatchWholeWords:
+    """Found by the recovery dry run of 2026-10-05: a Langenhagen job (Lower
+    Saxony) was tagged NRW because the NRW list contains Hagen."""
+
+    def _onsite(self, loc):
+        return main._tag_where(_j("Working Student Data", ENGLISH, location=loc))
+
+    @pytest.mark.parametrize("loc", [
+        "Niedersachsen, Region Hannover (Kreis), Langenhagen",
+        "Frankfurt am Main, Hessen",
+        "Eschborn, Hessen, Germany",
+    ])
+    def test_onsite_outside_nrw_is_not_tagged_nrw_and_is_dropped(self, loc):
+        j = self._onsite(loc)
+        assert not j["_nrw"], loc
+        assert not main._is_in_focus_area(j), loc
+
+    @pytest.mark.parametrize("loc", ["Hagen, Germany", "Essen, NW, DE", "Hamm",
+                                     "Cologne, North Rhine-Westphalia, Germany",
+                                     "Köln/Bonn", "Sankt Augustin"])
+    def test_real_nrw_places_still_match(self, loc):
+        j = self._onsite(loc)
+        assert j["_nrw"] and main._is_in_focus_area(j), loc
+
+    def test_hessen_remote_is_remote_not_hybrid(self):
+        j = main._tag_where(_j("W", ENGLISH, location="Hessen (Remote)"))
+        assert j["_where"] == "REMOTE"

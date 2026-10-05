@@ -958,15 +958,39 @@ _OUTSIDE_NRW_SIGNALS = (
 )
 
 
+_PLACE_RES: dict = {}
+
+
+def _place_in(loc: str, terms: tuple) -> bool:
+    """Does `loc` name any of `terms` as a whole word? Substring matching made
+    "Langenhagen" (Lower Saxony) count as Hagen and "Hessen" as Essen, so
+    on-site roles outside NRW passed the focus-area rule. Letters are the word
+    boundary; a term that starts or ends with punctuation (", nw,") is
+    matched as written on that side."""
+    rx = _PLACE_RES.get(id(terms))
+    if rx is None:
+        parts = []
+        for t in sorted(set(terms), key=len, reverse=True):
+            p = re.escape(t)
+            if t[:1].isalpha():
+                p = r"(?<![a-zäöüß])" + p
+            if t[-1:].isalpha():
+                p = p + r"(?![a-zäöüß])"
+            parts.append(p)
+        rx = re.compile("|".join(parts))
+        _PLACE_RES[id(terms)] = rx
+    return bool(rx.search(loc or ""))
+
+
 def _tag_where(j: dict) -> dict:
     """Annotate j with _where (REMOTE / HYBRID / ON-SITE), _belt, _nrw and
     _where_rank (0 remote, 1 belt, 2 NRW, 3 elsewhere). Mutates and returns j."""
     loc = (j.get("location") or "").lower()
     desc = (j.get("description") or "").lower()
     blob = f"{loc} {desc}"
-    belt = any(c in loc for c in _COMMUTABLE_FROM_BONN)
-    nrw = belt or any(c in loc for c in _NRW_SIGNALS)
-    far_city = any(c in loc for c in _NON_COMMUTABLE_DE_CITIES)
+    belt = _place_in(loc, _COMMUTABLE_FROM_BONN)
+    nrw = belt or _place_in(loc, _NRW_SIGNALS)
+    far_city = _place_in(loc, _NON_COMMUTABLE_DE_CITIES)
     if _is_full_remote(loc, desc) or ("remote" in loc and not far_city):
         where = "REMOTE"
     elif ("remote" in loc or any(h in blob for h in _HYBRID_SIGNALS)
@@ -990,7 +1014,7 @@ def _is_in_focus_area(j: dict) -> bool:
     if j.get("_nrw"):
         return True
     loc = (j.get("location") or "").lower()
-    return not any(c in loc for c in _OUTSIDE_NRW_SIGNALS)
+    return not _place_in(loc, _OUTSIDE_NRW_SIGNALS)
 
 
 _BODY_FETCH_CAP = 300            # HTTP requests per run; no Claude tokens

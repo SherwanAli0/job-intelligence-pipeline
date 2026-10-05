@@ -154,7 +154,7 @@ outside the repository. Git history was scrubbed accordingly.
 | [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
 | [health_check.py](health_check.py) | Monthly board-rot detector |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
-| [tests/](tests/) | 545 offline tests, run on every push |
+| [tests/](tests/) | 555 offline tests, run on every push |
 
 ## Run your own
 
