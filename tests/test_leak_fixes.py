@@ -412,7 +412,11 @@ class TestWorkdayPutsStudentRolesFirst:
     def test_facet_is_tried_everywhere_and_a_400_falls_back(self, monkeypatch):
         calls = self._tenant(monkeypatch, lambda s, f, o: (400, []) if f else (200, []))
         scrapers._workday_cxs_tenant(("intel", "wd1", "External"))
-        assert ("intern", True, 0) in calls and ("intern", False, 0) in calls
+        first = scrapers._WD_STUDENT_SEARCHES[0]
+        assert calls[:2] == [(first, True, 0), (first, False, 0)]
+        # Once the tenant has rejected the facet it is not offered again.
+        assert not any(f for (s, f, o) in calls[2:])
+        assert {s for (s, f, o) in calls} == {*scrapers._WD_STUDENT_SEARCHES, ""}
 
     def test_german_postings_rank_above_foreign_ones_within_student_titles(self, monkeypatch):
         def answer(search, facet, offset):

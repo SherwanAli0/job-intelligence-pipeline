@@ -2164,9 +2164,10 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     # plain request, as does a facet that matches nothing.
     searches = [search_text] if search_text else [*_WD_STUDENT_SEARCHES, ""]
     cands: dict[str, dict] = {}
+    facet_ok = True                     # until the tenant answers 400 to it
     try:
         for search in searches:
-            facets = {"locationCountry": [_WD_COUNTRY_DE]}
+            facets = {"locationCountry": [_WD_COUNTRY_DE]} if facet_ok else {}
             limit = _WD_SEARCH_LIMIT if search else _WD_WALK_LIMIT
             offset = 0
             while offset < limit:
@@ -2179,6 +2180,7 @@ def _workday_cxs_tenant(entry) -> list[dict]:
                                   headers=_wd_headers(host), timeout=15)
                 if r.status_code == 400 and facets:
                     facets = {}             # tenant rejects the facet: retry plain
+                    facet_ok = False        # ...and stop offering it to this tenant
                     continue
                 if r.status_code != 200:
                     break
