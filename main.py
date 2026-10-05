@@ -1060,6 +1060,19 @@ _BODY_RETRY_FILE = Path("body_retry.json")
 _BODY_RETRY_MAX = 3              # total attempts, including the first
 
 
+def _body_retry_ids() -> set[str]:
+    """Ids carried over from earlier runs because their body could not be
+    fetched. node_filter lets them past the age check: each one was fresh
+    when the pipeline first found it, and the delay is the pipeline's own
+    failure, not the posting's. Without this a LinkedIn ad retried the next
+    morning is over 24 hours old and is dropped before the retry can help."""
+    try:
+        raw = storage.read_text(str(_BODY_RETRY_FILE))
+        return set(json.loads(raw)) if raw else set()
+    except Exception:
+        return set()
+
+
 def _body_retry_update(unresolved_ids: list[str]) -> set[str]:
     """Record one more attempt for each unresolved id. Returns the ids that
     still have attempts left and must therefore NOT be marked seen."""
@@ -1739,7 +1752,9 @@ def node_filter(state: dict) -> dict:
     new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in blocked,
                              "Already-digested filter (company+title)")
     # Stale postings never reach the digest; the whole point is applying fast.
-    new_jobs = _apply_filter(new_jobs, _is_fresh_enough,
+    # Ads carried over for a body retry were fresh when first found.
+    retrying = _body_retry_ids()
+    new_jobs = _apply_filter(new_jobs, lambda j: j["id"] in retrying or _is_fresh_enough(j),
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
                              "Employment-form filter (student or part-time tech)")

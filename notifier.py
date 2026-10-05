@@ -350,18 +350,25 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     import time as _time
     last_error = None
     for attempt, wait in enumerate(_SMTP_RETRY_WAITS, start=1):
+        sent = False
         try:
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
                 server.login(gmail_user, gmail_pass)
                 server.sendmail(gmail_user, gmail_to, msg.as_string())
-            print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh) to {gmail_to}"
-                  + (f" (attempt {attempt})" if attempt > 1 else ""))
-            return True
+                sent = True
         except Exception as e:
-            last_error = e
-            print(f"  [Email] attempt {attempt}/{len(_SMTP_RETRY_WAITS)} failed: {e}")
-            if wait:
-                _time.sleep(wait)
+            if not sent:
+                last_error = e
+                print(f"  [Email] attempt {attempt}/{len(_SMTP_RETRY_WAITS)} failed: {e}")
+                if wait:
+                    _time.sleep(wait)
+                continue
+            # sendmail() returned, so Gmail accepted the message; only the
+            # closing QUIT failed. Retrying here would send the digest twice.
+            print(f"  [Email] delivered; ignoring an error while closing: {e}")
+        print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh) to {gmail_to}"
+              + (f" (attempt {attempt})" if attempt > 1 else ""))
+        return True
     print(f"  [Email] Failed: {last_error}")
     return False
 

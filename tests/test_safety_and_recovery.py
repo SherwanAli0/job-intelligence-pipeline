@@ -315,6 +315,23 @@ class TestFailedSendIsVisible:
         assert notifier.send_email([]) is True
         assert len(attempts) == 3
 
+    def test_an_error_after_the_message_was_accepted_is_not_retried(self, monkeypatch):
+        """Gmail accepted the digest and only QUIT failed: retrying would
+        send the same digest twice."""
+        sends = []
+
+        class _Server:
+            def __enter__(self): return self
+            def __exit__(self, *a): raise OSError("connection closed during QUIT")
+            def login(self, u, p): pass
+            def sendmail(self, *a): sends.append(1)
+        monkeypatch.setattr(notifier.smtplib, "SMTP_SSL", lambda host, port: _Server())
+        monkeypatch.setattr(notifier, "_SMTP_RETRY_WAITS", (0, 0, 0))
+        monkeypatch.setenv("GMAIL_USER", "me@example.org")
+        monkeypatch.setenv("GMAIL_APP_PASSWORD", "x")
+        assert notifier.send_email([]) is True
+        assert len(sends) == 1
+
     def test_a_persistent_smtp_error_returns_false_after_three_attempts(self, monkeypatch):
         attempts = self._smtp(monkeypatch, failures=99)
         assert notifier.send_email([]) is False

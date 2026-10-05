@@ -148,6 +148,24 @@ class TestUnresolvedBodiesAreRetried:
         assert main._fill_missing_bodies([j]) == []
         assert "_stub" not in j and j["description"].startswith("We are looking")
 
+    def test_a_retried_ad_is_not_dropped_for_its_age(self, tmp_path, monkeypatch):
+        """Fresh when first found; a day older on the retry. The age check
+        would otherwise make every retry of a dated aggregator ad pointless."""
+        from datetime import datetime, timedelta, timezone
+        monkeypatch.setattr(main, "_BODY_RETRY_FILE", tmp_path / "body_retry.json")
+        (tmp_path / "body_retry.json").write_text(json.dumps({"retry-me": 1}))
+        old = (datetime.now(timezone.utc) - timedelta(hours=40)).isoformat()
+        jobs = [_j(id="retry-me", posted_at=old), _j(id="stale", posted_at=old)]
+        monkeypatch.setattr(main, "load_digested", lambda: {})
+        monkeypatch.setattr(main, "_fill_missing_bodies", lambda js: [])
+        monkeypatch.setattr(main, "_skill_radar", lambda js: None)
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
+        monkeypatch.setattr(config, "max_posting_age_hours", lambda today=None: 24)
+        out = main.node_filter({"seen": {}, "all_jobs": jobs})
+        fresh_drops = out["drop_by_filter_track"]
+        label = [k for k in fresh_drops if k.startswith("Freshness")][0]
+        assert sum(fresh_drops[label].values()) == 1      # only "stale"
+
     def test_filter_hands_unresolved_ids_to_persist(self):
         src = inspect.getsource(main.node_filter)
         assert "body_unresolved = _fill_missing_bodies(new_jobs)" in src
