@@ -1339,11 +1339,11 @@ _EMPLOYER_ATS_SOURCES = frozenset({
 
 def _ever_shown_keys() -> set[str]:
     """company::title of every job ever emailed, from the append-only shown
-    log. digested_keys.json keeps 30 days, which is right for a normal day
-    and far too short for a catch-up run that resets seen_jobs: a role
-    emailed in August and still open would be sent again. Raises
+    log (state/shown_jobs.jsonl). digested_keys.json keeps only 30 days, so a
+    still-open role emailed earlier came back whenever its posting got a new
+    id. node_filter blocks this set on EVERY run. Raises
     storage.StorageUnavailable rather than return an empty set, because an
-    empty block-list on a catch-up day means resending everything."""
+    empty block-list means resending everything."""
     raw = storage.read_text(SHOWN_FILE.name)
     keys: set[str] = set()
     for line in (raw or "").splitlines():
@@ -1740,15 +1740,16 @@ def node_filter(state: dict) -> dict:
         return kept
 
     # Already emailed under another URL? (Adzuna re-mints links daily.)
+    # Every run blocks everything EVER emailed, not only the 30-day memory.
+    # The owner's rule is "no repeated jobs, ever", and a 30-day memory broke
+    # it whenever a still-open posting came back under a new id: a scraper
+    # change on 2026-10-05 gave two Bayer internships (emailed 08-21 and
+    # 09-04) new links, and the dry run would have sent both again.
     blocked = set(load_digested())
-    import config as _cfg
-    if _cfg.is_catchup():
-        # A catch-up run usually follows a seen_jobs reset, so the 30-day
-        # digest memory is not enough: block everything EVER emailed.
-        ever = _ever_shown_keys()
-        print(f"[Catch-up] blocking {len(ever)} company+title keys from the "
-              f"full emailed log (30-day memory holds {len(blocked)})")
-        blocked |= ever
+    ever = _ever_shown_keys()
+    print(f"[Emailed memory] blocking {len(blocked | ever)} company+title keys "
+          f"({len(ever)} from the full emailed log, {len(blocked)} from the 30-day memory)")
+    blocked |= ever
     new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in blocked,
                              "Already-digested filter (company+title)")
     # Stale postings never reach the digest; the whole point is applying fast.

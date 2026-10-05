@@ -90,7 +90,7 @@ class TestCatchupRecovery:
             "\n".join(json.dumps(x) for x in lines) + "\nnot json\n", encoding="utf-8")
         assert main._ever_shown_keys() == {"x::working student data", "y::werkstudent ki"}
 
-    def test_a_job_emailed_two_months_ago_is_blocked_on_a_catchup_day(self, monkeypatch):
+    def test_a_job_emailed_two_months_ago_is_blocked(self, monkeypatch):
         """The 30-day digest memory has forgotten it; the emailed log has not."""
         job = _j("Working Student Data", id="new-id", company="X GmbH", source="Greenhouse")
         key = main._digest_key(job)
@@ -103,21 +103,23 @@ class TestCatchupRecovery:
         assert out["new_jobs"] == []
         assert sum(out["drop_by_filter_track"]["Already-digested filter (company+title)"].values()) == 1
 
-    def test_the_emailed_log_is_not_consulted_on_a_normal_day(self, monkeypatch):
+    def test_the_emailed_log_is_consulted_on_a_normal_day_too(self, monkeypatch):
+        """The real case of 2026-10-05: a Bayer internship emailed on 09-04
+        came back under a new link a month later, on a normal day."""
+        job = _j("Internship Analytics Advisory", id="new-link", company="Bayer", source="Bayer")
         monkeypatch.setattr(main, "load_digested", lambda: {})
-        monkeypatch.setattr(main, "_ever_shown_keys",
-                            lambda: (_ for _ in ()).throw(AssertionError("must not be read")))
+        monkeypatch.setattr(main, "_ever_shown_keys", lambda: {main._digest_key(job)})
         monkeypatch.setattr(main, "_fill_missing_bodies", lambda jobs: [])
         monkeypatch.setattr(main, "_skill_radar", lambda jobs: None)
         monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
-        main.node_filter({"seen": {}, "all_jobs": [_j(id="a")]})
+        assert main.node_filter({"seen": {}, "all_jobs": [job]})["new_jobs"] == []
 
-    def test_an_unreadable_emailed_log_stops_a_catchup_run(self, monkeypatch):
-        """An empty block-list on a catch-up day means resending everything."""
+    def test_an_unreadable_emailed_log_stops_the_run(self, monkeypatch):
+        """An empty block-list means resending everything."""
         monkeypatch.setattr(main, "load_digested", lambda: {})
         monkeypatch.setattr(storage, "read_text",
                             lambda name: (_ for _ in ()).throw(storage.StorageUnavailable("down")))
-        monkeypatch.setattr(config, "is_catchup", lambda today=None: True)
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
         with pytest.raises(storage.StorageUnavailable):
             main.node_filter({"seen": {}, "all_jobs": [_j(id="a")]})
 
