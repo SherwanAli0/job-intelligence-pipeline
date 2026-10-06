@@ -1173,7 +1173,7 @@ def scrape_arbeitsagentur() -> list[dict]:
                     if label == "radius" and isinstance(km, (int, float)):
                         description = f"[{int(km)} km von Bonn]\n" + description
 
-                    results.append(job(
+                    row = job(
                         title,
                         (item.get("firma") or "Arbeitsagentur").strip(),
                         _ba_location(item),
@@ -1182,7 +1182,13 @@ def scrape_arbeitsagentur() -> list[dict]:
                         description,
                         posted_at=_ba_posted_at(item),
                         apply_url=apply_url, contact=contact, salary=salary,
-                    ))
+                    )
+                    if label == "teilzeit":
+                        # Found through the API's own arbeitszeit=tz filter:
+                        # part-time by the employer's declaration, whatever
+                        # the title says.
+                        row["_part_time"] = True
+                    results.append(row)
 
                 if len(items) < _BA_PAGE_SIZE:
                     return          # last page

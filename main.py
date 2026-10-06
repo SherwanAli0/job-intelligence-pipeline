@@ -168,6 +168,57 @@ def _normalize_company(s: str) -> str:
     return s
 
 
+# A looser identity for "is this the same job?". The strict key (normalized
+# company + title) missed real repeats: on 2026-10-06 "Working Student Test
+# Automation and Software Development" came back from "Hannover Rück SE"
+# (Indeed) a day after it was emailed from "Hannover Re, ..., 3329" (LinkedIn),
+# and one Intel internship arrived twice in the same digest as "intel" and
+# "Intel Corporation". The loose key keeps the company's first word (two when
+# the first is generic, so Deutsche Bahn and Deutsche Börse stay apart) and
+# drops a trailing requisition number from the title.
+_REQ_ID_TAIL = re.compile(r"[\s,;|#–-]*\(?\b(?:req(?:uisition)?|job|ref|id|r)?[\s#:.-]*\d{3,}\)?\s*$",
+                          re.IGNORECASE)
+_GENERIC_FIRST_WORD = frozenset({
+    "deutsche", "deutscher", "deutsches", "die", "der", "das", "the", "de", "la",
+    "le", "les", "universität", "universitaet", "university", "stadt", "city",
+    "max", "dr", "st", "sankt", "new", "bank", "institut", "institute",
+    "hochschule", "technische", "fraunhofer", "helmholtz", "leibniz", "sap",
+})
+
+
+def _loose_company(c: str) -> str:
+    toks = re.findall(r"[a-z0-9äöüß]+", _normalize_company(c))
+    if not toks:
+        return ""
+    if toks[0] in _GENERIC_FIRST_WORD and len(toks) > 1:
+        return " ".join(toks[:2])
+    return toks[0]
+
+
+# Gender markers in any order and spelling: (f/m/d), (w/m/x), (m/w/divers),
+# (gn), (all genders) ... Two copies of one job often differ only here.
+_ANY_GENDER_MARKER = re.compile(
+    r"\(\s*(?:[mwfdxi*]{1,6}\s*/\s*[mwfdxi*]{1,6}(?:\s*/\s*[mwfdxi*]{1,7})?|gn|all\s+genders?"
+    r"|alle\s+geschlechter)\s*\)|\b[mwfdx]\s*/\s*[mwfdx]\s*/\s*[mwfdx*]\b",
+    re.IGNORECASE)
+
+
+def _loose_title(t: str) -> str:
+    t = _ANY_GENDER_MARKER.sub(" ", _normalize(t))
+    t = _REQ_ID_TAIL.sub("", t.strip())
+    return re.sub(r"[^a-z0-9äöüß]+", " ", t).strip()
+
+
+def _loose_key(j: dict) -> str:
+    return f"{_loose_company(j.get('company', ''))}::{_loose_title(j.get('title', ''))}"
+
+
+def _loose_from_key(k: str) -> str:
+    """Loose key from a stored strict key ("company::title")."""
+    c, _, t = (k or "").partition("::")
+    return f"{_loose_company(c)}::{_loose_title(t)}"
+
+
 def _in_focus(j: dict) -> bool:
     """Would this copy survive the focus-area rule? Probes a copy, so the job
     itself is not tagged here. Unknown wins, as in the filter itself."""
@@ -194,7 +245,7 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
     """
     best: dict[str, dict] = {}
     for j in jobs:
-        key = f"{_normalize_company(j.get('company',''))}::{_normalize(j.get('title',''))}"
+        key = _loose_key(j)
         if not key.strip(":"):
             continue
         prior = best.get(key)
@@ -1006,15 +1057,23 @@ def _tag_where(j: dict) -> dict:
 
 
 def _is_in_focus_area(j: dict) -> bool:
-    """Owner's focus (2026-09-07): remote or hybrid anywhere in Germany,
-    on-site only in NRW or the Bonn belt. An on-site role with a known city
-    outside NRW is dropped; an unknown location is kept for the scorer."""
+    """Owner's rule (2026-09-07, restated 2026-10-06): remote or hybrid
+    anywhere in Germany, on-site only in NRW or the Bonn belt.
+
+    An on-site role must SHOW it is in NRW. Until 2026-10-06 an unknown
+    location ("", "Germany", a town on no list) was kept for the scorer, and
+    on-site roles with no stated city reached the digest (NEUPLANER, no
+    location; DLR in Oberpfaffenhofen, Bavaria). Now the location field or
+    the ad itself has to name a place in NRW or the Bonn belt."""
     if j.get("_where") in ("REMOTE", "HYBRID"):
         return True
     if j.get("_nrw"):
         return True
     loc = (j.get("location") or "").lower()
-    return not _place_in(loc, _OUTSIDE_NRW_SIGNALS)
+    if _place_in(loc, _OUTSIDE_NRW_SIGNALS):
+        return False
+    desc = (j.get("description") or "")[:4000].lower()
+    return _place_in(desc, _COMMUTABLE_FROM_BONN) or _place_in(desc, _NRW_SIGNALS)
 
 
 _BODY_FETCH_CAP = 300            # HTTP requests per run; no Claude tokens
@@ -1199,9 +1258,68 @@ _RE_STUDENT_ROLE = re.compile(
 )
 
 
+# ── Employment form: read from the TITLE (2026-10-06) ───────────────────────
+# _RE_STUDENT_ROLE used to be searched in the title AND the first 3,000
+# characters of the ad. Full-time ads mention these words all the time:
+# "experience through academic projects, internships" (Accenture, Junior
+# Applied AI Engineer), "full-time or part-time" (Interval, Platform
+# Engineer), levels "from working student to senior" (NEUPLANER, Software
+# Engineer, all Level). Of 502 jobs emailed between 2026-08-16 and 10-06, the
+# 33 whose title named no student, internship or part-time form were almost
+# all full-time; the few genuine ones said "Student", "Students",
+# "Studentische Hilfskräfte" or "50%" in the title, which the old pattern
+# did not know. So the title decides, with that wider vocabulary; an ad whose
+# title is silent qualifies only through an explicit statement of the form
+# and only if it never says full-time.
+_RE_FORM_TITLE_STUDENT = re.compile(
+    r"werkstud\w*|wersktud\w*|working[\s-]+students?|\bstudents?\b|studentische\w*"
+    r"|studentenjob\w*|studierende\w*|\bhiwi\b|\bshk\b|\bwhk\b|\bwhb\b|\bwhf\b"
+    r"|hilfskr\w*|praktik\w*|praxissemester|\binterns?\b|internship\w*",
+    re.IGNORECASE,
+)
+_RE_FORM_TITLE_PART = re.compile(
+    r"teilzeit|part[\s-]?time|minijob|aushilfe|\b\d{1,2}\s?%"
+    r"|\b(?:1\d|2[0-5])\s?(?:h|std\.?|stunden|hours)\b",
+    re.IGNORECASE,
+)
+_RE_FORM_BODY_STUDENT = re.compile(
+    r"\b(?:this is|this role is|the role is|the position is|we are looking for"
+    r"|we're looking for|we are hiring|we're hiring|looking for|seeking"
+    r"|join (?:us|our team) as|you will join (?:us )?as)\s+(?:an?\s+|our\s+)?"
+    r"(?:working student|werkstudent\w*|student assistant|student employee"
+    r"|intern\b|internship|praktikant\w*)"
+    r"|\b(?:working student|werkstudent\w*|internship|praktikums?|student assistant)"
+    r"\s*(?:position|role|job|contract|stelle|platz|vertrag)\b"
+    r"|\bals\s+(?:werkstudent\w*|praktikant\w*|studentische\w*|hilfskraft)"
+    r"|werkstudententätigkeit|werkstudentenstelle|werkstudentenjob|pflichtpraktikum"
+    r"|praxissemester|\b(?:mandatory|compulsory|curricular)\s+internship"
+    r"|\binternship\s+(?:of|for|lasting)\s+\d|\b\d{1,2}[- ]months?\s+internship",
+    re.IGNORECASE,
+)
+_RE_FORM_BODY_PART = re.compile(
+    r"\bin teilzeit\b|teilzeitstelle|teilzeitbasis|\bteilzeit\s*\("
+    r"|\bpart[- ]time\s+(?:position|role|job|basis|contract|employment)"
+    r"|\bon a part[- ]time basis|\b(?:this is|this role is|the position is)\s+(?:a\s+)?part[- ]time"
+    r"|\b(?:1\d|2[0-5])\s*(?:hours|hrs|h|std\.?|stunden)\s*(?:per|/|a|pro|in der|die)\s*(?:week|woche)",
+    re.IGNORECASE,
+)
+_RE_FULL_TIME = re.compile(
+    r"\bfull[- ]?time\b|\bvollzeit\b|festanstellung|\bunbefristet\w*"
+    r"|\bpermanent (?:position|contract|role|employment)"
+    r"|\b(?:3[5-9]|40)\s*(?:hours|h|std\.?|stunden)\s*(?:per|/|pro|die)\s*(?:week|woche)",
+    re.IGNORECASE,
+)
+
+
 def _is_student_role(j: dict) -> bool:
-    blob = f"{j.get('title') or ''} {(j.get('description') or '')[:3000]}"
-    return bool(_RE_STUDENT_ROLE.search(blob))
+    """Student or internship role: said in the title, flagged by the source,
+    or stated explicitly in an ad that never says full-time."""
+    if _RE_FORM_TITLE_STUDENT.search(j.get("title") or "") or j.get("_student"):
+        return True
+    desc = (j.get("description") or "")[:4000]
+    if _RE_FULL_TIME.search(f"{j.get('title') or ''} {desc}"):
+        return False
+    return bool(_RE_FORM_BODY_STUDENT.search(desc))
 
 
 # Part-time (Teilzeit) regular employment, added 2026-09-03 on request: "add
@@ -1226,10 +1344,17 @@ _RE_PART_TIME_TECH = re.compile(
 
 
 def _is_part_time_tech(j: dict) -> bool:
+    """Part-time tech role: part-time said in the title or flagged by the
+    source, or stated explicitly in an ad that never says full-time."""
     title = j.get("title") or ""
-    desc = j.get("description") or ""
-    return (bool(_RE_PART_TIME.search(f"{title} {desc[:3000]}"))
-            and bool(_RE_PART_TIME_TECH.search(f"{title} {desc[:1500]}")))
+    desc = (j.get("description") or "")[:4000]
+    if not _RE_PART_TIME_TECH.search(f"{title} {desc[:1500]}"):
+        return False
+    if _RE_FORM_TITLE_PART.search(title) or j.get("_part_time"):
+        return True
+    if _RE_FULL_TIME.search(f"{title} {desc}"):
+        return False
+    return bool(_RE_FORM_BODY_PART.search(desc))
 
 
 def _is_eligible_form(j: dict) -> bool:
@@ -1780,7 +1905,9 @@ def node_filter(state: dict) -> dict:
     print(f"[Emailed memory] blocking {len(blocked | ever)} company+title keys "
           f"({len(ever)} from the full emailed log, {len(blocked)} from the 30-day memory)")
     blocked |= ever
-    new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in blocked,
+    blocked_loose = {_loose_from_key(k) for k in blocked}
+    new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in blocked
+                             and _loose_key(j) not in blocked_loose,
                              "Already-digested filter (company+title)")
     # Stale postings never reach the digest; the whole point is applying fast.
     # Ads carried over for a body retry were fresh when first found.

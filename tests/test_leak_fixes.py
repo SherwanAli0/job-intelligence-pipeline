@@ -567,3 +567,104 @@ class TestArbeitsagenturWindow:
         scrapers.scrape_arbeitsagentur()
         windows = {p.get("veroeffentlichtseit") for p in sent if "was" in p}
         assert windows == {1}
+
+
+# ── 2026-10-06: part-time, internship, student work - nothing else ──────────
+
+class TestOnlyStudentInternshipOrPartTime:
+    """Owner, 2026-10-06: "why do i receive full time jobs when i will be
+    studying? what i need is part time, internship, student work, that's it"."""
+
+    @pytest.mark.parametrize("title,desc", [
+        # The three that reached his inbox on 2026-10-05 and 10-06.
+        ("Junior Applied AI Engineer (all genders)",
+         "Commercial software engineering experience in production environments (or equivalent "
+         "demonstrated through academic projects, internships, or shipped personal projects)."),
+        ("Platform Engineer (Renovate)",
+         "This is a full-time role. We are open to part-time arrangements for the right person. "
+         "You will run our dependency automation in Python."),
+        ("Software Engineer (m/f/d) – AI Platform, all Level",
+         "We hire at all levels, from working students to senior engineers. Full-time, on site."),
+        ("Junior Data Engineer (w/m/d)", "Build data pipelines in Python and SQL."),
+        ("Data Engineer", "You have completed internships in data engineering. Python, Spark."),
+        ("Backend Engineer (Energy & AI)", "Werkstudenten unterstützen unser Team. Python, Go."),
+    ])
+    def test_full_time_ads_are_out(self, title, desc):
+        assert not main._is_eligible_form(_j(title, desc))
+
+    @pytest.mark.parametrize("title", [
+        "Working Student Data & Insights", "Werkstudent IT (m/w/d)", "Wersktudent Category Management",
+        "Studentische Hilfskräfte - Software Engineer (m/w/d)", "Students - Cloud Backend & Infrastructure",
+        "Student Helper - Operations & Social Media Technology", "Student Finance (m/f/x)",
+        "Data Science Trainee (suitable for university students)", "Research student assistant (WHB)",
+        "SHK Informatik", "Praktikum Data Science", "Pflichtpraktikum Informatik", "Intern AI Governance",
+        "Internship: Machine Learning (m/f/x)", "Unsolicited application / Initiativbewerbung - Students",
+    ])
+    def test_student_and_internship_titles_are_in(self, title):
+        assert main._is_eligible_form(_j(title, ""))
+
+    @pytest.mark.parametrize("title", ["Internal Auditor", "International Data Analyst",
+                                       "Data Engineer - 100% Remote", "Senior Python Developer"])
+    def test_lookalike_words_do_not_count(self, title):
+        assert not main._is_eligible_form(_j(title, "Python and SQL."))
+
+    @pytest.mark.parametrize("title", ["Project Coordinator – AI Competition (d/f/m), 50%",
+                                       "Data Analyst (m/w/d) in Teilzeit", "Part-time Software Developer",
+                                       "IT-Support 20 Std."])
+    def test_part_time_titles_with_tech_are_in(self, title):
+        assert main._is_eligible_form(_j(title, "Python, SQL and IT systems."))
+
+    def test_explicit_form_in_an_ad_with_a_silent_title_still_counts(self):
+        assert main._is_eligible_form(_j("Data Analytics Support",
+                                         "This is a Werkstudent position, 20 hours per week."))
+        assert main._is_eligible_form(_j("Softwareentwicklung",
+                                         "Die Stelle ist in Teilzeit zu besetzen, 20 Stunden pro Woche."))
+
+    def test_a_full_time_word_vetoes_the_body_path(self):
+        assert not main._is_eligible_form(_j("Data Analytics Support",
+                                             "This is a Werkstudent position. Full-time during breaks."))
+
+    def test_the_arbeitsagentur_teilzeit_pass_counts_as_part_time(self):
+        j = _j("Systemadministrator (m/w/d)", "Betreuung unserer IT-Systeme, Linux und Netzwerke.")
+        assert not main._is_eligible_form(j)
+        j["_part_time"] = True
+        assert main._is_eligible_form(j)
+
+    def test_the_teilzeit_pass_is_flagged_by_the_scraper(self):
+        src = inspect.getsource(scrapers.scrape_arbeitsagentur)
+        assert 'label == "teilzeit"' in src and 'row["_part_time"] = True' in src
+
+
+class TestSameJobDifferentSpelling:
+    def test_hannover_re_is_one_employer_and_the_req_number_is_ignored(self):
+        a = _j("Working Student Test Automation and Software Development, 3329", company="Hannover Re")
+        b = _j("Working Student Test Automation and Software Development", company="Hannover Rück SE")
+        assert main._loose_key(a) == main._loose_key(b)
+
+    def test_intel_and_intel_corporation_merge_in_one_run(self):
+        t = "Undergraduate Intern Technical (OpenVINO, Neural Network Compression Tools) (f/m/d)"
+        a = _j(t, company="intel", id="wd", source="Workday-CXS", location="Germany, Munich")
+        b = _j(t, company="Intel Corporation", id="in", source="indeed", location="München, BY, DE")
+        assert len(main._dedup_cross_source([a, b])) == 1
+
+    def test_gender_marker_order_does_not_matter(self):
+        a = _j("Working Student Data (f/m/d)", company="X")
+        b = _j("Working Student Data (m/w/d)", company="X GmbH")
+        c = _j("Working Student Data (gn)", company="X AG")
+        assert main._loose_key(a) == main._loose_key(b) == main._loose_key(c)
+
+    def test_different_employers_with_a_generic_first_word_stay_apart(self):
+        a = _j("Working Student Data", company="Deutsche Bahn")
+        b = _j("Working Student Data", company="Deutsche Börse")
+        assert main._loose_key(a) != main._loose_key(b)
+
+    def test_a_respelled_repeat_is_blocked_by_the_emailed_memory(self, monkeypatch):
+        emailed = _j("Working Student Test Automation and Software Development, 3329", company="Hannover Re")
+        again = _j("Working Student Test Automation and Software Development", id="new",
+                   company="Hannover Rück SE", source="indeed")
+        monkeypatch.setattr(main, "load_digested", lambda: {})
+        monkeypatch.setattr(main, "_ever_shown_keys", lambda: {main._digest_key(emailed)})
+        monkeypatch.setattr(main, "_fill_missing_bodies", lambda jobs: [])
+        monkeypatch.setattr(main, "_skill_radar", lambda jobs: None)
+        monkeypatch.setattr(config, "is_catchup", lambda today=None: False)
+        assert main.node_filter({"seen": {}, "all_jobs": [again]})["new_jobs"] == []

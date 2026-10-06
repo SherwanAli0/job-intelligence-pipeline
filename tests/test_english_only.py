@@ -172,10 +172,18 @@ class TestFocusArea:
                     "Remagen", "Sankt Augustin, Germany", "Bielefeld"):
             assert self._f(loc), loc
 
-    def test_unknown_location_is_kept(self):
-        assert self._f("")
-        assert self._f("Deutschland")
-        assert self._f("Germany")
+    def test_unknown_location_onsite_needs_nrw_in_the_ad(self):
+        """2026-10-06: "NRW on site". An on-site role with no usable location
+        is kept only when the ad itself names a place in NRW or the belt."""
+        assert not self._f("")
+        assert not self._f("Deutschland")
+        assert not self._f("Oberpfaffenhofen, Germany")
+        assert self._f("Germany", " The role is based in our Cologne office.")
+        assert self._f("", " You will work on site in Düsseldorf.")
+
+    def test_unknown_location_hybrid_or_remote_is_kept(self):
+        assert self._f("Germany", " Hybrid: two days in the office.")
+        assert self._f("", " This role is 100% remote within Germany.")
 
     def test_filter_is_wired_after_tagging_and_before_the_language_test(self):
         src = inspect.getsource(main.node_filter)
