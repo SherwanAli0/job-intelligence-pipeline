@@ -236,13 +236,13 @@ class TestGermanCitiesSurviveTheAtsGate:
 
     def test_lever_country_field_and_secondary_locations(self, monkeypatch):
         out = _lv(monkeypatch, [
-            {"text": "A", "categories": {"location": "Oberhaching"}, "country": "DE", "hostedUrl": "a"},
+            {"text": "A", "categories": {"location": "Gaimersheim"}, "country": "DE", "hostedUrl": "a"},
             {"text": "B", "categories": {"location": "Paris", "allLocations": ["Paris", "Cologne, Germany"]},
              "hostedUrl": "b"},
             {"text": "C", "categories": {"location": "Copenhagen Office"}, "country": "DK", "hostedUrl": "c"},
         ])
         assert [j["title"] for j in out] == ["A", "B"]
-        assert out[0]["location"] == "Oberhaching, Germany"
+        assert out[0]["location"] == "Gaimersheim, Germany"
         assert out[1]["location"].startswith("Cologne, Germany")
 
     def test_lever_workplace_type_reaches_the_remote_hybrid_tagging(self, monkeypatch):

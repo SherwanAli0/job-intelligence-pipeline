@@ -441,6 +441,9 @@ _RE_NONGER_LOC = re.compile(
 # Germany-presence / remote-eligibility signals — shared with main.py's
 # location filter via filters.py so the two stages can never drift apart again.
 from filters import (
+    is_german_location as _is_german_location,
+    is_foreign_location as _is_foreign_location,
+    mentions_germany as _mentions_germany,
     GERMANY_TERMS as _GERMANY_TERMS,
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
@@ -600,10 +603,15 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     combined_loc = f"{loc_low} {desc_2000}"
     has_remote   = "remote" in loc_low or "remote" in desc_2000
     has_blocked  = bool(_RE_NONGER_LOC.search(loc_low))
-    germany_in_loc_or_desc = (
-        any(t in loc_low    for t in _GERMANY_TERMS) or
-        any(t in desc_2000  for t in _GERMANY_TERMS)
-    )
+    # German evidence. The location test carries its own foreign-country veto
+    # ("Hanover, NH", "Maastricht, Limburg, Netherlands" are not German) and
+    # the ad-text test is WHOLE-WORD: the old substring test counted
+    # "essential" as Essen and "dachshund" as DACH, which switched the
+    # catch-all below off for most English ads.
+    # is_german_location carries its own foreign veto, and an explicit
+    # "Germany" in the string wins ("Remote - Germany, United States").
+    loc_german = _is_german_location(loc_low)
+    germany_in_loc_or_desc = loc_german or _mentions_germany(desc_2000)
     remote_covers_de = any(s in desc_2000 for s in _REMOTE_COVERS_GERMANY_SIGNALS)
 
     # Hard veto: explicitly locked out of Germany region
@@ -620,11 +628,25 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
 
     # Plain "remote" with zero Germany/EU signal → drop
     if has_remote and not has_blocked and not germany_in_loc_or_desc and not remote_covers_de:
-        return True, "Remote role — Germany not confirmed as eligible location", "location"
+        # "remote" appearing only in the AD, beside a town we cannot place (an
+        # unlisted German town), is no evidence either way: it goes to the
+        # model. The rule bites when the LOCATION says remote, is empty, or is
+        # positively foreign.
+        if "remote" in loc_low or not loc_low or _is_foreign_location(loc_low):
+            return True, "Remote role — Germany not confirmed as eligible location", "location"
 
-    # Catch-all: location is non-empty, NOT Germany, NOT remote, NOT covered.
+    # Catch-all: a non-empty location, no German evidence, not remote, not
+    # covered - dropped only on POSITIVE evidence that the place is abroad (a
+    # country, a well-known foreign city, a US/Canadian/Australian state or a
+    # foreign country code). It used to drop every location it could not
+    # recognise as German, which removed real German towns (Paderborn, Aachen,
+    # Iserlohn: 80 of 175 XING student rows) because no finite list holds
+    # ~11,000 municipalities. An unknown bare town now goes on to the model,
+    # whose prompt scores a role outside Germany 0-15 (recall over precision,
+    # the same policy as main._is_attendable_from_germany).
     if loc_low and not germany_in_loc_or_desc and not has_remote and not remote_covers_de:
-        return True, "Location outside Germany and no remote/EU-wide coverage", "location"
+        if _is_foreign_location(loc_low):
+            return True, "Location outside Germany and no remote/EU-wide coverage", "location"
 
     # ── Check 6: Freelance / contractor only ──────────────────────────────────
     if _RE_FREELANCE_TITLE.search(title):

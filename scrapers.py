@@ -779,15 +779,11 @@ _DE_PLACE_RE = None
 
 
 def _de_place(loc: str) -> bool:
-    """True when the string names Germany or a German city/state."""
-    global _DE_PLACE_RE
-    if _DE_PLACE_RE is None:
-        from filters import GERMANY_TERMS
-        terms = sorted(set(GERMANY_TERMS) | set(_DE_EXTRA_PLACES), key=len, reverse=True)
-        _DE_PLACE_RE = re.compile(
-            r"(?<![a-zäöüß])(" + "|".join(re.escape(t) for t in terms) + r")(?![a-zäöüß])",
-            re.IGNORECASE)
-    return bool(_DE_PLACE_RE.search(loc or ""))
+    """True when the string names Germany or a German place. One list for the
+    whole pipeline (filters.is_german_location, with its foreign-country veto)
+    so the Greenhouse/Lever recall gate and the scorer cannot drift apart."""
+    from filters import is_german_location
+    return is_german_location(loc)
 
 
 def _de_or_remote(loc: str) -> bool:
@@ -1091,8 +1087,24 @@ def _ba_location(item: dict) -> str:
         return "Deutschland"
     addr = (locs[0] or {}).get("adresse") or {}
     ort = (addr.get("ort") or "").strip()
-    region = (addr.get("region") or "").replace("_", " ").title()
-    return ", ".join(x for x in (ort, region) if x) or "Deutschland"
+    key = (addr.get("region") or "").strip().upper()
+    region = _BA_REGIONS.get(key) or key.replace("_", " ").title()
+    land = (addr.get("land") or "").strip()
+    country = "Germany" if land.upper() == "DEUTSCHLAND" else land.title()
+    return ", ".join(x for x in (ort, region, country) if x) or "Deutschland"
+
+
+# The API's region codes, as the states are normally written. "Nordrhein
+# Westfalen" (no hyphen) matched nothing that looked for "nordrhein-westfalen".
+_BA_REGIONS = {
+    "BADEN_WUERTTEMBERG": "Baden-Württemberg", "BAYERN": "Bayern", "BERLIN": "Berlin",
+    "BRANDENBURG": "Brandenburg", "BREMEN": "Bremen", "HAMBURG": "Hamburg",
+    "HESSEN": "Hessen", "MECKLENBURG_VORPOMMERN": "Mecklenburg-Vorpommern",
+    "NIEDERSACHSEN": "Niedersachsen", "NORDRHEIN_WESTFALEN": "Nordrhein-Westfalen",
+    "RHEINLAND_PFALZ": "Rheinland-Pfalz", "SAARLAND": "Saarland", "SACHSEN": "Sachsen",
+    "SACHSEN_ANHALT": "Sachsen-Anhalt", "SCHLESWIG_HOLSTEIN": "Schleswig-Holstein",
+    "THUERINGEN": "Thüringen",
+}
 
 
 def _ba_posted_at(item: dict) -> str:
@@ -2922,7 +2934,7 @@ _XING_QUERY = """query JobSearchByQuery($query: JobSearchQueryInput!, $consumer:
           title
           url
           activatedAt
-          location { city }
+          location { city country { countryCode } }
           companyInfo { companyNameOverride company { companyName } }
         }
       }
@@ -2932,6 +2944,11 @@ _XING_QUERY = """query JobSearchByQuery($query: JobSearchQueryInput!, $consumer:
 
 # Werkstudent-only across the four tracks. XING is DE-native and its
 # Mittelstand segment is exactly where Werkstudent ads live.
+# The same query without the country field. If XING ever rejects the country
+# field, the source falls back to city-only locations instead of returning
+# nothing for every query.
+_XING_QUERY_LEGACY = _XING_QUERY.replace("location { city country { countryCode } }", "location { city }")
+
 _XING_QUERIES = (
     "Werkstudent Data Science", "Werkstudent Machine Learning",
     "Werkstudent Künstliche Intelligenz", "Werkstudent Data Analyst",
@@ -2942,6 +2959,23 @@ _XING_QUERIES = (
 )
 
 _XING_DESC_CAP = 60  # max job-page description fetches per run
+
+_XING_COUNTRIES = {"DE": "Germany", "AT": "Austria", "CH": "Switzerland", "LU": "Luxembourg",
+                   "NL": "Netherlands", "BE": "Belgium", "FR": "France", "PL": "Poland",
+                   "ES": "Spain", "IT": "Italy", "GB": "United Kingdom", "US": "United States"}
+
+
+def _xing_location(loc) -> str:
+    """'City, Germany' from XING's location object. XING only gave the bare
+    city, and a bare German town the scorer's pre-screen did not know
+    (Paderborn, Iserlohn, Nürnberg ...) was dropped as 'outside Germany'."""
+    loc = loc or {}
+    city = (loc.get("city") or "").strip()
+    code = ((loc.get("country") or {}).get("countryCode") or "").strip().upper()
+    country = _XING_COUNTRIES.get(code, code)
+    if city and country:
+        return f"{city}, {country}"
+    return city or country or "Germany"
 
 
 def _xing_fetch_description(url: str) -> str:
@@ -2971,23 +3005,40 @@ def scrape_xing() -> list[dict]:
     results: list[dict] = []
     seen_ids: set[str] = set()
     enriched = 0
+    query_text = _XING_QUERY
+
+    def _post(text: str, keywords: str):
+        payload = {
+            "operationName": "JobSearchByQuery",
+            "query": text,
+            "variables": {
+                "consumer": _XING_CONSUMER,
+                "query": {"keywords": keywords},
+                "limit": 20,
+                "offset": 0,
+            },
+        }
+        r = requests.post(_XING_URL, json=payload, headers=_XING_HEADERS, timeout=20)
+        try:
+            body = r.json()
+        except Exception:
+            body = {}
+        ok = r.status_code == 200 and not (body.get("errors") and not body.get("data"))
+        return r, body, ok
 
     for query in _XING_QUERIES:
         try:
-            payload = {
-                "operationName": "JobSearchByQuery",
-                "query": _XING_QUERY,
-                "variables": {
-                    "consumer": _XING_CONSUMER,
-                    "query": {"keywords": query},
-                    "limit": 20,
-                    "offset": 0,
-                },
-            }
-            r = requests.post(_XING_URL, json=payload, headers=_XING_HEADERS, timeout=20)
-            if r.status_code != 200:
+            r, body, ok = _post(query_text, query)
+            if not ok and query_text is _XING_QUERY:
+                # A rejected field would otherwise look like "no jobs today".
+                print(f"  [XING] query rejected (HTTP {r.status_code}: "
+                      f"{str(body.get('errors') or r.text)[:240]}) - falling back to city-only locations")
+                query_text = _XING_QUERY_LEGACY
+                r, body, ok = _post(query_text, query)
+            if not ok:
+                print(f"  [XING] '{query}' failed (HTTP {r.status_code})")
                 continue
-            data = (r.json().get("data") or {}).get("jobSearchByQuery") or {}
+            data = (body.get("data") or {}).get("jobSearchByQuery") or {}
             for c in data.get("collection", []) or []:
                 jd = c.get("jobDetail") or {}
                 jid = jd.get("id")
@@ -3005,7 +3056,7 @@ def scrape_xing() -> list[dict]:
                     or (ci.get("company") or {}).get("companyName")
                     or "XING"
                 )
-                location = (jd.get("location") or {}).get("city", "") or "Germany"
+                location = _xing_location(jd.get("location"))
                 posted = jd.get("activatedAt", "") or ""
 
                 description = ""

@@ -338,6 +338,9 @@ _GERMAN_TITLE_FRAGMENTS = (
 # filters.py so the two stages can never drift apart again.
 from filters import (
     GERMANY_TERMS as _GERMANY_TERMS,
+    NRW_PLACES as _NRW_PLACES,
+    is_nrw_excluded as _is_nrw_excluded,
+    is_nrw_code as _is_nrw_code,
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
 )
@@ -967,7 +970,7 @@ def _is_commutable_or_remote(j: dict) -> bool:
 # The belt reaches into Rhineland-Palatinate (Koblenz, Remagen, Andernach),
 # which is why the belt list is checked before the NRW list.
 _NRW_SIGNALS = (
-    "nordrhein-westfalen", "north rhine-westphalia", "nrw", ", nw,", ", nw ",
+    "nordrhein-westfalen", "nordrhein westfalen", "north rhine-westphalia", "nrw", ", nw,", ", nw ",
     "köln", "cologne", "koeln", "bonn", "düsseldorf", "duesseldorf", "dusseldorf",
     "dortmund", "essen", "duisburg", "bochum", "wuppertal", "bielefeld", "münster",
     "muenster", "gelsenkirchen", "mönchengladbach", "moenchengladbach", "aachen",
@@ -1040,7 +1043,15 @@ def _tag_where(j: dict) -> dict:
     desc = (j.get("description") or "").lower()
     blob = f"{loc} {desc}"
     belt = _place_in(loc, _COMMUTABLE_FROM_BONN)
-    nrw = belt or _place_in(loc, _NRW_SIGNALS)
+    # The long NRW town list applies to the LOCATION field only. Applied to ad
+    # text, short names (Soest, Olpe, Verl ...) would match German prose.
+    # A town name counts as NRW only when the location does not also name
+    # another German state or a foreign place: "Borken, Hessen", "Gronau
+    # (Leine), Niedersachsen" and "Soest, Utrecht, Netherlands" are not NRW.
+    # The belt (Koblenz, Remagen ...) is checked separately above.
+    nrw_name = (_place_in(loc, _NRW_SIGNALS) or _place_in(loc, _NRW_PLACES)
+                or _is_nrw_code(loc))
+    nrw = belt or (nrw_name and not _is_nrw_excluded(loc))
     far_city = _place_in(loc, _NON_COMMUTABLE_DE_CITIES)
     if _is_full_remote(loc, desc) or ("remote" in loc and not far_city):
         where = "REMOTE"
