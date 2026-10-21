@@ -44,6 +44,7 @@ class RunState(TypedDict, total=False):
     body_unresolved: list[str]
     dq_counts: Any
     track_mix: dict[str, int]
+    closed_dropped: int
     scraped: int
     deduped: int
     email_ok: bool

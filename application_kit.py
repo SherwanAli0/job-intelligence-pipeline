@@ -44,6 +44,45 @@ def _load_facts() -> str:
             return ""
     return ""
 
+# ── Fact gate ────────────────────────────────────────────────────────────────
+# The drafting prompt says "using ONLY these facts", and a model can still slip
+# a number in: "5 years", a wrong date, an e-mail address. These answers go into
+# real applications, so each draft is checked deterministically: every number,
+# date, e-mail address and URL in it must appear in the fact sheet. An answer
+# that fails is not banked; the question simply stays unanswered.
+_RE_FACT_TOKEN = re.compile(
+    r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+"  # e-mail address (anchored: linear time)
+    r"|https?://[^\s,;)]+"                       # URL
+    r"|\d[\d.,/:%-]*\d|\d",                      # numbers, dates, ranges, years, percentages
+    re.IGNORECASE,
+)
+
+
+def _fact_norm(s: str) -> str:
+    s = (s or "").lower()
+    return re.sub(r"(?<=\d)[.,](?=\d{3}(?!\d))", "", s)          # 45.000 == 45,000
+
+
+def ungrounded_claims(answer: str, facts: str) -> list[str]:
+    """Numbers, dates, e-mail addresses and URLs in `answer` that the fact
+    sheet does not contain."""
+    f = _fact_norm(facts)
+    bad = []
+    for m in _RE_FACT_TOKEN.finditer(answer or ""):
+        tok = m.group(0).rstrip(".,;:)-/")
+        if not tok:
+            continue
+        # a WHOLE token: "5" must not be found inside "45000", and "1" must not
+        # be the leading digit of "1.8"; an address or URL must match to its end
+        if "@" in tok or tok.lower().startswith("http"):
+            pat = r"(?<![\w@./-])" + re.escape(_fact_norm(tok)) + r"(?![\w@-]|\.\w)"
+        else:
+            pat = r"(?<![\d.,@])" + re.escape(_fact_norm(tok)) + r"(?!\d|[.,]\d)"
+        if not re.search(pat, f):
+            bad.append(tok)
+    return bad
+
+
 # Boilerplate question labels we never draft (the form auto-fills these).
 _SKIP_LABELS = (
     "first name", "last name", "full name", "email", "phone", "resume", "cv",
@@ -112,8 +151,16 @@ def enrich_with_kits(jobs: list[dict]) -> None:
     {q, a}. Answers come from the bank first; unknowns are drafted in ONE Haiku
     call and saved back to the bank. Mutates in place; never raises.
     """
+    # The fact sheet and the banked answers were written for Werkstudent roles
+    # ("hourly Werkstudent rate", "available alongside my M.Sc."). A full-time
+    # role would get those answers, which are wrong for it. Until the owner
+    # adds the line "FULLTIME_KIT: yes" to the fact sheet (after covering full-
+    # time availability and pay in it), full-time jobs get no screening kit.
+    facts = _load_facts()
+    fulltime_ok = bool(re.search(r"^\s*fulltime_kit\s*:\s*yes\b", facts, re.IGNORECASE | re.MULTILINE))
     targets = [j for j in jobs[:MAX_KIT_JOBS]
-               if _GH_URL_RE.search(j.get("url", "") or "")]
+               if _GH_URL_RE.search(j.get("url", "") or "")
+               and (fulltime_ok or j.get("_form") != "full-time")]
     if not targets:
         return
 
@@ -131,7 +178,7 @@ def enrich_with_kits(jobs: list[dict]) -> None:
                 unknown[nq] = q  # keep original wording for the prompt
 
     # Draft all unknown answers in one Haiku call.
-    facts = _load_facts() if unknown else ""
+    added = 0
     if unknown and not facts:
         print("  [AppKit] no fact sheet (APPKIT_FACTS secret / personal/facts.md) "
               "— skipping answer drafting")
@@ -176,8 +223,15 @@ def enrich_with_kits(jobs: list[dict]) -> None:
                 i = item.get("index")
                 a = (item.get("answer") or "").strip()
                 if isinstance(i, int) and 0 <= i < len(qlist) and a:
+                    bad = ungrounded_claims(a, facts)
+                    if bad:
+                        print(f"  [AppKit] answer to {qlist[i][:50]!r} dropped: "
+                              f"{bad[:3]} not in the fact sheet")
+                        continue
                     bank[_norm_q(qlist[i])] = a
-            save_bank(bank)
+                    added += 1
+            if added:                       # never write the bank back when nothing was added
+                save_bank(bank)
         except Exception as e:
             print(f"  [AppKit] drafting failed: {e}")
 

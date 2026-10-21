@@ -343,6 +343,8 @@ from filters import (
     is_nrw_code as _is_nrw_code,
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
+    junior_qualifier_in_title as _junior_qualifier_in_title,
+    junior_qualifier_in_text as _junior_qualifier_in_text,
 )
 
 
@@ -676,16 +678,12 @@ def _not_fulltime_senior(j: dict) -> bool:
     title_lower = title.lower()
 
     if _RE_SENIOR_IN_TITLE.search(title):
-        # Pass-through if explicitly qualified as junior/entry-level.
-        # NOTE: "working student / werkstudent" are NOT here on purpose —
-        # Sherwan is not enrolled at a German university and cannot do those.
-        junior_qualifiers = (
-            "junior", "entry", "entry-level", "entry level",
-            "intern", "internship", "praktikum",
-            "graduate", "grad ", "trainee",
-            "associate", "jr.", "jr ",
-        )
-        if any(q in title_lower for q in junior_qualifiers):
+        # Pass-through if explicitly qualified as junior/entry-level. Whole
+        # words only ("International" is not "intern"), and "Associate
+        # Director" is not a junior title (filters.junior_qualifier_in_title).
+        # "working student / werkstudent" are judged by the employment-form
+        # gate, not here.
+        if _junior_qualifier_in_title(title_lower):
             return True
         return False
 
@@ -694,8 +692,7 @@ def _not_fulltime_senior(j: dict) -> bool:
     # and harmless, so a wider scan would kill junior-suitable jobs.
     head = (j.get("description") or "")[:_BODY_SENIORITY_SCAN_CHARS]
     if _RE_SENIOR_IN_BODY.search(head):
-        if not any(q in head.lower() for q in ("junior", "entry level", "entry-level",
-                                               "graduate", "trainee", "intern")):
+        if not _junior_qualifier_in_text(head):
             return False
 
     return True
@@ -721,6 +718,30 @@ _MASTERS_SOFTENING = (
     "advantageous", "is an advantage", "is advantageous", "of advantage",
     "desirable", "is desirable", "is welcome",
     "von vorteil", "wäre von vorteil", "wünschenswert",
+)
+
+# A Bachelor alternative next to the Master's mention ("Bachelor's or Master's",
+# "BSc/MSc", "or equivalent") means the Master's is not required. Entry-level
+# full-time ads say this all the time; student ads said "enrolled" instead.
+_RE_BACHELOR_ALT = re.compile(
+    # "Bachelor's or Master's", "Master's or Bachelor's" - the two degrees
+    # within one clause (no sentence break between them), not merely both
+    # somewhere in the window ("Master's degree required; Bachelor's students
+    # may apply for internships" is still a Master's requirement)
+    r"bachelor[^.;:\n]{0,25}?(?:master|\bm\.?\s?sc\b)"
+    r"|(?:master|\bm\.?\s?sc\b)[^.;:\n]{0,25}?bachelor"
+    r"|(?:master|\bm\.?\s?sc\b)[^.;:\n]{0,45}?\b(?:or|oder)\s+(?:a\s+|an\s+)?bachelor"
+    r"|\bb\.?\s?sc\.?\s*(?:/|,|or|oder|und|and)\s*m\.?\s?sc"
+    r"|\bm\.?\s?sc\.?\s*(?:/|,|or|oder|und|and)\s*b\.?\s?sc"
+    r"|\bba/bs\b|\bbs/ms\b",
+    re.IGNORECASE,
+)
+# ...unless the ad says the Bachelor is NOT enough
+_RE_BACHELOR_NOT_ENOUGH = re.compile(
+    r"(?:bachelor|\bb\.?\s?sc\b)[^.;\n]{0,40}?(?:not|n't|never)\s+(?:be\s+)?"
+    r"(?:sufficient|enough|accepted|considered|eligible|possible)"
+    r"|(?:no|without|kein\w*)\s+(?:a\s+)?bachelor",
+    re.IGNORECASE,
 )
 
 # Exclusion contexts — these contain the trigger phrase but aren't degree
@@ -752,7 +773,9 @@ def _no_masters_required(j: dict) -> bool:
         data", "masterclass", "master branch", …)
 
     A Bachelor's requirement on its own is NOT a trigger here — we only
-    react to Master/PhD mentions.
+    react to Master/PhD mentions. A mention that sits next to a Bachelor
+    alternative ("Bachelor's or Master's", "BSc/MSc", "or equivalent") is not
+    a requirement either.
     """
     import re
     title = (j.get("title") or "").lower()
@@ -770,6 +793,9 @@ def _no_masters_required(j: dict) -> bool:
                 continue
             # Softened? skip this occurrence.
             if any(soft in window for soft in _MASTERS_SOFTENING):
+                continue
+            # A Bachelor alternative in the same breath? Not required.
+            if _RE_BACHELOR_ALT.search(window) and not _RE_BACHELOR_NOT_ENOUGH.search(window):
                 continue
             # Real Master/PhD requirement found → drop
             return False
@@ -856,8 +882,9 @@ def _is_english_friendly(j: dict) -> bool:
 
 # ── Werkstudent mode: student roles only, commutable from Bonn or DE-remote ──
 # The owner starts an M.Sc. at the University of Bonn in October 2026. The
-# pipeline now hunts EXCLUSIVELY for Werkstudent-class roles that are workable
-# alongside those studies.
+# pipeline hunted EXCLUSIVELY for Werkstudent-class roles that are workable
+# alongside those studies; since 2026-10-14 internships, part-time and
+# entry-level full-time roles are in the pool too (see _is_eligible_form).
 #
 # "Commutable" is an EXPLICIT list of places within roughly one hour by train
 # from Bonn Hbf, not a blanket NRW match — NRW includes Bielefeld and Münster
@@ -929,11 +956,21 @@ _HYBRID_SIGNALS = (
 )
 
 
+_RE_HYBRID_NOISE = re.compile(r"hybridmultilevel|hybrid\s+cloud|hybrid\s+(?:ai|app)\b", re.IGNORECASE)
+
+
+def _has_hybrid_signal(blob: str) -> bool:
+    """Hybrid wording in an ad - without Word's 'hybridMultilevel' list markup
+    (21 Arbeitnow ads carried it) or 'hybrid cloud', which are not about work."""
+    blob = _RE_HYBRID_NOISE.sub(" ", blob or "")
+    return any(h in blob for h in _HYBRID_SIGNALS)
+
+
 def _is_full_remote(loc: str, desc: str) -> bool:
     """True only for genuinely location-independent roles. Hybrid wording
     anywhere in the ad disqualifies, because hybrid needs a reachable office."""
     blob = f"{loc} {desc}"
-    if any(h in blob for h in _HYBRID_SIGNALS):
+    if _has_hybrid_signal(blob):
         return False
     return any(sig in blob for sig in _DE_REMOTE_SIGNALS)
 
@@ -1055,7 +1092,7 @@ def _tag_where(j: dict) -> dict:
     far_city = _place_in(loc, _NON_COMMUTABLE_DE_CITIES)
     if _is_full_remote(loc, desc) or ("remote" in loc and not far_city):
         where = "REMOTE"
-    elif ("remote" in loc or any(h in blob for h in _HYBRID_SIGNALS)
+    elif ("remote" in loc or _has_hybrid_signal(blob)
             or re.search(r"home[- ]?office|mobiles arbeiten|mobile work", blob)):
         where = "HYBRID"              # an office exists; the city matters
     else:
@@ -1368,10 +1405,164 @@ def _is_part_time_tech(j: dict) -> bool:
     return bool(_RE_FORM_BODY_PART.search(desc))
 
 
+# ── Employment form (2026-10-14: full-time roles are in) ────────────────────
+# Owner: "we will add the full time jobs as well to our pool in nrw or remote
+# germany or hybrid germany". The gate therefore accepts every regular form -
+# student work, internship, part-time AND full-time - and keeps out only the
+# kinds that are not a job for him: thesis, Ausbildung / dual study, PhD,
+# professorships and freelance work. A title that ALSO says working student or
+# internship ("Working Student AI / Bachelor's or Master's Thesis") stays in.
+# The experience (>=2 years), senior-title and completed-Master's filters that
+# follow were built for exactly this population and still apply, so the
+# full-time roles that reach the scorer are entry-level and junior ones.
+_RE_NOT_A_JOB_TITLE = re.compile(
+    r"\bausbildung|auszubildende\w*|\bazubi\b|\bapprentice\w*|berufsausbildung"
+    r"|\bdual(?:e[rsn]?)?\s+(?:studium|student\w*|studiengang|studierende\w*|study|degree|programm?e?)\b"
+    r"|\bduales\b|\(\s*dual\s*\)|verbundstudium|studium\s+plus"
+    r"|abschlussarbeit|masterarbeit|bachelorarbeit|diplomarbeit|studienarbeit|forschungsarbeit"
+    r"|\b(?:master|bachelor|diplom)?thesis\b"
+    r"|\bph\.?d\.?\b|doktorand\w*|doctoral|promotionsstelle|promotionsstudent\w*"
+    r"|\bpromotion\s+(?:im|in|zum|zur)\b|postdoc\w*|post-doc\b"
+    r"|professor\w*|\bprofessur\b|juniorprofessur|freelanc\w*|freiberuf\w*|werkvertrag"
+    ,
+    re.IGNORECASE,
+)
+# Pages that are not postings at all - pay guides, courses, degree programmes.
+# They arrive through web search (Brave / DuckDuckGo) only, so the rule is
+# applied to those sources only: "Part-time Python Developer, Online Courses
+# Platform" from an ATS is a real job.
+_RE_NOT_A_POSTING_TITLE = re.compile(
+    r"\bgehalt\b|\bsalary\b|\bsalaries\b|\bcourses?\b|\bkurs\b|\bbootcamp\b|\bscholarship\b"
+    r"|\bstipendium\b|summer\s+school|\bstudiengang\b|degree[\s-]+program\w*|gehaltsrechner",
+    re.IGNORECASE,
+)
+_RE_INTERNSHIP_TITLE = re.compile(r"praktik|praxissemester|\binterns?\b|internship", re.IGNORECASE)
+_RE_INTERNSHIP_WORD = re.compile(r"\bintern(?:s|ship)?\b|praktik|praxissemester", re.IGNORECASE)
+
+# For a regular full-time role the TITLE must name tech work. Student and
+# part-time rows keep the broader gate below (their volume is small and the
+# scorer's off-target cap handles them); full-time ads are thousands a day
+# across the ATS feeds and every one costs a scoring call. No bare "IT" and no
+# bare "analyst": those let IT-helpdesk, finance and HR titles through.
+_RE_FULLTIME_TECH_TITLE = re.compile(
+    r"\bdata\b|\bdaten\w*|machine[\s-]+learning|deep[\s-]+learning|maschinell\w*"
+    r"|\bml\b|\bai\b|\bki\b|artificial\s+intelligence|k(?:ü|ue)nstliche\s+intelligenz"
+    r"|\bllm\b|\bgenai\b|\bnlp\b|computer\s+vision|bildverarbeitung"
+    r"|speech\s+(?:recogni|synth|process)\w*|perception\s+engineer|reinforcement|federated"
+    r"|foundation[\s-]+model|prompt[\s-]+engineer\w*|agentic|agent\s+engineer|recommender"
+    r"|ranking\s+engineer|knowledge[\s-]+graph|algorithm\w*|applied\s+research\w*"
+    r"|analytic\w*|(?:product|insights?|reporting|quantitative|pricing)\s+analyst\w*"
+    r"|\bbi\b|business\s+intelligence|scientist\w*"
+    r"|python|software|developer\w*|programmer\w*|entwickl\w*|programmier\w*|back-?end|front-?end|full[\s-]?stack"
+    r"|\bjava\b|\bios\b|android|typescript|javascript|golang|kotlin|\.net\b|c\+\+"
+    r"|devops|mlops|\bsdet\b|site\s+reliability|\bsre\b|\bcloud\b|informatik\w*|informatics"
+    r"|automati\w*|robotic\w*|robotik|digitali\w*|\bquant(?:itative)?\b|statistic\w*|statistik\w*"
+    r"|research\s+(?:engineer|scientist)|platform\s+engineer|\bapi\b|\bsql\b",
+    re.IGNORECASE,
+)
+# ...but a hook word inside a clearly non-tech title ("Software Sales Executive",
+# "Data Entry Clerk", "Datenschutzbeauftragter") does not make it tech work,
+# unless the title ALSO names real data/ML/software work ("Sales Data Analyst").
+_RE_FULLTIME_NON_TECH_TITLE = re.compile(
+    r"\bsales\b|vertrieb\w*|account\s+(?:manager|executive|director)|recruit\w*|\bcontroller\b"
+    r"|\bauditor\b|surveyor|data\s+entry|datenerfass\w*|data[\s-]+protection|datenschutz\w*"
+    r"|data\s+cent(?:er|re)|\bsupport\b|lehrer\w*|\bteacher\b"
+    r"|annotat\w*|\blabel(?:er|ler)s?\b|\braters?\b|data\s+collect\w*|transcri\w*"
+    r"|automatisierungstechnik\w*|mechatronik\w*|data[\s-]+privacy",
+    re.IGNORECASE,
+)
+# A full-time ad is wanted at entry or junior level; these title markers say
+# the level is higher ("Data Scientist II", "Mid-level", "Teamleiter ...").
+_RE_MIDLEVEL_TITLE = re.compile(
+    r"mid[\s-]?level|\bintermediate\b|\bmedior\b|\bexperienced\b|\berfahren\w*|\bsnr\b"
+    r"|\b(?:engineer|developer|scientist|analyst|entwickler\w*)\s*(?:ii|iii|iv|[2-5])\b"
+    r"|\blevel\s*[2-9]\b|\bl[3-9]\b|teamleiter\w*|projektleiter\w*|abteilungsleiter\w*|\(\s*professional\s*\)",
+    re.IGNORECASE,
+)
+_RE_FULLTIME_STRONG_TECH_TITLE = re.compile(
+    r"machine[\s-]+learning|deep[\s-]+learning|\bml\b|\bai\b|\bki\b|data\s+(?:scien|engineer|analy)\w*"
+    r"|python|\bnlp\b|\bllm\b|genai|software\s+(?:engineer|developer)|\bdeveloper\b",
+    re.IGNORECASE,
+)
+
+# Web search (Brave / DuckDuckGo) returns pay guides, course pages and blog posts
+# next to real postings. Student rows were screened by the student gate; a
+# full-time row from those sources must at least have a job-posting URL.
+_WEB_SEARCH_SOURCES = ("BraveSearch", "WebSearch")
+_RE_JOB_URL_PATH = re.compile(
+    r"/(?:jobs?|job-details?|jobdetail\w*|stellen\w*|karriere\w*|careers?|vacanc\w*|vacatures?"
+    r"|positions?|openings?|apply|offers?)(?:[/_.?#-]|$)",
+    re.IGNORECASE,
+)
+_RE_JOB_URL_HOST = re.compile(r"(?:^|\.)(?:jobs?|karriere|careers?|stellen)\.", re.IGNORECASE)
+
+
+def _looks_like_posting_url(j: dict) -> bool:
+    if j.get("source") not in _WEB_SEARCH_SOURCES:
+        return True
+    from urllib.parse import urlparse
+    u = urlparse(j.get("url") or "")
+    return bool(_RE_JOB_URL_PATH.search(u.path or "") or _RE_JOB_URL_HOST.search(u.netloc or ""))
+
+
+def _job_form(j: dict) -> str:
+    """student / internship / part-time / full-time, for the digest label."""
+    if _is_student_role(j):
+        title = j.get("title") or ""
+        if _RE_INTERNSHIP_TITLE.search(title):
+            return "internship"
+        if _RE_FORM_TITLE_STUDENT.search(title) or j.get("_student"):
+            return "student"
+        # qualified through the ad body only: label by what the body said
+        hit = _RE_FORM_BODY_STUDENT.search((j.get("description") or "")[:4000])
+        return "internship" if hit and _RE_INTERNSHIP_WORD.search(hit.group(0)) else "student"
+    if _is_part_time_tech(j):
+        return "part-time"
+    return "full-time"
+
+
+# A real student-WORK marker. The bare word "student" is not one: "Dual Student"
+# is dual study, "PhD Student" is a doctorate.
+_RE_STUDENT_WORK_MARKER = re.compile(
+    r"werkstud\w*|working[\s-]+students?|student\w*\s+(?:assistant|employee|worker|job)"
+    r"|studentische\w*|studentenjob\w*|\bhiwi\b|\bshk\b|\bwhk\b|hilfskr\w*|praktik\w*"
+    r"|praxissemester|\binterns?\b|internship\w*",
+    re.IGNORECASE,
+)
+
+
 def _is_eligible_form(j: dict) -> bool:
-    """Employment-form gate: student role (Werkstudent/HiWi/internship) OR a
-    part-time tech role. Full-time regular employment stays out."""
-    return _is_student_role(j) or _is_part_time_tech(j)
+    """Employment-form gate: every regular form, except thesis, Ausbildung /
+    dual study, PhD, professorships and freelance work (and pages that are not
+    postings at all). A title that ALSO names real student work ("Working
+    Student AI / Bachelor's or Master's Thesis", "ML Intern (PhD)") stays in.
+
+    Known narrowing: a PART-TIME tech role whose title also carries one of the
+    excluded words ("Teilzeit ... Freelancer Marketplace") is dropped too. None
+    was seen in 17,000 scraped rows, and rescuing it would also rescue a
+    part-time Ausbildung."""
+    title = j.get("title") or ""
+    if j.get("source") in _WEB_SEARCH_SOURCES and _RE_NOT_A_POSTING_TITLE.search(title):
+        return False
+    if _RE_NOT_A_JOB_TITLE.search(title) and not _RE_STUDENT_WORK_MARKER.search(title):
+        return False
+    return True
+
+
+def _fulltime_title_ok(j: dict) -> bool:
+    """Free title gate for regular full-time roles: the title must name tech
+    work (_RE_FULLTIME_TECH_TITLE) and not be a non-tech title with a hook word
+    in it; a web-search hit must also look like a posting URL."""
+    if j.get("_form") != "full-time":
+        return True
+    title = j.get("title") or ""
+    if not _RE_FULLTIME_TECH_TITLE.search(title):
+        return False
+    if _RE_MIDLEVEL_TITLE.search(title):
+        return False
+    if _RE_FULLTIME_NON_TECH_TITLE.search(title) and not _RE_FULLTIME_STRONG_TECH_TITLE.search(title):
+        return False
+    return _looks_like_posting_url(j)
 
 
 # ── Digest memory by company+title, not just URL ─────────────────────────────
@@ -1430,10 +1621,38 @@ def _shown_record(j: dict, band: str, shown_at: str) -> dict:
         "source": j.get("source", ""),
         "track": j.get("_track", "?"),
         "score": j.get("score", 0),
+        "form": j.get("_form", ""),        # student / internship / part-time / full-time
         "band": band,                      # "top" or "near"
         "age_days": _job_age_days(j),
         "shown_at": shown_at,
     }
+
+
+def _archive_postings(top: list[dict], near: list[dict]) -> None:
+    """Keep the TEXT of every emailed posting (postings_<date>.jsonl in the
+    state bucket; gitignored locally). Postings disappear within days, and the
+    ad is what a CV or cover letter is tailored from. Never raises."""
+    from datetime import datetime, timezone
+    jobs = [j for j in (top or []) + (near or [])]
+    if not jobs:
+        return
+    now = datetime.now(timezone.utc)
+    name = f"postings_{now.date().isoformat()}.jsonl"
+    try:
+        existing = storage.read_text(name) or ""      # two sends on one day append, not overwrite
+        lines = [json.dumps({
+            "id": j.get("id", ""), "url": j.get("url", ""), "title": j.get("title", ""),
+            "company": j.get("company", ""), "location": j.get("location", ""),
+            "source": j.get("source", ""), "score": j.get("score", 0), "form": j.get("_form", ""),
+            "posted_at": str(j.get("posted_at") or ""), "archived_at": now.isoformat(timespec="seconds"),
+            "description": (j.get("description") or "")[:8000],
+        }, ensure_ascii=False) for j in jobs]
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        storage.write_text(name, existing + "\n".join(lines) + "\n")
+        print(f"  [Postings] kept the text of {len(lines)} emailed postings in {name}")
+    except Exception as e:
+        print(f"  [Postings] could not archive the posting texts: {e}")
 
 
 def _record_shown(top: list[dict], near: list[dict]) -> None:
@@ -1926,7 +2145,11 @@ def node_filter(state: dict) -> dict:
     new_jobs = _apply_filter(new_jobs, lambda j: j["id"] in retrying or _is_fresh_enough(j),
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
-                             "Employment-form filter (student or part-time tech)")
+                             "Employment-form filter (any form except thesis, Ausbildung, PhD, freelance)")
+    for j in new_jobs:
+        j["_form"] = _job_form(j)
+    new_jobs = _apply_filter(new_jobs, _fulltime_title_ok,
+                             "Full-time title filter (tech work named in the title)")
     # Fetch the full ad for stub bodies BEFORE the tech gate and the language
     # test, so neither judges an English ad on a two-line snippet. Ids whose
     # body could not be fetched are remembered for node_persist.
@@ -1984,6 +2207,21 @@ def node_rank(state: dict) -> dict:
 
     good = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
     good.sort(key=lambda x: x["score"], reverse=True)
+    # Drop postings the employer has already taken down (definitive 404 / 410
+    # from the employer's own API only; see liveness.py). Done BEFORE the digest
+    # cap so a dead posting cannot take a slot from a live one. Dropped ones are
+    # still marked seen by node_persist, so they are not re-evaluated tomorrow.
+    closed: list[dict] = []
+    live_warnings: list[str] = []
+    try:
+        import liveness
+        good, closed = liveness.drop_closed(good)
+        live_warnings = list(liveness.LAST_WARNINGS)
+        if closed:
+            print(f"[Liveness] {len(closed)} posting(s) already closed, not sent: "
+                  + "; ".join(f"{j['title'][:40]} @ {j['company'][:25]}" for j in closed[:8]))
+    except Exception as e:
+        print(f"  [Liveness] skipped: {e}")
     import config as _cfg
     # A catch-up day delivers a backlog once; cutting it at the daily cap
     # would bury the overflow for good (it is marked seen like everything else).
@@ -2023,7 +2261,10 @@ def node_rank(state: dict) -> dict:
     except Exception as e:
         print(f"  [AppKit] skipped: {e}")
 
-    return {"top": top, "near": near, "track_mix": mix}
+    out = {"top": top, "near": near, "track_mix": mix, "closed_dropped": len(closed)}
+    if live_warnings:
+        out["health_warnings"] = list(state.get("health_warnings") or []) + live_warnings
+    return out
 
 
 def node_notify(state: dict) -> dict:
@@ -2072,6 +2313,7 @@ def node_persist(state: dict) -> dict:
         save_digested(digested)
         # O2: log what was shown, with features, for the conversion join
         _record_shown(state.get("top", []), state.get("near", []))
+        _archive_postings(state.get("top", []), state.get("near", []))
         # Source-health long-term memory (see _update_source_registry).
         _update_source_registry(state.get("src_counts", {}))
         print("\nDone. seen_jobs.json + digested_keys.json updated.")
@@ -2099,6 +2341,7 @@ def node_persist(state: dict) -> dict:
             "drops": {label: sum(c.values()) for label, c in drops.items()},
             "dq": dict(dq.most_common(8)) if dq else {},
             "digest": len(state.get("top", [])), "near": len(state.get("near", [])),
+            "closed": state.get("closed_dropped", 0),
             "track_mix": state.get("track_mix", {}),
             "email_ok": email_ok,
             "warnings": state.get("health_warnings", []),

@@ -117,8 +117,9 @@ outside the repository. Git history was scrubbed accordingly.
   days; every run's behaviour is one JSON line of run stats.
 - **What it hunts is configuration, not architecture.** The target changed
   completely once already: it looked for junior full-time roles until its owner
-  was admitted to an M.Sc. in Bonn, and now looks only for Werkstudent (working-student), internship and
-  part-time (Teilzeit) IT roles, English-language ads only: remote or hybrid anywhere
+  was admitted to an M.Sc. in Bonn, then only for Werkstudent (working-student), internship and
+  part-time (Teilzeit) IT roles, and since 2026-10-14 for entry-level full-time roles as well.
+  English-language ads only: remote or hybrid anywhere
   in Germany, on-site only in North Rhine-Westphalia or the Bonn belt.
   That pivot touched the CV profiles and query lists in
   [config.py](config.py), one required-employment-form filter, one location-ranking rule,
@@ -154,7 +155,7 @@ outside the repository. Git history was scrubbed accordingly.
 | [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
 | [health_check.py](health_check.py) | Monthly board-rot detector |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
-| [tests/](tests/) | 942 offline tests, run on every push |
+| [tests/](tests/) | 1,260+ offline tests, run on every push |
 
 ## Run your own
 

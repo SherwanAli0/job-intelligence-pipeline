@@ -447,6 +447,7 @@ from filters import (
     GERMANY_TERMS as _GERMANY_TERMS,
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
+    junior_qualifier_in_title as _junior_qualifier_in_title,
 )
 
 # Unpaid / equity-only compensation
@@ -574,8 +575,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     # 1c. Title-level seniority: Senior / Lead / Head / Principal in title
     #     with no junior/entry/intern qualifier → auto-disqualify
     if _RE_SENIOR_TITLE.search(title_for_seniority):
-        junior_qualifiers = ("junior", "entry", "intern", "graduate", "associate", "jr.")
-        if not any(q in t_low for q in junior_qualifiers):
+        if not _junior_qualifier_in_title(t_low):
             return True, "Senior/Lead title with no junior qualifier", "senior_title"
 
     # ── Check 2: Fluent German required (English JDs that bury the German req)
@@ -677,7 +677,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
-    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting roles that fit ALONGSIDE a full-time M.Sc.: Werkstudent / working-student roles (up to 20h/week), internships (Praktikum, Pflichtpraktikum, Praxissemester, internship), AND part-time (Teilzeit) regular employment of roughly 20h/week or less. Full-time (Vollzeit) permanent roles and thesis positions are the WRONG employment form, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
+    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting any of: Werkstudent / working-student roles (up to 20h/week), internships (Praktikum, Pflichtpraktikum, Praxissemester, internship), part-time (Teilzeit) regular employment, AND - since 2026-10-14, his decision - regular full-time (Vollzeit) roles. He has no professional experience yet, so the full-time roles that fit are entry-level and junior ones. Thesis positions, Ausbildung / dual study, PhD positions and freelance work are the WRONG employment form, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
 
 CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
 {cv_profile}
@@ -685,7 +685,7 @@ CANDIDATE PROFILE (this profile is already framed for the track of the jobs in t
 ═══════════════════════════════════════════════════════════════
 SCORING SCALE — be calibrated, not generous
 ═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Werkstudent or internship, no fluent-German demand, remote/hybrid in Germany or on-site in NRW, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
+- 85-100: Excellent fit. Real shot at interview. Werkstudent, internship, part-time or entry-level full-time role, no fluent-German demand, remote/hybrid in Germany or on-site in NRW, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
@@ -700,10 +700,11 @@ mediocre one; a batch full of strong jobs must not deflate a good one.
 - ANCHOR 45: "Werkstudent Data Engineering, Düsseldorf. Airflow, dbt,
   Snowflake. Sehr gute Deutschkenntnisse erforderlich." → 45. Right
   employment form, adjacent stack, German requirement at the edge.
-- ANCHOR 20: "Junior Data Scientist (full-time), Berlin. Python,
-  scikit-learn, English team." → 20. Perfect topical fit but WRONG
-  employment form (full-time, not Werkstudent); topic match alone cannot
-  lift it.
+- ANCHOR 20: "Data Scientist (full-time), hybrid Munich, 5+ years of
+  experience, PhD preferred. Python, scikit-learn, English team." → 20.
+  Perfect topical fit but the seniority is far beyond him; topic match alone
+  cannot lift it. (An ENTRY-LEVEL full-time data scientist role in the same
+  place is a normal fit and is scored like any other form.)
 
 ═══════════════════════════════════════════════════════════════
 WORK AUTHORIZATION (highest priority, applied before any other cap)
@@ -732,16 +733,18 @@ Apply the LOWEST applicable cap. Boosts cannot exceed the cap.
 ═══════════════════════════════════════════════════════════════
 
 CAP AT 15 if the role is the WRONG employment form:
-- Full-time (Vollzeit) regular employment, Ausbildung, trainee/graduate
-  programme, thesis (Abschlussarbeit/Bachelorarbeit/Masterarbeit), PhD,
-  or freelance. ACCEPTABLE forms are: Werkstudent / working student /
+- Ausbildung or dual study (duales Studium), thesis (Abschlussarbeit/
+  Bachelorarbeit/Masterarbeit), PhD / doctoral position, or freelance /
+  contractor-only work. ACCEPTABLE forms are: Werkstudent / working student /
   studentische Hilfskraft (HiWi), internships (Praktikum, Pflichtpraktikum,
-  Praxissemester, internship), AND part-time (Teilzeit) regular roles of
-  roughly 20h/week or less.
-- Do NOT apply this cap merely because the ad is vague about hours. The
-  pre-filter already guarantees every job you see signalled a student
-  role, an internship, or part-time work somewhere in its text. Only apply it when the ad
-  EXPLICITLY states a form from the excluded list above.
+  Praxissemester, internship), part-time (Teilzeit) regular roles, AND
+  regular full-time (Vollzeit) roles - trainee and graduate programmes
+  included - at entry or junior level (seniority is handled by the caps
+  below).
+- A working-student role that also offers a thesis is still a working-student
+  role.
+- Do NOT apply this cap merely because the ad is vague about hours. Only
+  apply it when the ad EXPLICITLY states a form from the excluded list above.
 
 CAP AT 20 if ANY of these are true:
 - Role requires fluent/business/native German (C1+), even if the JD is written in English. Look for: "fluent German", "verhandlungssicheres Deutsch", "Mandatory: English and German", "business-fluent German", "German native". Sherwan is B1.
@@ -771,11 +774,16 @@ start at the SAME score.
 ═══════════════════════════════════════════════════════════════
 
 All tiers assume the role IS an acceptable form — a Werkstudent/working-
-student role, an internship, or a part-time (Teilzeit) role. Anything else
-is already capped at 15. The three forms are scored EQUALLY: judge on the
-work, the location and the language, not on the contract type. A paid
-internship or a 20h/week Teilzeit data role in the commute belt is as good
-as a Werkstudent role. A part-time role in a track uses that track's tier.
+student role, an internship, a part-time (Teilzeit) role, or an entry-level
+full-time role. Anything else is already capped at 15. The four forms are
+scored EQUALLY: judge on the work, the seniority, the location and the
+language, not on the contract type. A paid internship, a 20h/week Teilzeit
+data role or a junior full-time data role is as good as a Werkstudent role.
+A part-time or full-time role in a track uses that track's tier. For a
+full-time role the LEVEL decides: junior / associate / graduate / entry-level
+- or no level and no years of experience required - is in scope; the
+experience and seniority caps above (2 years -> 50, 3-4 years -> 35, 5+ years
+or a Senior/Lead/Manager title -> 20) apply in full.
 
 TIER 1 (start at 80, then apply caps and adjustments) — Werkstudent in ANY
 of the 4 tracks:
@@ -790,18 +798,23 @@ of the 4 tracks:
   Data Analyst track:
     - Werkstudent Data Analytics / BI / Reporting / Analytics Engineering
     - Werkstudent Business Analysis with a clear data/SQL/Python focus
-  (studentische Hilfskraft / HiWi postings in these fields count equally)
+  (studentische Hilfskraft / HiWi postings in these fields count equally, and
+  so do the same roles as an internship, a part-time job or an ENTRY-LEVEL
+  full-time job - "Junior ML Engineer", "Graduate Data Scientist", "Data
+  Analyst (Berufseinsteiger)" start at the same tier)
 
 TIER 2 (start at 70, then apply caps and adjustments):
-- Werkstudent software engineering with a real data/AI component
-  (e.g. Werkstudent Softwareentwicklung Python, backend for an ML product).
+- Software engineering with a real data/AI component, in any of the four forms
+  (e.g. Werkstudent Softwareentwicklung Python, Junior Backend Engineer for an
+  ML product).
 
 TIER 3 (start at 60, then apply caps and adjustments):
-- Werkstudent IT / software engineering without a data/AI component but with
-  Python or modern web stack — acceptable to stay funded, less CV value.
+- IT / software engineering without a data/AI component but with Python or a
+  modern web stack, in any of the four forms — acceptable to stay funded,
+  less CV value.
 
 OFF-TARGET (CAP AT 25 — a hard maximum, boosts cannot lift it):
-- A student role with NO data/AI/software content. The 2026-08-16
+- A role of ANY form with NO data/AI/software content. The 2026-08-16
   digest carried an outlet sales assistant, a retail sales operation
   role and a quality-management role as near misses because off-target
   used to START at 40; anything above 35 reaches the owner's inbox, so
@@ -809,8 +822,10 @@ OFF-TARGET (CAP AT 25 — a hard maximum, boosts cannot lift it):
 - Examples: retail/outlet/cashier, sales/Vertrieb, marketing/
   communications, HR/recruiting, office management, event management,
   pure QM, pure controlling/accounting, legal, logistics floor work.
-- Werkstudent IT/software WITHOUT data content is NOT off-target — it
-  is Tier 3 above. Off-target means no technical content at all.
+- IT/software WITHOUT data content is NOT off-target — it is Tier 3 above.
+  Off-target means no technical content at all. A FULL-TIME role that is
+  IT helpdesk / user support / system administration / finance / sales with
+  no development, data or AI work in it is off-target too.
 
 ═══════════════════════════════════════════════════════════════
 BOOSTS — additive, but never exceed the applicable cap.
@@ -863,9 +878,9 @@ UNIVERSAL BOOSTS (apply regardless of track):
 
 +8: Working language is explicitly English / international team / "we work in English"
 
-+8: Located in Bonn or Köln — walkable/20-minute commute from his university city, zero friction alongside lectures
++8: Located in Bonn or Köln — walkable/20-minute commute from his university city (zero friction alongside lectures; no relocation for a full-time job)
 
-+5: Genuinely remote within Germany, or explicitly flexible hours / "flexible Arbeitszeiten passend zum Stundenplan" — fits around a lecture schedule
++5: Genuinely remote within Germany, or explicitly flexible hours / "flexible Arbeitszeiten passend zum Stundenplan" — fits around lectures or any other commitments
 
 +5: Visa sponsorship not required (Sherwan has full work auth)
 
@@ -877,9 +892,9 @@ PENALTIES — subtractive, applied AFTER caps and boosts
 
 -15: Ad restricts to students of a DIFFERENT field ("enrolled in business administration / mechanical engineering / law") with no computer-science/AI/data option listed
 
--10: Ad demands more than 20h/week during the lecture period. NOTE: this does NOT apply to internships, which are commonly full-time for a fixed block and can be taken in the semester break or as a Pflichtpraktikum
+-10: Ad demands more than 20h/week during the lecture period. NOTE: this does NOT apply to regular full-time roles or to internships, which are commonly full-time for a fixed block and can be taken in the semester break or as a Pflichtpraktikum
 
--10: Role description shows clear professional-level expectations despite the student title (e.g. "ownership of large systems", "on-call", "drive technical roadmap")
+-10: Role description shows clear professional-level expectations despite the student or junior title (e.g. "ownership of large systems", "on-call", "drive technical roadmap")
 
 ═══════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -896,7 +911,7 @@ Examples of good reasons:
 - "Tier 1 Werkstudent AI Agents match, LangGraph mentioned (+15), English-first (+8), Köln (+8) → 90"
 - "Tier 1 Werkstudent Data Science match, scikit-learn/XGBoost (+15), remote in Germany (+5) → 84"
 - "Tier 1 Werkstudent BI match, SQL + Power BI dashboarding (+15), Bonn (+8) → 85"
-- "Capped at 15: full-time Junior Data Scientist — wrong employment form"
+- "Capped at 15: PhD position — wrong employment form"
 - "Capped at 15: on-site Werkstudent in Hamburg — not commutable from Bonn, no remote option"
 - "Capped at 20: explicitly requires fluent German for DACH customer-facing role"
 - "Off-target: Werkstudent marketing, no data component → 30"

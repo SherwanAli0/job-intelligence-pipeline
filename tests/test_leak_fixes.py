@@ -4,6 +4,7 @@ Each class pins one fix. All offline."""
 
 import inspect
 import json
+import re
 
 import pytest
 
@@ -38,9 +39,12 @@ class TestAllQueriesRunEveryMorning:
         """JobSpy is time-boxed. A cut must cost depth on every form, never a
         whole form: the old slice put all 18 internship and part-time queries
         in the half that never ran."""
-        first = [q.lower() for q in scrapers._jobspy_active_queries()[:9]]
+        first = [q.lower() for q in scrapers._jobspy_active_queries()[:12]]
         assert sum("praktik" in q or "intern" in q or "praxissemester" in q for q in first) == 3
         assert sum("teilzeit" in q or "part-time" in q for q in first) == 3
+        # ...and since 2026-10-14 the fourth lane: regular full-time queries
+        assert sum(not re.search(r"werkstudent|working student|student|praktik|intern|teilzeit|part-time", q)
+                   for q in first) == 3
 
     def test_the_utc_hour_no_longer_selects_a_slice(self):
         src = inspect.getsource(scrapers._jobspy_active_queries)
@@ -392,7 +396,7 @@ class TestWorkdayPutsStudentRolesFirst:
     def test_a_tenant_without_a_search_string_gets_the_student_searches(self, monkeypatch):
         calls = self._tenant(monkeypatch, lambda s, f, o: (200, []))
         scrapers._workday_cxs_tenant(("nvidia", "wd5", "NVIDIAExternalCareerSite"))
-        assert {c[0] for c in calls} == {"working student", "intern", "werkstudent", ""}
+        assert {c[0] for c in calls} == {*scrapers._WD_STUDENT_SEARCHES, *scrapers._WD_FULLTIME_SEARCHES, ""}
 
     def test_student_titles_take_the_detail_slots_before_senior_ones(self, monkeypatch):
         def answer(search, facet, offset):
@@ -416,7 +420,7 @@ class TestWorkdayPutsStudentRolesFirst:
         assert calls[:2] == [(first, True, 0), (first, False, 0)]
         # Once the tenant has rejected the facet it is not offered again.
         assert not any(f for (s, f, o) in calls[2:])
-        assert {s for (s, f, o) in calls} == {*scrapers._WD_STUDENT_SEARCHES, ""}
+        assert {s for (s, f, o) in calls} == {*scrapers._WD_STUDENT_SEARCHES, *scrapers._WD_FULLTIME_SEARCHES, ""}
 
     def test_german_postings_rank_above_foreign_ones_within_student_titles(self, monkeypatch):
         def answer(search, facet, offset):
@@ -441,6 +445,13 @@ class TestWorkdayPutsStudentRolesFirst:
         calls = self._tenant(monkeypatch, lambda s, f, o: (200, []))
         scrapers._workday_cxs_tenant(("stryker", "wd1", "StrykerCareers", "working student"))
         assert {c[0] for c in calls} == {"working student"}
+
+    def test_the_search_order_is_student_then_plain_then_full_time(self, monkeypatch):
+        """Under a time limit the later searches are the ones that get cut."""
+        calls = self._tenant(monkeypatch, lambda s, f, o: (400, []) if f else (200, []))
+        scrapers._workday_cxs_tenant(("intel", "wd1", "External"))
+        order = list(dict.fromkeys(s for (s, f, o) in calls))
+        assert order == [*scrapers._WD_STUDENT_SEARCHES, "", *scrapers._WD_FULLTIME_SEARCHES]
 
 
 class TestSlicesKeepTheHomeRegion:
@@ -571,12 +582,15 @@ class TestArbeitsagenturWindow:
 
 # ── 2026-10-06: part-time, internship, student work - nothing else ──────────
 
-class TestOnlyStudentInternshipOrPartTime:
-    """Owner, 2026-10-06: "why do i receive full time jobs when i will be
-    studying? what i need is part time, internship, student work, that's it"."""
+class TestEmploymentFormLabels:
+    """Owner, 2026-10-06: "student work, internship, part-time, that's it" - and
+    on 2026-10-14: "we will add the full time jobs as well to our pool". The
+    gate now accepts every regular form; what is left of the 2026-10-06 work is
+    that the form is read from the TITLE (so an ad that merely mentions
+    internships or working students in its requirements is not labelled a
+    student job) and that it is shown in the digest."""
 
     @pytest.mark.parametrize("title,desc", [
-        # The three that reached his inbox on 2026-10-05 and 10-06.
         ("Junior Applied AI Engineer (all genders)",
          "Commercial software engineering experience in production environments (or equivalent "
          "demonstrated through academic projects, internships, or shipped personal projects)."),
@@ -589,8 +603,10 @@ class TestOnlyStudentInternshipOrPartTime:
         ("Data Engineer", "You have completed internships in data engineering. Python, Spark."),
         ("Backend Engineer (Energy & AI)", "Werkstudenten unterstützen unser Team. Python, Go."),
     ])
-    def test_full_time_ads_are_out(self, title, desc):
-        assert not main._is_eligible_form(_j(title, desc))
+    def test_full_time_ads_are_in_and_labelled_full_time(self, title, desc):
+        j = _j(title, desc)
+        assert main._is_eligible_form(j)
+        assert main._job_form(j) == "full-time", "the body must not turn a full-time ad into a student job"
 
     @pytest.mark.parametrize("title", [
         "Working Student Data & Insights", "Werkstudent IT (m/w/d)", "Wersktudent Category Management",
@@ -600,35 +616,38 @@ class TestOnlyStudentInternshipOrPartTime:
         "SHK Informatik", "Praktikum Data Science", "Pflichtpraktikum Informatik", "Intern AI Governance",
         "Internship: Machine Learning (m/f/x)", "Unsolicited application / Initiativbewerbung - Students",
     ])
-    def test_student_and_internship_titles_are_in(self, title):
-        assert main._is_eligible_form(_j(title, ""))
+    def test_student_and_internship_titles_keep_their_label(self, title):
+        j = _j(title, "")
+        assert main._is_eligible_form(j)
+        assert main._job_form(j) in ("student", "internship"), title
 
     @pytest.mark.parametrize("title", ["Internal Auditor", "International Data Analyst",
                                        "Data Engineer - 100% Remote", "Senior Python Developer"])
-    def test_lookalike_words_do_not_count(self, title):
-        assert not main._is_eligible_form(_j(title, "Python and SQL."))
+    def test_lookalike_words_are_not_student_work(self, title):
+        assert main._job_form(_j(title, "Python and SQL.")) == "full-time"
 
     @pytest.mark.parametrize("title", ["Project Coordinator – AI Competition (d/f/m), 50%",
                                        "Data Analyst (m/w/d) in Teilzeit", "Part-time Software Developer",
                                        "IT-Support 20 Std."])
-    def test_part_time_titles_with_tech_are_in(self, title):
-        assert main._is_eligible_form(_j(title, "Python, SQL and IT systems."))
+    def test_part_time_titles_with_tech_are_labelled_part_time(self, title):
+        j = _j(title, "Python, SQL and IT systems.")
+        assert main._is_eligible_form(j) and main._job_form(j) == "part-time"
 
     def test_explicit_form_in_an_ad_with_a_silent_title_still_counts(self):
-        assert main._is_eligible_form(_j("Data Analytics Support",
-                                         "This is a Werkstudent position, 20 hours per week."))
-        assert main._is_eligible_form(_j("Softwareentwicklung",
-                                         "Die Stelle ist in Teilzeit zu besetzen, 20 Stunden pro Woche."))
+        assert main._job_form(_j("Data Analytics Support",
+                                 "This is a Werkstudent position, 20 hours per week.")) == "student"
+        assert main._job_form(_j("Softwareentwicklung",
+                                 "Die Stelle ist in Teilzeit zu besetzen, 20 Stunden pro Woche.")) == "part-time"
 
     def test_a_full_time_word_vetoes_the_body_path(self):
-        assert not main._is_eligible_form(_j("Data Analytics Support",
-                                             "This is a Werkstudent position. Full-time during breaks."))
+        assert main._job_form(_j("Data Analytics Support",
+                                 "This is a Werkstudent position. Full-time during breaks.")) == "full-time"
 
     def test_the_arbeitsagentur_teilzeit_pass_counts_as_part_time(self):
         j = _j("Systemadministrator (m/w/d)", "Betreuung unserer IT-Systeme, Linux und Netzwerke.")
-        assert not main._is_eligible_form(j)
+        assert main._job_form(j) == "full-time"
         j["_part_time"] = True
-        assert main._is_eligible_form(j)
+        assert main._job_form(j) == "part-time"
 
     def test_the_teilzeit_pass_is_flagged_by_the_scraper(self):
         src = inspect.getsource(scrapers.scrape_arbeitsagentur)

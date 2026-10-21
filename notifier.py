@@ -191,6 +191,18 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
                 f'border-radius:8px;font-size:10px;font-weight:700;margin-right:6px;">{wtxt}</span>'
             )
 
+        # Employment form (2026-10-14: full-time roles are in the pool)
+        form = j.get("_form") or ""
+        form_html = ""
+        if form:
+            fcol = {"full-time": "#1d4ed8", "part-time": "#7c3aed",
+                    "internship": "#0891b2", "student": "#4b5563"}.get(form, "#4b5563")
+            flabel = {"student": "working student"}.get(form, form)
+            form_html = (
+                f'<span style="background:{fcol};color:#fff;padding:1px 6px;'
+                f'border-radius:8px;font-size:10px;font-weight:700;margin-right:6px;">{flabel}</span>'
+            )
+
         # B6: ghost/stale posting tag
         ghost_html = (
             '<span style="background:#f3f4f6;color:#9ca3af;padding:1px 6px;'
@@ -203,7 +215,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             <a href="{j['url']}" style="font-weight:600;color:#111827;text-decoration:none;font-size:14px;">
               {j['title']}
             </a>{badge}{ghost_html}{apply_html}<br>
-            {where_html}<span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
+            {where_html}{form_html}<span style="color:#6b7280;font-size:13px;">{j['company']} · {j['location']}{salary_html}</span>{contact_html}<br>
             <span style="color:#6b7280;font-size:12px;font-style:italic;">{j.get('reason','')}</span>
             {tailor_html}
             {kit_html}

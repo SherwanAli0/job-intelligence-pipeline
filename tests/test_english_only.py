@@ -276,8 +276,9 @@ class TestGermanyWideSources:
         # An explicit search string is the only pass for that tenant...
         assert set(explicit) == {"working student"}
         # ...and since 2026-10-04 a tenant WITHOUT one gets the student
-        # searches plus the plain walk, instead of the plain walk alone.
-        assert set(default) == {*scrapers._WD_STUDENT_SEARCHES, ""}
+        # searches plus the plain walk, instead of the plain walk alone; since
+        # 2026-10-14 also the entry-level full-time searches.
+        assert set(default) == {*scrapers._WD_STUDENT_SEARCHES, *scrapers._WD_FULLTIME_SEARCHES, ""}
         assert default[0] == scrapers._WD_STUDENT_SEARCHES[0]
 
     def test_germany_facet_is_tried_and_falls_back_on_400(self, monkeypatch):

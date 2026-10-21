@@ -90,9 +90,9 @@ class TestAbsolventaPage:
         assert j["posted_at"] == "2026-07-30"
 
     def test_slug_vocabulary(self):
-        """Post-pivot the slug must look like BOTH a data role AND a student
-        role. Absolventa mixes graduate-entry and student jobs in one sitemap
-        and only the student half is eligible now."""
+        """The slug must look like a data role AND a student or entry-level
+        role. Absolventa mixes graduate-entry and student jobs in one sitemap;
+        since 2026-10-14 (full-time roles are in the pool) both halves count."""
         keep = "10-s-werkstudent-data-science-m-w-d"
         keep_praktikum = "11-s-praktikum-data-science"   # internships added 2026-08-16
         drop_fulltime = "10-b-junior-data-scientist-m-w-d"
@@ -105,7 +105,7 @@ class TestAbsolventaPage:
 
         assert picked(keep)
         assert picked(keep_praktikum), "internships are targets since 2026-08-16"
-        assert not picked(drop_fulltime), "full-time graduate role is off-target now"
+        assert picked(drop_fulltime), "entry-level full-time roles are targets since 2026-10-14"
         assert not picked(drop_sales), "student role, wrong field"
 
     def test_studentische_hilfskraft_slug_is_picked(self):

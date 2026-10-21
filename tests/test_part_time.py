@@ -28,15 +28,19 @@ class TestPartTimeIsAnEligibleForm:
         assert main._is_eligible_form(_j("Softwareentwickler (m/w/d)",
                                          "Die Stelle ist in Teilzeit zu besetzen."))
 
-    def test_full_time_role_is_not_eligible(self):
-        assert not main._is_eligible_form(_j("Data Analyst (m/w/d)",
-                                             "Vollzeit, 40 Stunden pro Woche."))
+    def test_full_time_role_is_eligible_but_labelled_full_time(self):
+        """2026-10-14: full-time roles are in the pool; they are no longer
+        'not eligible', they are labelled so the digest can say so."""
+        j = _j("Data Analyst (m/w/d)", "Vollzeit, 40 Stunden pro Woche.")
+        assert main._is_eligible_form(j) and main._job_form(j) == "full-time"
 
-    def test_part_time_NON_tech_is_gated_out(self):
-        """Retail and care ads say Teilzeit constantly; without the tech gate
-        the scorer would be paid to reject them all."""
-        assert not main._is_eligible_form(_j("Verkäufer (m/w/d) Teilzeit",
-                                             "Kassieren und Regale auffüllen."))
+    def test_part_time_NON_tech_is_still_kept_from_the_scorer(self):
+        """Retail and care ads say Teilzeit constantly; without a tech gate the
+        scorer would be paid to reject them all. Not a part-time TECH role, so
+        it is a plain row and the full-time title gate removes it."""
+        j = _j("Verkäufer (m/w/d) Teilzeit", "Kassieren und Regale auffüllen.")
+        j["_form"] = main._job_form(j)
+        assert j["_form"] == "full-time" and not main._fulltime_title_ok(j)
 
     def test_werkstudent_keeps_its_gate_free_path(self):
         """Student roles never needed a tech keyword and still do not."""

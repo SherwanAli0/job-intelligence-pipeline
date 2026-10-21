@@ -63,13 +63,12 @@ completed a Software and AI internship at iseremo GmbH (Apr–Jun 2026).
 ENROLLED at a German university → FULLY ELIGIBLE for Werkstudent (working student) roles,
 up to 20h/week during the semester, more during semester breaks.
 
-TARGET (exclusive — this is the ONLY thing being searched for):
-Roles that fit ALONGSIDE a full-time M.Sc., in AI, ML, Data Science, Data Analytics or
-software — any of:
+TARGET: roles in AI, ML, Data Science, Data Analytics or software — any of:
 (a) Werkstudent / working-student / studentische Hilfskraft (HiWi), up to 20h/week,
 (b) an INTERNSHIP: Praktikum, Pflichtpraktikum, Praxissemester, internship,
-(c) a PART-TIME (Teilzeit) regular role of roughly 20h/week or less.
-All three count equally. NOT full-time (Vollzeit) permanent roles, NOT thesis positions.
+(c) a PART-TIME (Teilzeit) regular role of roughly 20h/week or less,
+(d) a regular FULL-TIME (Vollzeit) role at entry or junior level (added 2026-10-14 by the owner).
+All four count equally. NOT thesis positions, Ausbildung / dual study, PhD positions or freelance work.
 LOCATION (decision 2026-09-07): REMOTE or HYBRID anywhere in Germany, ON-SITE only in
 North Rhine-Westphalia or the Bonn belt (Bonn, Köln, Düsseldorf, Dortmund, Essen, Aachen,
 Münster, Koblenz ...). On-site roles elsewhere are filtered out before scoring. He lives and
@@ -88,8 +87,8 @@ LOCATION AND WORK AUTHORIZATION (critical for scoring):
 - Authorized to work in Germany only. NOT authorized for the US, UK, or other non-EU countries.
 - PENALISE or REJECT roles that are US-only, US-remote-only, require US/UK or other non-EU work
   authorization, or are onsite outside Germany with no Germany-remote option.
-- Werkstudent status requires enrolment in Germany, so only German employers (or roles
-  genuinely remote within Germany) are a fit.
+- Werkstudent status requires enrolment in Germany and he has German work authorization,
+  so only German employers (or roles genuinely remote within Germany) are a fit.
 
 Education:
 - B.Sc. Computer Engineering, Üsküdar University, Istanbul (graduated July 2026). Programme
@@ -122,7 +121,9 @@ Deployed work (evidence of shipping, not just building):
 # ── DATA SCIENTIST framing — leads with statistics, experimentation, analytics ──
 CV_PROFILE_DS = _CV_SHARED + """
 Target roles: Werkstudent Data Science, Werkstudent Data Analytics, Werkstudent Business
-Intelligence, Working Student Data, studentische Hilfskraft Datenanalyse.
+Intelligence, Working Student Data, studentische Hilfskraft Datenanalyse - and the same
+roles as an internship, a part-time job or an entry-level full-time job (Junior Data
+Scientist, Junior Data Analyst).
 
 Profile: Data-focused Computer Engineering graduate with strong statistical and
 experimentation grounding. Comfortable across the full analysis loop — hypothesis, study
@@ -162,7 +163,9 @@ Technical Skills (data-science emphasis):
 # ── MACHINE LEARNING framing — leads with modelling, training, ML engineering ──
 CV_PROFILE_ML = _CV_SHARED + """
 Target roles: Werkstudent Machine Learning, Werkstudent MLOps, Working Student ML/Deep
-Learning, studentische Hilfskraft Machine Learning, research assistant (ML, paid).
+Learning, studentische Hilfskraft Machine Learning, research assistant (ML, paid) - and the
+same roles as an internship, a part-time job or an entry-level full-time job (Junior ML
+Engineer, Junior MLOps Engineer).
 
 Profile: Machine Learning engineer/graduate with hands-on model training, evaluation and
 reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data,
@@ -201,7 +204,8 @@ Technical Skills (ML emphasis):
 # ── AI / LLM framing (latest current focus) — leads with iseremo LLM/agent work ──
 CV_PROFILE_AI = _CV_SHARED + """
 Target roles: Werkstudent AI/LLM, Working Student AI Engineering, Werkstudent Künstliche
-Intelligenz (English-friendly), studentische Hilfskraft AI/GenAI.
+Intelligenz (English-friendly), studentische Hilfskraft AI/GenAI - and the same roles as
+an internship, a part-time job or an entry-level full-time job (Junior AI Engineer).
 
 Profile: AI/LLM-focused Computer Engineering graduate who recently built and shipped LLM
 features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker,
@@ -261,7 +265,8 @@ CV_PROFILE = CV_PROFILE_AI
 # every day. The first 16 are interleaved 4×4 (AI, ML, DS, DA, repeat) so any
 # prefix stays balanced. Post-scrape filters drop the off-targets.
 SEARCH_QUERIES = [
-    # Werkstudent-only mode (owner starts M.Sc. AI at Uni Bonn 10/2026).
+    # Student-first mode (owner starts M.Sc. AI at Uni Bonn 10/2026); full-time
+    # entry-level queries were added at the end of this list on 2026-10-14.
     # Balanced across the four tracks, German and English phrasings.
     "Werkstudent Data Science",
     "Werkstudent Machine Learning",
@@ -307,6 +312,30 @@ SEARCH_QUERIES = [
     "Teilzeit Data Analyst",
     "Part-time Data Analyst",
     "Part-time Software Developer",
+    # Regular full-time roles (added 2026-10-14, owner: "add the full time
+    # jobs as well"). Entry level, English-confirmed; the pre-pivot query set
+    # trimmed to what fits one daily JobSpy run. NRW and remote anchors because
+    # on-site is only wanted in NRW.
+    "Junior AI Engineer Germany",
+    "Junior Machine Learning Engineer Germany",
+    "Junior Data Scientist Germany",
+    "Junior Data Analyst Germany",
+    "Junior Data Engineer Germany",
+    "Entry Level Data Scientist Germany",
+    "Entry Level Data Analyst Germany",
+    "Graduate Machine Learning Engineer Germany",
+    "Graduate Data Analyst Germany",
+    "Junior Python Developer Germany English",
+    "Applied AI Engineer Germany",
+    "LLM Engineer Germany",
+    "Data Analyst NRW English",
+    "AI Engineer NRW English",
+    "Data Scientist Düsseldorf English",
+    "Data Scientist Köln English",
+    "Remote Data Scientist Germany",
+    "Remote Machine Learning Engineer Germany",
+    "Remote Data Analyst Germany English",
+    "Business Intelligence Analyst Germany English",
 ]
 
 LOCATION = "Germany"

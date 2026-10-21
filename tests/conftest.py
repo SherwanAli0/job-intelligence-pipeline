@@ -12,6 +12,14 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-dummy")
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_liveness_requests(monkeypatch):
+    """The liveness check does real GETs to employer APIs; no test may do that
+    by accident (an ATS-style URL in a fixture would). tests/test_liveness_and_archive.py
+    switches it back on and mocks requests."""
+    monkeypatch.setenv("JOBHUNTER_LIVENESS", "0")
+
+
 @pytest.fixture
 def job():
     """Factory for a minimal valid job dict; override any field per test."""

@@ -556,3 +556,36 @@ REMOTE_LOCKED_OUT_SIGNALS = (
     "remote in india", "india only", "must be based in india",
     "apac only", "must be based in apac",
 )
+
+
+# ── Junior qualifiers in a seniority-flagged title ───────────────────────────
+# Shared by main._not_fulltime_senior and scorer._hard_disqualify. WHOLE words
+# only: the old substring test let "International" / "Internal" (intern) and
+# "Gentry" (entry) turn "Senior Data Scientist - International" into a junior
+# role, and "Associate Director" is a senior title, not a junior one.
+_RE_JUNIOR_QUALIFIER = re.compile(
+    r"\b(?:junior|jr\.?|entry|intern(?:ship)?s?|praktikum|graduates?|grad|trainees?|associates?)\b",
+    re.IGNORECASE,
+)
+_RE_TOP_LEVEL_TITLE = re.compile(
+    r"\b(?:director|head[\s_-]+of|vice[\s_-]+president|vp|chief|principal)\b", re.IGNORECASE,
+)
+_RE_JUNIOR_IN_BODY = re.compile(
+    r"\b(?:junior|entry[\s-]level|graduates?|trainees?|intern(?:ship)?s?)\b", re.IGNORECASE,
+)
+
+
+def junior_qualifier_in_title(title: str) -> bool:
+    """True when a title carries a real junior/entry/intern/graduate qualifier.
+    'associate' alone does not rescue a director-level title."""
+    quals = {m.group(0).lower().rstrip(".") for m in _RE_JUNIOR_QUALIFIER.finditer(title or "")}
+    if not quals:
+        return False
+    if quals <= {"associate", "associates"} and _RE_TOP_LEVEL_TITLE.search(title or ""):
+        return False
+    return True
+
+
+def junior_qualifier_in_text(text: str) -> bool:
+    """Same idea for the opening of an ad body (whole words only)."""
+    return bool(_RE_JUNIOR_IN_BODY.search(text or ""))

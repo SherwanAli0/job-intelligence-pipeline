@@ -20,6 +20,7 @@ import html as _html
 import json
 import os
 import re
+import threading
 import time
 import traceback
 import urllib.parse
@@ -78,7 +79,7 @@ _BACKGROUND_SCRAPERS = {"scrape_jobspy", "scrape_web_search"}
 # 420s -> 900s on 2026-10-04: JobSpy now runs EVERY query on the one daily run
 # (see _jobspy_active_queries), and a 21-query slice was already taking 23-29
 # minutes. The extra grace costs at most eight minutes of Fargate time.
-BACKGROUND_JOIN_SECONDS = int(os.environ.get("JOBHUNTER_BACKGROUND_JOIN", "900"))
+BACKGROUND_JOIN_SECONDS = int(os.environ.get("JOBHUNTER_BACKGROUND_JOIN", "1800"))   # 900 -> 1800 on 2026-10-14: 20 full-time queries joined the 42 student ones
 
 
 def _start_scraper(scraper):
@@ -286,23 +287,25 @@ def _jobspy_active_queries() -> list[str]:
     LinkedIn day now costs depth on every form equally instead of erasing
     whichever form happened to be listed last.
     """
-    groups: dict[str, list[str]] = {"student": [], "intern": [], "part": []}
+    groups: dict[str, list[str]] = {"student": [], "intern": [], "part": [], "full": []}
     for q in SEARCH_QUERIES:
         ql = q.lower()
         if "teilzeit" in ql or "part-time" in ql or "part time" in ql:
             groups["part"].append(q)
         elif re.search(r"praktik|praxissemester|intern", ql):
             groups["intern"].append(q)
-        else:
+        elif re.search(r"werkstudent|working student|studentische|hiwi|student", ql):
             groups["student"].append(q)
-    lanes = [groups["student"], groups["intern"], groups["part"]]
+        else:
+            groups["full"].append(q)                 # junior / entry level / remote ...
+    lanes = [groups["student"], groups["intern"], groups["part"], groups["full"]]
     order: list[str] = []
     while any(lanes):
         for lane in lanes:
             if lane:
                 order.append(lane.pop(0))
     print(f"  [JobSpy] all {len(order)} queries, interleaved by form "
-          f"(student / internship / part-time)")
+          f"(student / internship / part-time / full-time)")
     return order
 
 
@@ -935,6 +938,19 @@ ARBEITSAGENTUR_PARTTIME_QUERIES = [
     "Künstliche Intelligenz", "Python", "IT",
 ]
 
+# Regular full-time, entry level (2026-10-14). The index is German, so these are
+# plain German/technical terms rather than "Junior ...": measured, "Junior Data
+# Scientist" returns about nothing while "Data Scientist" returns 107 Germany-
+# wide and 23 in NRW. Two passes: wo=Nordrhein-Westfalen (verified to return
+# only NRW rows) for on-site roles, and Germany-wide rows kept only when the
+# API says home office is possible (hybrid/remote anywhere in Germany). The
+# experience, senior-title and English filters that follow do the narrowing.
+ARBEITSAGENTUR_FULLTIME_QUERIES = [
+    "Data Scientist", "Datenanalyst", "Data Analyst", "Machine Learning",
+    "KI Entwickler", "Data Engineer", "Softwareentwickler Python",
+    "Business Intelligence",
+]
+
 ARBEITSAGENTUR_QUERIES = [
     # AI
     "Werkstudent Künstliche Intelligenz",
@@ -975,7 +991,7 @@ ARBEITSAGENTUR_QUERIES = [
 import base64 as _b64
 import re as _re_ba
 
-_BA_ENRICH_CAP = 250  # max jobdetails calls per run (each ~0.3s); raised 2026-09-07 for the nationwide pass
+_BA_ENRICH_CAP = 350  # max jobdetails calls per run (each ~0.3s); raised 2026-09-07 for the nationwide pass
 
 # ── Arbeitsagentur endpoint configuration ────────────────────────────────────
 # SEARCH is v6-only (v4/v5 return 403 since ~2026-08-10). DETAILS are v4-only
@@ -1164,6 +1180,13 @@ def scrape_arbeitsagentur() -> list[dict]:
                         continue
                     seen_refs.add(ref)
 
+                    # The Germany-wide full-time pass is for hybrid / remote
+                    # roles only: on-site ones outside NRW are not wanted. Only
+                    # an item that SAYS no home office is skipped; a missing
+                    # flag is read like the ad (the work-mode tagging decides).
+                    if label == "de-homeoffice" and item.get("homeofficemoeglich") is False:
+                        continue
+
                     title = (item.get("stellenangebotsTitel") or "").strip()
                     if not title or not _BA_RELEVANT_TITLE.search(title):
                         continue
@@ -1178,6 +1201,12 @@ def scrape_arbeitsagentur() -> list[dict]:
                         contact = det.get("contact", "")
                         salary = det.get("salary", "")
                         time.sleep(0.25)
+
+                    # The API states whether home office is possible; without
+                    # this the work-mode tagging could not see it and every
+                    # such role read as plain on-site.
+                    if item.get("homeofficemoeglich"):
+                        description = "[Homeoffice möglich]\n" + description
 
                     # Distance is only meaningful on the radius pass; on the
                     # homeoffice pass it is measured from an arbitrary point.
@@ -1218,6 +1247,10 @@ def scrape_arbeitsagentur() -> list[dict]:
     for query in ARBEITSAGENTUR_PARTTIME_QUERIES:
         collect(query, {"wo": _BA_ANCHOR, "umkreis": _BA_RADIUS_KM,
                         "arbeitszeit": "tz"}, "teilzeit")
+    for query in ARBEITSAGENTUR_FULLTIME_QUERIES:
+        collect(query, {"wo": "Nordrhein-Westfalen"}, "nrw-fulltime")
+    for query in ARBEITSAGENTUR_FULLTIME_QUERIES:
+        collect(query, {}, "de-homeoffice")
 
     print(f"  [Arbeitsagentur] {len(results)} jobs "
           f"({enriched} enriched with the full ad text)")
@@ -1613,6 +1646,11 @@ _WEB_QUERIES = [
     '"working student" remote Germany "English"',
     '"werkstudent" "100% remote" OR "deutschlandweit"',
     '"werkstudent" "machine learning" OR "LLM" remote',
+    # Regular full-time, entry level (2026-10-14)
+    '"junior data scientist" Germany "English" remote OR hybrid',
+    '"junior machine learning engineer" Germany "English"',
+    '"junior data analyst" NRW OR Köln OR Düsseldorf OR Bonn "English"',
+    '"entry level" "AI engineer" Germany "English" hybrid',
 ]
 
 
@@ -1662,6 +1700,12 @@ def _fetch_full_description(url: str) -> str:
         text = _sr_posting_text(m.group(1), m.group(2))
         if text:
             return text
+    # XING: the generic extractor below returned the "similar jobs" widget
+    # instead of the ad; the page's JSON-LD JobPosting is the real text.
+    if re.search(r"xing\.com/jobs/", url or ""):
+        text = _xing_fetch_description(url)
+        if text:
+            return text[:6000]
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
         if r.status_code != 200:
@@ -1970,7 +2014,10 @@ _SR_RELEVANT_KEYWORDS = (
 # complete and smaller. Verified live for BoschGroup: 44 / 36 / 88 / 179 hits
 # for the first four queries, against 720 German postings in total.
 _SR_QUERIES = ("working student", "werkstudent", "intern", "praktikum",
-               "student", "teilzeit", "part-time")
+               "student", "teilzeit", "part-time",
+               # regular full-time, entry level (2026-10-14)
+               "junior", "graduate", "entry level", "berufseinsteiger",
+               "data scientist", "machine learning", "ai engineer")
 _SR_MAX_PER_QUERY = 1000          # ten pages; no configured company is near it
 
 _SR_URL_RE = re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)/(\d+)")
@@ -2115,12 +2162,60 @@ _WD_AI_KEYWORDS = (
 # matching ANY keyword above were kept — "Senior Software Engineer" filled the
 # slots and a German working-student role was reached only by luck.
 _WD_STUDENT_SEARCHES = ("working student", "intern", "werkstudent")
+# Regular full-time, entry level (2026-10-14).
+_WD_FULLTIME_SEARCHES = ("junior", "graduate", "data scientist", "machine learning")
+_WD_JUNIOR_TITLE = re.compile(
+    r"\bjunior\b|\bjr\b|graduate|entry[\s-]?level|trainee|berufseinsteiger|absolvent",
+    re.IGNORECASE)
 _WD_STUDENT_TITLE = re.compile(
     r"werkstudent|working\s+student|student|\bintern(ship)?s?\b|praktik|trainee"
     r"|hiwi|hilfskraft|teilzeit|part[- ]time", re.IGNORECASE)
-_WD_KEEP_PER_TENANT = 30          # detail fetches per tenant
+_WD_KEEP_PER_TENANT = 40          # detail fetches per tenant (30 -> 40 with the full-time searches)
 _WD_WALK_LIMIT = 200              # postings walked for the plain (no-search) pass
 _WD_SEARCH_LIMIT = 100            # postings walked per search string
+
+# Wall-clock budgets for the Workday scrapers. A scraper that exceeds
+# SCRAPER_TIMEOUT_SECONDS (600) is abandoned and everything it collected is
+# lost; the four full-time searches added on 2026-10-14 pushed a local run past
+# it. So Workday is TWO scrapers, each with its own guard and its own budget:
+#   scrape_workday_cxs           student searches + plain walk (what production
+#                                ran before the change): lists stop at 80% of
+#                                the budget, details at 95%
+#   scrape_workday_cxs_fulltime  the entry-level full-time searches, run right
+#                                after: lists stop at 70% of ITS budget,
+#                                details at 100%
+# A slow base pass therefore can no longer cost the full-time pass its slot.
+# An in-flight request adds at most its own timeout (15 s) on top.
+_WD_BUDGET_SECONDS = int(os.environ.get("JOBHUNTER_WD_BUDGET", "480"))
+_WD_FT_BUDGET_SECONDS = int(os.environ.get("JOBHUNTER_WD_FT_BUDGET", "300"))
+_WD_KEEP_FULLTIME = 10            # of the detail slots, at most this many go to the full-time pass
+_WD_STATS = {"searches_skipped": 0, "details_skipped": 0}
+_WD_STATS_LOCK = threading.Lock()
+_WD_BASE_URLS: set = set()        # filled by the base scraper; the full-time pass skips these
+# Ranking of full-time candidates: tech titles first, then junior ones.
+_WD_FT_TECH_TITLE = re.compile(
+    r"data|daten|machine learning|\bml\b|\bai\b|\bki\b|artificial|analytic|python|software|nlp|llm"
+    r"|scientist|developer|entwickl|informatik|\bcloud\b|devops|mlops",
+    re.IGNORECASE)
+
+
+def _wd_plan(t0: float | None = None, budget: float | None = None) -> dict:
+    """Absolute stop times (lists stop, details stop) of the base pass."""
+    t0 = time.time() if t0 is None else t0
+    b = _WD_BUDGET_SECONDS if budget is None else budget
+    return {"base": (t0 + 0.80 * b, t0 + 0.95 * b)}
+
+
+def _wd_ft_plan(t0: float | None = None, budget: float | None = None) -> dict:
+    """Absolute stop times (lists stop, details stop) of the full-time pass."""
+    t0 = time.time() if t0 is None else t0
+    b = _WD_FT_BUDGET_SECONDS if budget is None else budget
+    return {"fulltime": (t0 + 0.70 * b, t0 + b)}
+
+
+def _wd_count(key: str, n: int = 1) -> None:
+    with _WD_STATS_LOCK:
+        _WD_STATS[key] += n
 
 # Workday's shared reference id for Germany in the locationCountry facet
 # (the same id on every tenant that supports the facet).
@@ -2168,10 +2263,19 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
         return ""
 
 
-def _workday_cxs_tenant(entry) -> list[dict]:
+def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) -> list[dict]:
     """One Workday tenant. Extracted so tenants can be fetched concurrently:
     measured at 718s sequentially across 15 tenants, the second-largest cost
-    in the whole scrape after JobSpy (which cannot be parallelised)."""
+    in the whole scrape after JobSpy (which cannot be parallelised).
+
+    mode: "base" = student searches + the plain walk (an explicit search string
+          replaces both); "fulltime" = the entry-level full-time searches only
+          (tenants with an explicit search string have none); "all" = both.
+    deadlines: (list requests stop, detail fetches stop) as absolute times, or
+          None for no limit.
+    known: URLs the base pass already returned, so the full-time pass does not
+          spend detail slots on them."""
+    list_stop, detail_stop = deadlines or (float("inf"), float("inf"))
     out: list[dict] = []
     if not isinstance(entry, (tuple, list)) or len(entry) not in (3, 4, 5):
         return out
@@ -2191,7 +2295,17 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     # German postings — the whole German list fits in one walk), NVIDIA,
     # Salesforce, Intel and Philips answer HTTP 400, which falls back to the
     # plain request, as does a facet that matches nothing.
-    searches = [search_text] if search_text else [*_WD_STUDENT_SEARCHES, ""]
+    #
+    # Order = value under a time limit: the student searches, then the plain
+    # walk (both as in production before 2026-10-14), then the full-time ones.
+    if search_text:
+        searches = [search_text] if mode != "fulltime" else []
+    else:
+        base = [*_WD_STUDENT_SEARCHES, ""]
+        searches = (base if mode == "base" else list(_WD_FULLTIME_SEARCHES) if mode == "fulltime"
+                    else [*base, *_WD_FULLTIME_SEARCHES])
+    if not searches:
+        return out
     cands: dict[str, dict] = {}
     facet_ok = True                     # until the tenant answers 400 to it
     try:
@@ -2200,6 +2314,10 @@ def _workday_cxs_tenant(entry) -> list[dict]:
             limit = _WD_SEARCH_LIMIT if search else _WD_WALK_LIMIT
             offset = 0
             while offset < limit:
+                if time.time() >= list_stop:
+                    if offset == 0:
+                        _wd_count("searches_skipped")
+                    break
                 payload = dict(_WD_PAYLOAD)
                 payload["appliedFacets"] = facets
                 payload["searchText"] = search
@@ -2226,6 +2344,8 @@ def _workday_cxs_tenant(entry) -> list[dict]:
                     if not any(k in title.lower() for k in _WD_AI_KEYWORDS):
                         continue
                     path = jp.get("externalPath", "") or ""
+                    if path and f"https://{host}{path}" in known:
+                        continue
                     cands.setdefault(path or title, {
                         "title": title,
                         "location": (jp.get("locationsText", "")
@@ -2242,11 +2362,20 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     except Exception as e:
         print(f"  [WD-CXS/{tenant}] failed: {e}")
 
-    # Phase 2 — RANK. Student-form titles first; within those, postings known
-    # to be in Germany (facet hit or a German place in the location text),
-    # then unknown ("2 Locations"), then clearly elsewhere.
+    # Phase 2 — RANK. Base / all: student-form titles first, then junior ones,
+    # then the rest. Full-time pass: tech titles first (the title gate in
+    # main._fulltime_title_ok drops the others anyway), junior before not.
+    # Within each tier, postings known to be in Germany (facet hit or a German
+    # place in the location text), then unknown ("2 Locations"), then clearly
+    # elsewhere.
     def _rank(c: dict) -> tuple:
-        student = 0 if _WD_STUDENT_TITLE.search(c["title"]) else 1
+        t = c["title"]
+        if mode == "fulltime":
+            lead = (0 if _WD_FT_TECH_TITLE.search(t) else 1,
+                    0 if _WD_JUNIOR_TITLE.search(t) else 1)
+        else:
+            lead = (0 if _WD_STUDENT_TITLE.search(t)
+                    else 1 if _WD_JUNIOR_TITLE.search(t) else 2,)
         loc = c["location"]
         if c["de_facet"] or _de_place(loc):
             where = 0
@@ -2254,12 +2383,17 @@ def _workday_cxs_tenant(entry) -> list[dict]:
             where = 1
         else:
             where = 2
-        return (student, where)
+        return (*lead, where)
 
-    picked = sorted(cands.values(), key=_rank)[:_WD_KEEP_PER_TENANT]
+    keep = (_WD_KEEP_PER_TENANT - _WD_KEEP_FULLTIME if mode == "base"
+            else _WD_KEEP_FULLTIME if mode == "fulltime" else _WD_KEEP_PER_TENANT)
+    picked = sorted(cands.values(), key=_rank)[:keep]
 
     # Phase 3 — DETAIL. One GET per kept posting.
-    for c in picked:
+    for n, c in enumerate(picked):
+        if time.time() >= detail_stop:
+            _wd_count("details_skipped", len(picked) - n)    # the lowest-ranked ones
+            break
         try:
             job_url = f"https://{host}{c['path']}" if c["path"] else list_url
             desc = _wd_fetch_description(host, tenant, site, c["path"])
@@ -2286,13 +2420,52 @@ def _workday_cxs_tenant(entry) -> list[dict]:
     return out
 
 
+def _wd_tenants_quick_first() -> list:
+    """Tenants with an explicit search string take seconds: run them first so a
+    slow day cannot starve them (stryker, harman, airbus)."""
+    return sorted(WORKDAY_CXS_TENANTS,
+                  key=lambda e: 0 if isinstance(e, (tuple, list)) and len(e) >= 4 and e[3] else 1)
+
+
 def scrape_workday_cxs() -> list[dict]:
     """
     Scrape Workday CXS endpoints (the modern JSON API). Distinct from the
     older `scrape_workday()` which scrapes HTML.
+
+    The base pass: student searches + the plain walk, inside its own budget.
+    The entry-level full-time searches are scrape_workday_cxs_fulltime().
     """
-    results = _parallel_collect(list(WORKDAY_CXS_TENANTS), _workday_cxs_tenant, "WD-CXS")
-    print(f"  [WD-CXS] {len(results)} AI/ML-relevant jobs across {len(WORKDAY_CXS_TENANTS)} tenants")
+    t0 = time.time()
+    plan = _wd_plan(t0)
+    with _WD_STATS_LOCK:
+        _WD_STATS.update(searches_skipped=0, details_skipped=0)
+    results = _parallel_collect(_wd_tenants_quick_first(),
+                                lambda e: _workday_cxs_tenant(e, plan["base"], "base"), "WD-CXS")
+    _WD_BASE_URLS.clear()
+    _WD_BASE_URLS.update(r["url"] for r in results)
+    print(f"  [WD-CXS] {len(results)} AI/ML-relevant jobs across {len(WORKDAY_CXS_TENANTS)} tenants "
+          f"in {time.time() - t0:.0f}s (budget {_WD_BUDGET_SECONDS}s)")
+    if _WD_STATS["searches_skipped"] or _WD_STATS["details_skipped"]:
+        print(f"  [WD-CXS] time limit reached: {_WD_STATS['searches_skipped']} search passes and "
+              f"{_WD_STATS['details_skipped']} detail fetches skipped (lowest-ranked first)")
+    return results
+
+
+def scrape_workday_cxs_fulltime() -> list[dict]:
+    """Workday, entry-level full-time searches (added 2026-10-14). Runs after
+    scrape_workday_cxs with its OWN time budget; skips what the base pass found."""
+    t0 = time.time()
+    plan = _wd_ft_plan(t0)
+    with _WD_STATS_LOCK:
+        _WD_STATS.update(searches_skipped=0, details_skipped=0)
+    known = frozenset(_WD_BASE_URLS)
+    results = _parallel_collect(_wd_tenants_quick_first(),
+                                lambda e: _workday_cxs_tenant(e, plan["fulltime"], "fulltime", known), "WD-CXS-FT")
+    print(f"  [WD-CXS-FT] {len(results)} entry-level full-time jobs in {time.time() - t0:.0f}s "
+          f"(budget {_WD_FT_BUDGET_SECONDS}s)")
+    if _WD_STATS["searches_skipped"] or _WD_STATS["details_skipped"]:
+        print(f"  [WD-CXS-FT] time limit reached: {_WD_STATS['searches_skipped']} search passes and "
+              f"{_WD_STATS['details_skipped']} detail fetches skipped")
     return results
 
 
@@ -2328,6 +2501,12 @@ _ADZUNA_QUERIES = (
     "Praktikum Data Science",
     "Praktikum Informatik",
     "Internship Data Science",
+    # full-time, entry level (2026-10-14)
+    "Junior Data Scientist",
+    "Junior Data Analyst",
+    "Junior Machine Learning Engineer",
+    "Junior AI Engineer",
+    "Junior Python Developer",
 )
 
 
@@ -2956,6 +3135,9 @@ _XING_QUERIES = (
     "Werkstudent Python", "Studentische Hilfskraft Informatik",
     "Praktikum Data Science", "Praktikum Informatik",
     "Teilzeit Data", "Teilzeit Informatik",
+    # full-time, entry level (2026-10-14)
+    "Junior Data Scientist", "Junior Data Analyst", "Junior Machine Learning Engineer",
+    "Junior Softwareentwickler Python", "Berufseinsteiger Data", "Data Engineer",
 )
 
 _XING_DESC_CAP = 60  # max job-page description fetches per run
@@ -3130,7 +3312,9 @@ _ABSOLVENTA_VOCAB = re.compile(
 # owner is only eligible for (and only wants) the student half.
 _ABSOLVENTA_STUDENT = re.compile(
     r"werkstudent|working-student|studentische|studentenjob|hiwi"
-    r"|praktik|internship|praxissemester",
+    r"|praktik|internship|praxissemester"
+    # entry-level full-time roles (2026-10-14: full-time is in the pool)
+    r"|junior|trainee|berufseinsteiger|absolvent|graduate|einsteiger|entry",
     re.IGNORECASE,
 )
 # The board is full of retail/gastro/sales roles; exclude by slug before
@@ -3140,7 +3324,13 @@ _ABSOLVENTA_EXCLUDE = re.compile(
     r"|vertrieb|gastro|filial|lager|kurier",
     re.IGNORECASE,
 )
-_ABSOLVENTA_CAP = 100
+_ABSOLVENTA_CAP = 150
+
+
+def _absolventa_id(url: str) -> int:
+    """Numeric posting id in the URL (they grow with time: ~3,850 a day)."""
+    m = re.search(r"/stellenangebote/(\d+)-", url)
+    return int(m.group(1)) if m else 0
 
 
 def _absolventa_page(url: str) -> list[dict]:
@@ -3183,6 +3373,9 @@ def scrape_absolventa() -> list[dict]:
                     and _ABSOLVENTA_STUDENT.search(slug)
                     and not _ABSOLVENTA_EXCLUDE.search(slug)):
                 candidates.append(u)
+        # NEWEST first: the sitemap lists old ids first, so a plain slice kept the
+        # stale postings and the freshness filter then dropped every one of them.
+        candidates.sort(key=_absolventa_id, reverse=True)
         picked = candidates[:_ABSOLVENTA_CAP]
         results = _parallel_collect(picked, _absolventa_page, "Absolventa")
         print(f"  [Absolventa] {len(results)} jobs from {len(picked)} slug-matched pages "
@@ -3373,6 +3566,9 @@ _LI_GUEST_QUERIES = (
     "praktikum data science", "praktikum machine learning",
     "internship data science germany",
     "teilzeit data", "part-time data analyst",
+    # full-time, entry level (2026-10-14)
+    "junior data scientist", "junior machine learning engineer",
+    "junior data analyst", "entry level ai engineer",
 )
 _LI_GUEST_PAGES = 10          # LinkedIn throttles around page 10 per IP
 _LI_GUEST_PAGE_SLEEP = 1.5    # pace like a human; stop instantly on 429
@@ -4393,6 +4589,7 @@ def scrape_all() -> list[dict]:
         scrape_personio,           # German Mittelstand + AI startups (20 companies)
         scrape_smartrecruiters,    # Bosch, Continental, Visa, Roland Berger
         scrape_workday_cxs,        # NVIDIA, Adobe, Salesforce, AstraZeneca, Pfizer, Sanofi, Intel, Philips, etc. (15 tenants)
+        scrape_workday_cxs_fulltime,  # the same tenants, entry-level full-time searches (own time budget)
         scrape_adzuna,             # Aggregator — Mercedes, BMW, Allianz, DB, P&G, Unilever, etc. (needs ADZUNA_APP_ID/KEY)
         scrape_workday,            # Legacy HTML scraper — kept for any URL it still works on
         # scrape_successfactors DISABLED 2026-08-16 — silent zero.
