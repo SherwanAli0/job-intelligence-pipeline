@@ -170,7 +170,8 @@ def _recover_late_scrapers(grace_seconds: int = 300) -> list[dict]:
     return recovered
 
 
-def _parallel_collect(items: list, fetch_one, label: str = "") -> list[dict]:
+def _parallel_collect(items: list, fetch_one, label: str = "",
+                      workers: int | None = None) -> list[dict]:
     """
     Map fetch_one over items and concatenate the resulting lists.
 
@@ -180,14 +181,20 @@ def _parallel_collect(items: list, fetch_one, label: str = "") -> list[dict]:
 
     fetch_one must swallow its own exceptions and return a list; one dead board
     must never take down the rest of the batch.
+
+    `workers` overrides SCRAPE_WORKERS for this one call (a slow lane for a
+    host that drops concurrent requests). Never lower the module global for
+    that: calls overlap across threads and a save/restore of a shared global
+    can leave it stuck at the lower value for the rest of the run.
     """
-    if SCRAPE_WORKERS <= 1 or len(items) <= 1:
+    n = SCRAPE_WORKERS if workers is None else workers
+    if n <= 1 or len(items) <= 1:
         out = []
         for item in items:
             out.extend(fetch_one(item) or [])
         return out
 
-    with ThreadPoolExecutor(max_workers=SCRAPE_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=n) as pool:
         batches = list(pool.map(fetch_one, items))
     out = []
     for batch in batches:
@@ -324,6 +331,7 @@ def _jobspy_active_queries() -> list[str]:
 # to stop fetching.
 _JOBSPY_DESC_WORKERS = 6      # polite concurrency against one host
 _JOBSPY_DESC_CAP = 700        # hard ceiling on requests per run
+_LINKEDIN_SLOW_LANE_WORKERS = 2   # LinkedIn drops concurrent description fetches
 
 
 def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
@@ -373,16 +381,11 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
     if other:
         fetched += _parallel_collect(other, _fetch, "desc")
     if li:
-        global SCRAPE_WORKERS
-        saved = SCRAPE_WORKERS
-        SCRAPE_WORKERS = 2
-        try:
-            def _fetch_paced(j):
-                time.sleep(0.5)
-                return _fetch(j)
-            fetched += _parallel_collect(li, _fetch_paced, "desc-linkedin")
-        finally:
-            SCRAPE_WORKERS = saved
+        def _fetch_paced(j):
+            time.sleep(0.5)
+            return _fetch(j)
+        fetched += _parallel_collect(li, _fetch_paced, "desc-linkedin",
+                                     workers=_LINKEDIN_SLOW_LANE_WORKERS)
 
     if quiet:
         _JOBSPY_DESC_STATS[0] += len(fetched); _JOBSPY_DESC_STATS[1] += len(need)
