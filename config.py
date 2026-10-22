@@ -12,7 +12,7 @@ from datetime import date as _date
 # Every scraper that takes a time-range parameter (JobSpy hours_old,
 # LinkedIn f_TPR, Arbeitsagentur veroeffentlichtseit) derives it from here,
 # so the window applies at the SOURCE too, not only at the filter.
-CATCHUP_UNTIL = _date(2026, 10, 6)          # exclusive: one-off recovery run on 2026-10-05 after the leak fixes (seen_jobs reset, everything ever emailed blocked); normal again from the 6th
+CATCHUP_UNTIL = _date(2026, 10, 23)         # exclusive: one-off recovery run started late on 2026-10-21 UTC (= 22 Oct Berlin) after the full-time rule (seen_jobs reset, everything ever emailed blocked). Fargate's clock is UTC and the scrape crosses midnight, so the window covers UTC 21 and 22 Oct; normal again from the 23rd
 _CATCHUP_HOURS = 168                        # 7 days
 _NORMAL_HOURS = 24
 

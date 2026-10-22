@@ -8,7 +8,7 @@ dead since before a state migration, as Arbeitsagentur was — has a median of
 zero and is never even eligible for its own alarm.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import config
 import main
@@ -24,14 +24,14 @@ class TestCatchupWindow:
     calendar, not a deploy."""
 
     def test_recovery_day_is_a_seven_day_sweep(self):
-        assert config.max_posting_age_hours(date(2026, 10, 5)) == 168
-        assert config.max_filter_age_hours(date(2026, 10, 5)) == 168
-        assert config.is_catchup(date(2026, 10, 5))
+        assert config.max_posting_age_hours(config.CATCHUP_UNTIL - timedelta(days=1)) == 168
+        assert config.max_filter_age_hours(config.CATCHUP_UNTIL - timedelta(days=1)) == 168
+        assert config.is_catchup(config.CATCHUP_UNTIL - timedelta(days=1))
 
     def test_next_day_reverts_without_a_deploy(self):
-        assert config.max_posting_age_hours(date(2026, 10, 6)) == 24
-        assert config.max_filter_age_hours(date(2026, 10, 6)) == 48
-        assert not config.is_catchup(date(2026, 10, 6))
+        assert config.max_posting_age_hours(config.CATCHUP_UNTIL) == 24
+        assert config.max_filter_age_hours(config.CATCHUP_UNTIL) == 48
+        assert not config.is_catchup(config.CATCHUP_UNTIL)
 
     def test_every_later_day_is_normal(self):
         assert config.max_posting_age_hours(date(2026, 11, 1)) == 24

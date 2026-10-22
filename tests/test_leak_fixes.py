@@ -541,8 +541,8 @@ class TestFreshnessForOneRunADay:
 
     def test_the_filter_cap_has_slack_for_one_missed_run(self):
         from datetime import date
-        assert config.max_filter_age_hours(date(2026, 10, 20)) == 48
-        assert config.max_posting_age_hours(date(2026, 10, 20)) == 24, \
+        assert config.max_filter_age_hours(date(2026, 12, 20)) == 48
+        assert config.max_posting_age_hours(date(2026, 12, 20)) == 24, \
             "the SOURCE window stays 24h so the scrape does not grow"
 
     def test_a_full_timestamp_keeps_its_exact_age(self, monkeypatch):
