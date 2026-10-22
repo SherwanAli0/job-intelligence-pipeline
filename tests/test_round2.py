@@ -18,6 +18,11 @@ def _liveness_on(monkeypatch):
     monkeypatch.setenv("JOBHUNTER_LIVENESS", "1")      # these tests mock requests.get
 
 
+ENGLISH_AD = ("We are looking for a motivated working student to join our international team. You will "
+              "build machine learning models in Python, work with SQL and present results to stakeholders. "
+              "Our working language is English. Hybrid work: two days per week in the office.")
+
+
 def _j(title="Junior Data Scientist (m/f/d)", desc="Python and SQL. English team.", **kw):
     base = {"id": kw.pop("id", "t"), "title": title, "company": "Acme", "location": "Berlin, Germany",
             "url": "https://example.org/job/1", "source": "Greenhouse", "description": desc,
@@ -265,3 +270,40 @@ class TestPersistArchives:
     @pytest.mark.parametrize("email_ok,dry_run", [(False, False), (True, True)])
     def test_a_failed_send_and_a_dry_run_archive_nothing(self, monkeypatch, tmp_path, email_ok, dry_run):
         assert self._run(monkeypatch, tmp_path, email_ok, dry_run) == {}
+
+
+# ── the same link under an edited title is still the same job ────────────────
+class TestSameLinkNewTitle:
+    def test_the_hash_is_the_one_track_py_and_the_shown_log_use(self):
+        import hashlib
+        j = _j(url="https://Boards.Greenhouse.io/acme/jobs/1")
+        assert main._url_hash(j) == hashlib.md5(j["url"].lower().encode()).hexdigest()
+        assert main._url_hash(_j(url="")) == ""
+        assert main._shown_record(j, "top", "2026-10-22T00:00:00+00:00")["url_hash"] == main._url_hash(j)
+
+    def test_ever_shown_url_hashes_reads_the_whole_log(self, tmp_path, monkeypatch):
+        import storage
+        monkeypatch.setattr(storage, "BUCKET", "")
+        monkeypatch.chdir(tmp_path)
+        rows = [{"key": "a::b", "url_hash": "h1"}, {"key": "c::d"}, {"url_hash": "h2"}]
+        (tmp_path / "shown_jobs.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n", encoding="utf-8")
+        assert main._ever_shown_url_hashes() == {"h1", "h2"}
+
+    def test_a_job_with_an_edited_title_and_the_same_link_is_blocked(self, monkeypatch):
+        old = _j("Software Engineer Intern - Fullstack (x/f/m) - Berlin", id="old", company="Doctolib",
+                 url="https://boards.greenhouse.io/doctolib/jobs/111")
+        repost = _j("Software Engineer Intern - Fullstack (x/f/m) - Berlin - March 2027", id="new", company="Doctolib",
+                    url="https://boards.greenhouse.io/doctolib/jobs/111")
+        other = _j("Working Student Data Science", id="other", company="Acme", url="https://boards.greenhouse.io/acme/jobs/222")
+        for j in (old, repost, other):
+            j["description"] = ENGLISH_AD
+        monkeypatch.setattr(main, "load_digested", lambda: {})
+        monkeypatch.setattr(main, "_ever_shown_keys", lambda: {main._digest_key(old)})
+        monkeypatch.setattr(main, "_ever_shown_url_hashes", lambda: {main._url_hash(old)})
+        monkeypatch.setattr(main, "_fill_missing_bodies", lambda js: [])
+        monkeypatch.setattr(main, "_skill_radar", lambda js: None)
+        monkeypatch.setattr(main, "_body_retry_ids", lambda: set())
+        out = main.node_filter({"seen": {}, "all_jobs": [repost, other]})
+        ids = {j["id"] for j in out["new_jobs"]}
+        assert "new" not in ids, "same link, edited title: already emailed"
+        assert "other" in ids

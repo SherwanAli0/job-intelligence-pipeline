@@ -1607,6 +1607,13 @@ def save_digested(d: dict[str, str]) -> None:
 SHOWN_FILE = Path("shown_jobs.jsonl")
 
 
+def _url_hash(j: dict) -> str:
+    """md5 of the lower-cased link: the same key track.py and the emailed log use."""
+    import hashlib as _hl
+    url = (j.get("url") or "").strip()
+    return _hl.md5(url.lower().encode()).hexdigest() if url else ""
+
+
 def _shown_record(j: dict, band: str, shown_at: str) -> dict:
     import hashlib as _hl
     url = (j.get("url") or "").strip()
@@ -1614,7 +1621,7 @@ def _shown_record(j: dict, band: str, shown_at: str) -> dict:
         "id": j.get("id", ""),
         # track.py keys applied jobs by md5(url) — record it so the join works
         # even though pipeline ids hash url+title+company.
-        "url_hash": _hl.md5(url.lower().encode()).hexdigest() if url else "",
+        "url_hash": _url_hash(j),
         "key": _digest_key(j),
         "title": (j.get("title") or "")[:120],
         "company": (j.get("company") or "")[:80],
@@ -1736,6 +1743,25 @@ def _ever_shown_keys() -> set[str]:
         if k:
             keys.add(k)
     return keys
+
+
+def _ever_shown_url_hashes() -> set[str]:
+    """url_hash of every job ever emailed. A posting whose TITLE was edited
+    after it was emailed ("... - Berlin" became "... - Berlin - March 2027")
+    has a new company+title key but the same link: still the same job."""
+    raw = storage.read_text(SHOWN_FILE.name)
+    out: set[str] = set()
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            h = json.loads(line).get("url_hash")
+        except Exception:
+            continue
+        if h:
+            out.add(h)
+    return out
 
 
 def _is_fresh_enough(j: dict) -> bool:
@@ -2136,8 +2162,10 @@ def node_filter(state: dict) -> dict:
           f"({len(ever)} from the full emailed log, {len(blocked)} from the 30-day memory)")
     blocked |= ever
     blocked_loose = {_loose_from_key(k) for k in blocked}
+    ever_urls = _ever_shown_url_hashes()
     new_jobs = _apply_filter(new_jobs, lambda j: _digest_key(j) not in blocked
-                             and _loose_key(j) not in blocked_loose,
+                             and _loose_key(j) not in blocked_loose
+                             and _url_hash(j) not in ever_urls,
                              "Already-digested filter (company+title)")
     # Stale postings never reach the digest; the whole point is applying fast.
     # Ads carried over for a body retry were fresh when first found.
