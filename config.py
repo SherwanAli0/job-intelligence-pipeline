@@ -258,6 +258,18 @@ Technical Skills (AI emphasis):
 # Backward-compatible default (the AI profile is the current primary focus).
 CV_PROFILE = CV_PROFILE_AI
 
+# Private-profile migration: keep the embedded strings only until the first
+# successful scheduled run verifies the private S3 source. See aws/private-profiles.md.
+from profile_loader import load_profiles as _load_private_profiles
+_loaded_profiles = _load_private_profiles({
+    "AI": CV_PROFILE_AI, "ML": CV_PROFILE_ML, "DS": CV_PROFILE_DS, "shared": _CV_SHARED,
+})
+CV_PROFILE_AI = _loaded_profiles.values["AI"]
+CV_PROFILE_ML = _loaded_profiles.values["ML"]
+CV_PROFILE_DS = _loaded_profiles.values["DS"]
+_CV_SHARED = _loaded_profiles.values["shared"]
+CV_PROFILE = CV_PROFILE_AI
+
 # ── Search queries sent to job boards ─────────────────────────────────────────
 # BALANCED across four equal tracks: AI · ML · Data Scientist · Data Analyst.
 # JobSpy ROTATES halves per run (morning run = first half, afternoon run =

@@ -256,3 +256,7 @@ fields in `run_stats.jsonl` in the S3 state bucket, which this repo does not con
 ## License
 
 MIT, see [LICENSE.md](LICENSE.md).
+
+## Private scoring profiles
+
+Scoring profiles can now load from private S3 or an explicitly selected private local file. The first migration stage retains embedded text as a fallback until a successful scheduled run verifies private loading. It does not yet remove historical or embedded personal facts. See [the staged rollout](aws/private-profiles.md) and the [placeholder schema](scoring_profiles.example.json). Do not commit real profile JSON.

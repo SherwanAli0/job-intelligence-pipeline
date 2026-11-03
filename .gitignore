@@ -19,3 +19,7 @@ uk.html
 tk.html
 zz.tmp
 *.tmp
+
+# Retry queues contain per-run application state.
+score_retry.json
+body_retry.json
