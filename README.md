@@ -61,8 +61,9 @@ read stops the run: carrying on with empty history would re-send old jobs.
 Lever, Ashby, Personio, Recruitee, SmartRecruiters and Workday endpoints across 300+
 company boards (358 distinct board slugs plus 21 Workday tenants in
 [config.py](config.py), counted 2026-11-03); the official **Bundesagentur für Arbeit**
-job-search API; the **Adzuna** API; the **Brave Search** API; JobSpy (LinkedIn, Indeed,
-Google Jobs), a LinkedIn guest endpoint, XING and DuckDuckGo web search; and public feeds
+job-search API; the **Adzuna** API; the **Brave Search** API; the JobSpy library
+(`scrape_jobspy`), further job-board scrapers (see `scrape_all` in
+[scrapers.py](scrapers.py)) and DuckDuckGo web search; and public feeds
 (Arbeitnow, Remotive, WorkingNomads, WeWorkRemotely RSS) plus other public job boards. A
 monthly health-check workflow probes the configured
 Greenhouse, Lever, Ashby, Personio, Recruitee and SmartRecruiters boards and fails CI
