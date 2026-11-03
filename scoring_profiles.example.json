@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "shared": "Replace with your private shared candidate facts.",
+    "AI": "Replace with your complete private AI scoring profile, including shared facts.",
+    "ML": "Replace with your complete private ML scoring profile, including shared facts.",
+    "DS": "Replace with your complete private data science scoring profile, including shared facts."
+  }
+}
