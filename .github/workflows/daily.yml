@@ -3,8 +3,10 @@
 #
 #  Migrated 2026-07-20 after source parity was verified: 8,948 postings from
 #  Fargate against a 8,901 GitHub baseline, no source regressed.
-#  Live schedule: EventBridge `job-hunter-morning` / `-afternoon`,
-#  07:00 and 15:00 Europe/Berlin (this cron was UTC-only and DST-naive).
+#  Schedules: EventBridge `job-hunter-morning` / `-afternoon`, created as 10:00
+#  and 16:00 Europe/Berlin. The afternoon run was switched off on 2026-08-18, so
+#  the pipeline now runs once a day. The schedule lives in AWS, not in this repo.
+#  (This workflow's own cron below was UTC-only and DST-naive.)
 #
 #  This workflow is DISABLED, not deleted. To roll back:
 #    gh workflow enable "Daily Job Hunt"
