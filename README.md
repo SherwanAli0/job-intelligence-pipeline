@@ -1,7 +1,9 @@
-# Job Hunter: an autonomous AI job-search pipeline
+# Job Intelligence Pipeline
 
-![Tests](https://github.com/SherwanAli0/job-hunter/actions/workflows/test.yml/badge.svg)
-![Deploy](https://github.com/SherwanAli0/job-hunter/actions/workflows/deploy.yml/badge.svg)
+![Tests](https://github.com/SherwanAli0/job-intelligence-pipeline/actions/workflows/test.yml/badge.svg)
+![Deploy](https://github.com/SherwanAli0/job-intelligence-pipeline/actions/workflows/deploy.yml/badge.svg)
+
+A Python pipeline that collects job listings, ranks them against configurable candidate profiles, and delivers a personalized digest. Deployed on AWS Fargate with scoring calibration, monitoring, and offline regression tests.
 
 Every day, this pipeline scans **300+ company job boards and public job APIs**, filters
 thousands of postings down to the handful worth applying to, scores each one against
@@ -17,6 +19,8 @@ daily-driver, and as a showcase of production-minded LLM engineering on a shoest
 budget: the Batches API, prompt caching and free keyword and pre-screen gates keep most
 postings away from the model. Volume and cost figures, with the date and source of each,
 are under [Measured figures](#measured-figures).
+
+> This repository was renamed from `job-hunter` to `job-intelligence-pipeline` on 3 November 2026. Old URLs redirect. The AWS resources it deploys to (ECR repository, ECS cluster and task family, S3 prefixes, SSM paths, IAM roles, log group and schedules) keep their original `job-hunter` names on purpose.
 
 ---
 
