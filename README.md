@@ -121,7 +121,7 @@ whose page failed to load were marked seen and never retried, a location written
 just "Düsseldorf" was dropped by two board integrations, and keyword and page caps
 cut student roles before they were read.
 
-**Privacy architecture.** Scoring profiles and personal prompt context load from private S3; contact and salary facts use SSM Parameter Store; drafted answers and pipeline state use private storage. Local `personal/`, CV copies, answers and rendered AWS settings are ignored. Encrypted repository secrets support the manual calibration and rollback workflows. The current source contains no embedded CV, but previous commits and old container images retain historical public data; Git history has not been rewritten. See [private profile setup](aws/private-profiles.md).
+**Privacy architecture.** Scoring profiles and personal prompt context load from private S3; contact and salary facts use SSM Parameter Store; drafted answers and pipeline state use private storage. Local `personal/`, CV copies, answers and rendered AWS settings are ignored. Encrypted repository secrets support the manual calibration and rollback workflows. The current source contains no embedded CV profiles, but some candidate-specific rule text and code comments remain in `scorer.py` and `main.py` and are not loaded from private storage; moving them would change prompt text and is a separate decision. Previous commits and old container images retain historical public data; Git history has not been rewritten. See [private profile setup](aws/private-profiles.md).
 
 ## Design decisions
 
@@ -132,7 +132,7 @@ cut student roles before they were read.
   reminders. Applying stays a deliberate act, as it should.
 - **Filters fail open, the scorer fails closed.** Cheap regex filters keep
   anything ambiguous; the LLM stage (which can read the description) makes the
-  precision call. False negatives are unrecoverable; false positives cost a cent.
+  precision call. False negatives are unrecoverable; false positives only cost extra scoring spend.
 - **State is auditable.** Seen-job ids carry last-seen dates and prune after 60
   days; every run's behaviour is one JSON line of run stats.
 - **What it hunts is configuration, not architecture.** The target changed

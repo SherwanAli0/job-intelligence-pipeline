@@ -1,6 +1,6 @@
 # Private scoring profiles
 
-The application requires real scoring profiles in private storage. `config.py` contains no embedded CV facts and supplies no fallback. Source order is an explicitly selected `JOBHUNTER_PROFILE_FILE`, otherwise private S3 when `JOBHUNTER_S3_BUCKET` is set. Missing, invalid or unavailable profiles stop startup with a sanitized error.
+The application requires real scoring profiles in private storage. `config.py` contains no embedded CV facts and supplies no fallback. Some candidate-specific rule text and comments remain in `scorer.py` and `main.py`; they are not loaded from private storage. Source order is an explicitly selected `JOBHUNTER_PROFILE_FILE`, otherwise private S3 when `JOBHUNTER_S3_BUCKET` is set. Missing, invalid or unavailable profiles stop startup with a sanitized error.
 
 The default S3 key is `state/private/scoring-profiles-v1.json`. `JOBHUNTER_S3_PREFIX` replaces `state`; `JOBHUNTER_PROFILE_S3_KEY` overrides the complete key. Keep S3 Block Public Access enabled and server-side encryption on. The existing task role reads the object without additional credentials or permissions.
 
@@ -22,6 +22,8 @@ A dry run still scrapes live sources and pays for scoring. The offline regressio
 Manual calibration and the disabled rollback workflow restore `SCORING_PROFILES_JSON` from an encrypted repository secret into the runner's temporary directory. It contains an identical copy of the S3 JSON and is never printed, uploaded as an artifact or committed. Fargate continues to use S3. After intentionally editing profiles, synchronize the encrypted secret if those workflows should use the new text. The health check does not score jobs; its workflow selects the fictional example only to satisfy the shared config import, so it needs no real private profile.
 
 ## Migration gate and rollback
+
+Status: complete. The validation run described below succeeded on 3 November 2026 and the cleanup was merged.
 
 This cleanup must follow a full validation run on the first-stage image, with successful completion, private S3 loading and no migration fallback. The owner requested running that validation immediately rather than waiting for the next scheduled run. Rendered scoring prompts were checked for byte-for-byte equality against the pre-cleanup implementation. No prompt content, model, routing, filter or schedule changes are part of this migration.
 
