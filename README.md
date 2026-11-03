@@ -20,7 +20,7 @@ budget: the Batches API, prompt caching and free keyword and pre-screen gates ke
 postings away from the model. Volume and cost figures, with the date and source of each,
 are under [Measured figures](#measured-figures).
 
-> This repository was renamed from `job-hunter` to `job-intelligence-pipeline` on 3 November 2026. Old URLs redirect. The AWS resources it deploys to (ECR repository, ECS cluster and task family, S3 prefixes, SSM paths, IAM roles, log group and schedules) keep their original `job-hunter` names on purpose.
+> This repository was renamed from `job-hunter` to `job-intelligence-pipeline` on 3 November 2026. Old URLs redirect, and the deploy role trusts the repository by its immutable ID-based OIDC subject. The AWS resources it deploys to (ECR repository, ECS cluster and task family, S3 prefixes, SSM paths, IAM roles, log group and schedules) keep their original `job-hunter` names on purpose.
 
 ---
 

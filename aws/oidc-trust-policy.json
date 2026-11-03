@@ -12,7 +12,7 @@
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:SherwanAli0/job-intelligence-pipeline:ref:refs/heads/main"
+          "token.actions.githubusercontent.com:sub": "repo:SherwanAli0@169561155/job-intelligence-pipeline@1233781936:ref:refs/heads/main"
         }
       }
     }

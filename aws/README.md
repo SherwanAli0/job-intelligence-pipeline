@@ -1,6 +1,6 @@
 # AWS infrastructure
 
-Note: the GitHub repository is `job-intelligence-pipeline` (renamed from `job-hunter`). The OIDC trust policy subject must name the current repository, `repo:SherwanAli0/job-intelligence-pipeline:ref:refs/heads/main`. The AWS resources below keep their `job-hunter` names.
+Note: the GitHub repository is `job-intelligence-pipeline` (renamed from `job-hunter`). GitHub issues OIDC tokens for repositories renamed after 15 July 2026 with an ID-based subject, so the trust policy must name `repo:SherwanAli0@169561155/job-intelligence-pipeline@1233781936:ref:refs/heads/main` (owner ID, repository ID and branch), not the name-based form. The AWS resources below keep their `job-hunter` names.
 
 The pipeline runs as a scheduled **ECS Fargate task** in `eu-central-1`.
 
