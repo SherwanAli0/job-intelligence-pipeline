@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Dry run (still scrapes live sources and calls Claude; no email, no seen-jobs update)"
+        description: "Dry run (still scrapes live sources and calls Claude; no email, no state written)"
         type: boolean
         default: false
 

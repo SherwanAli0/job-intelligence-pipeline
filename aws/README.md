@@ -65,10 +65,10 @@ aws ecs run-task --cluster job-hunter --task-definition job-hunter --launch-type
 ```
 
 Add `--overrides '{"containerOverrides":[{"name":"job-hunter","environment":[{"name":"DRY_RUN","value":"1"}]}]}'`
-to run the pipeline without sending email or updating `seen_jobs.json`. It is not a
-cheap check: it still scrapes live sources and pays for the Claude scoring call, and it
-may still save newly drafted screening answers to the answer bank. It also skips the
-overlap claim, so it can run alongside a scheduled run.
+to run the pipeline without sending email or writing any state (including the screening
+answer bank). It is not a cheap check: it still scrapes live sources and pays for the
+Claude scoring call. It also skips the overlap claim, so it can run alongside a
+scheduled run.
 
 ## Gotcha worth remembering
 

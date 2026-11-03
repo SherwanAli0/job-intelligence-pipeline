@@ -220,13 +220,12 @@ python main.py --dry-run   # NOT offline and NOT free, see below
 **What `--dry-run` does.** It runs the real pipeline, not a simulation. It still scrapes
 the live sources, sends the surviving postings to Claude (a paid Message Batches API
 call), checks employer APIs for closed postings, and, if a fact sheet is configured, may
-fetch Greenhouse application questions and draft answers with Haiku. It skips only the
-email, the Notion mirror, the `seen_jobs.json`, digest-memory, source-registry and
-run-stats writes, and the overlap claim. One state write is not skipped: newly drafted
-screening answers are still saved to the answer bank (`answers.json` locally, or the
-state bucket on AWS). Use `pytest tests/ -q` for an offline check. The same applies to
-the `DRY_RUN` input of the "Run job hunt now" workflow and `run-now.ps1 -DryRun`, whose
-descriptions say "no state change".
+fetch Greenhouse application questions and draft answers with Haiku (the drafts are
+attached in memory and not saved). It skips the email, the Notion mirror, every state
+write (`seen_jobs.json`, digest memory, source registry, run stats, the answer bank
+`answers.json`) and the overlap claim. Use `pytest tests/ -q` for an offline check. The
+same applies to the `DRY_RUN` input of the "Run job hunt now" workflow, the `DRY_RUN`
+container override and `run-now.ps1 -DryRun`.
 
 A local run without `--dry-run` sends a real digest through Gmail and rewrites
 `seen_jobs.json`, `run_stats.jsonl` and the other state files in the working directory.

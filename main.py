@@ -2285,7 +2285,10 @@ def node_rank(state: dict) -> dict:
 
     try:
         from application_kit import enrich_with_kits
-        enrich_with_kits(top)
+        if state.get("dry_run"):
+            enrich_with_kits(top, persist=False)    # a dry run must not write the answer bank
+        else:
+            enrich_with_kits(top)
     except Exception as e:
         print(f"  [AppKit] skipped: {e}")
 
