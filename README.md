@@ -3,7 +3,7 @@
 ![Tests](https://github.com/SherwanAli0/job-hunter/actions/workflows/test.yml/badge.svg)
 ![Deploy](https://github.com/SherwanAli0/job-hunter/actions/workflows/deploy.yml/badge.svg)
 
-Every morning, this pipeline scans **300+ company job boards and public job APIs**, filters
+Every day, this pipeline scans **300+ company job boards and public job APIs**, filters
 thousands of postings down to the handful worth applying to, scores each one against
 track-specific CV profiles with Claude Haiku, and delivers a ranked email digest with
 pre-drafted screening answers, keyword-gap tailoring hints and freshness badges.
@@ -13,10 +13,10 @@ SSM Parameter Store. Deploys are automatic from `main` over GitHub OIDC, with no
 long-lived AWS keys anywhere.
 
 Built and maintained by [Sherwan Ali](https://github.com/SherwanAli0) as a real
-daily-driver (it has processed **19,000+ unique postings** since May 2026), and as a
-showcase of production-minded LLM engineering on a shoestring budget: scoring and compute
-measure about **0.05 USD per run**, with the Batches API, prompt caching and a free
-keyword gate keeping most postings away from the model.
+daily-driver, and as a showcase of production-minded LLM engineering on a shoestring
+budget: the Batches API, prompt caching and free keyword and pre-screen gates keep most
+postings away from the model. Volume and cost figures, with the date and source of each,
+are under [Measured figures](#measured-figures).
 
 ---
 
@@ -28,19 +28,28 @@ flowchart TD
     B --> C["Recall-friendly filter chain<br/>location · language · experience · seniority · degree"]
     C --> D["Stage 1: deterministic pre-screen<br/>(regex disqualifiers, zero API cost)"]
     D --> E["Stage 2: Haiku scoring<br/>per-track CV profiles, Batches API, structured outputs"]
-    E --> G["Ranking layer<br/>diversity quotas · remote → near Bonn → NRW ordering"]
+    E --> G["Ranking layer<br/>closed-posting check · diversity quotas · remote → near Bonn → NRW ordering"]
     G --> H["Email digest<br/>screening-answer kits · tailoring hints · health warnings"]
     G --> I["Durable state (S3)<br/>seen_jobs.json · digested_keys.json · run_stats.jsonl"]
 ```
 
 **Runtime.** The whole pipeline is one container image. EventBridge Scheduler starts an
-ECS Fargate task every day at 10:00 Europe/Berlin (so daylight saving is handled for me);
-the task reads its secrets from SSM Parameter Store as SecureStrings, reads and writes
-state in a versioned private S3 bucket, and logs structured JSON to CloudWatch. Fargate
-was chosen over Lambda only after measuring the real scrape: a full run takes about 40
-minutes, well past Lambda's 15-minute ceiling. A push to `main` runs the tests, builds
-the image, pushes it to ECR and registers a new task definition revision, authenticating
-with GitHub OIDC against a least-privilege role.
+ECS Fargate task once a day at 10:00 Europe/Berlin (so daylight saving is handled for me;
+a second, 16:00 run existed until 2026-08-18). The schedule lives in AWS, not in this
+repo, so the repo cannot show its current state. The task reads its secrets from SSM
+Parameter Store as SecureStrings, reads and writes state in a versioned private S3
+bucket, and logs structured JSON to CloudWatch. Fargate was chosen over Lambda only after
+measuring the real scrape: about 40 minutes (range 36 to 72) when it moved to Fargate in
+July 2026, well past Lambda's 15-minute ceiling, and slower on some later days (one
+healthy run took 2 h 03 min, which is why the overlap claim below has a 4-hour TTL). A
+push to `main` runs the tests, builds the image, pushes it to ECR and registers a new
+task definition revision, authenticating with GitHub OIDC against a least-privilege
+role. Pushes that only change Markdown files, `cv/` or the state files do not deploy.
+
+The stages (scrape, filter, score, rank, notify, persist) are wired together as a small
+[LangGraph](https://github.com/langchain-ai/langgraph) state machine in
+[graph.py](graph.py); the nodes call the plain functions in [main.py](main.py), and the
+graph's only branch skips scoring when nothing new was found.
 
 Two concurrent runs would each see the same jobs as unseen and both send a digest, so
 runs take a claim in S3 (conditional write, a TTL longer than the slowest healthy run,
@@ -48,11 +57,14 @@ and an owner token so a run that overran cannot release its successor's claim) a
 second run exits cleanly instead of failing. A state file that exists but cannot be
 read stops the run: carrying on with empty history would re-send old jobs.
 
-**Sources** (all public interfaces): Greenhouse, Lever, Ashby, Personio, Recruitee,
-SmartRecruiters and Workday endpoints across 300+ company boards; the official
-**Bundesagentur für Arbeit** job-search API; the **Adzuna** API; the **Brave Search**
-API; and public feeds (Arbeitnow, Remotive, WorkingNomads, WeWorkRemotely RSS) plus
-other public job boards. A monthly health-check workflow probes the configured
+**Sources** (public endpoints; some are unofficial scrapes of public pages): Greenhouse,
+Lever, Ashby, Personio, Recruitee, SmartRecruiters and Workday endpoints across 300+
+company boards (358 distinct board slugs plus 21 Workday tenants in
+[config.py](config.py), counted 2026-11-03); the official **Bundesagentur für Arbeit**
+job-search API; the **Adzuna** API; the **Brave Search** API; JobSpy (LinkedIn, Indeed,
+Google Jobs), a LinkedIn guest endpoint, XING and DuckDuckGo web search; and public feeds
+(Arbeitnow, Remotive, WorkingNomads, WeWorkRemotely RSS) plus other public job boards. A
+monthly health-check workflow probes the configured
 Greenhouse, Lever, Ashby, Personio, Recruitee and SmartRecruiters boards and fails CI
 when one has been removed, so the source list can't silently rot.
 
@@ -63,8 +75,11 @@ when one has been removed, so the source list can't silently rot.
 *framed for that track*: a Data Scientist job is scored against the DS-framed CV,
 not a generic one. A Sonnet re-score of the finalists used to follow; it was measured
 at a third of every run's bill for a second opinion on an order Haiku had already set,
-and removed. Structured outputs guarantee valid JSON, and a retry plus score-default
-layer guarantees a bad API moment can never crash the run or silently lose jobs.
+and removed. Structured outputs constrain each response to valid JSON; they say nothing
+about whether a score is right, which is what the golden set and `calibrate.py` below
+are for. A retry plus a score-0 default means a bad API moment cannot crash the run.
+Known limitation: a job whose scoring fails both attempts keeps score 0 and is marked
+seen like any other, so it is not retried on the next run.
 
 **A measured scoring pipeline, not vibes.** A hand-labeled golden set
 ([golden/](golden/golden_set.jsonl)) gates the deterministic pre-screen in CI on
@@ -81,8 +96,9 @@ with real incidents that once killed good jobs.
 **Cost engineering.** Message Batches API (50% off all tokens), prompt caching on
 the per-track system prompts, a free keyword gate built from the CV, and a
 deterministic pre-screen that keeps most jobs away from the API entirely. Every run
-records its exact token usage, priced per request mode and cache TTL. Scoring
-thousands of postings a day costs a few cents.
+records its token usage, priced per request mode and cache TTL, as `llm_cost_usd` in its
+stats line. Only postings that survive the filters and pre-screen reach the model (252
+on the 2026-09-04 measurement below), not everything that was scraped.
 
 **Observability.** Every run appends a stats line to `run_stats.jsonl` in the S3
 state bucket (per-source counts, filter drops, score distribution, digest mix, token
@@ -101,7 +117,10 @@ cut student roles before they were read.
 **Privacy architecture.** The repo is public, so personal data lives outside it by
 design: contact/salary facts in SSM Parameter Store (with a gitignored local mirror),
 drafted answers in the private S3 state bucket, and the application tracker kept
-outside the repository. Git history was scrubbed accordingly.
+outside the repository. None of those gitignored paths (`personal/`, `answers.json`,
+`applied_jobs.json`) appears anywhere in this repository's git history (checked
+2026-11-03). The three CV profiles in [cv/](cv/) are tracked on purpose, because the
+scorer reads them, and they contain the owner's contact e-mail address.
 
 ## Design decisions
 
@@ -148,21 +167,26 @@ outside the repository. Git history was scrubbed accordingly.
 | [main.py](main.py) | Orchestrator: scrape → dedup → filter → score → rank → notify |
 | [scrapers.py](scrapers.py) | All source integrations |
 | [scorer.py](scorer.py) | Pre-screen + Claude Haiku scoring, Batches API layer |
+| [graph.py](graph.py) | LangGraph state machine that sequences the stages in `main.py` |
 | [filters.py](filters.py) | Shared Germany-eligibility term lists (single source of truth) |
 | [notifier.py](notifier.py) | HTML digest email (+ optional Notion) |
 | [application_kit.py](application_kit.py) | Fetches real screening questions, drafts answers |
 | [track.py](track.py) | Application tracker: funnel stats + follow-up nudges |
 | [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
 | [health_check.py](health_check.py) | Monthly board-rot detector |
+| [liveness.py](liveness.py) | Drops postings an employer's own API reports as closed |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
-| [tests/](tests/) | 1,260+ offline tests, run on every push |
+| [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
+| [tests/](tests/) | 1,278 offline tests (`pytest --collect-only -q`, 2026-11-03), run on every push to `main` and every pull request |
 
 ## Run your own
 
 Production runs on AWS: the [deploy workflow](.github/workflows/deploy.yml) builds the
 image and registers the task definition, and [aws/](aws/) holds the task, schedule and
 IAM definitions. The simplest way to run your own copy is the GitHub Actions workflow
-[daily.yml](.github/workflows/daily.yml), kept as a fallback with its schedule disabled.
+[daily.yml](.github/workflows/daily.yml), kept as a rollback path for the AWS setup. The
+workflow file still carries its cron lines; whether it is enabled is a GitHub repository
+setting, not something visible in the file.
 
 1. **Fork the repo** and edit [config.py](config.py): your CV profiles, search
    queries, and target boards.
@@ -178,14 +202,55 @@ IAM definitions. The simplest way to run your own copy is the GitHub Actions wor
    | `NOTION_TOKEN` / `NOTION_DATABASE_ID` | Optional: Notion mirror |
 
 3. **Enable the "Daily Job Hunt" workflow** (`gh workflow enable "Daily Job Hunt"`).
-   Its cron runs at 05:00 and 13:00 UTC; trigger it manually from the Actions tab to
-   test. Tests run on every push.
+   Its cron runs at 05:00 and 13:00 UTC (twice a day, unlike the single daily AWS run);
+   trigger it manually from the Actions tab to test. The Tests workflow runs on pushes
+   to `main` and on pull requests.
 
-Local run:
+Local run (Python 3.11, the version CI and the Docker image use; the pins in
+`constraints.txt` were resolved for it):
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt pytest
+pytest tests/ -q           # offline test suite, no API keys or network needed
 export ANTHROPIC_API_KEY=sk-ant-...
-python main.py --dry-run   # full pipeline, no email, no state updates
-pytest tests/ -q           # offline test suite
+python main.py --dry-run   # NOT offline and NOT free, see below
 ```
+
+**What `--dry-run` does.** It runs the real pipeline, not a simulation. It still scrapes
+the live sources, sends the surviving postings to Claude (a paid Message Batches API
+call), checks employer APIs for closed postings, and, if a fact sheet is configured, may
+fetch Greenhouse application questions and draft answers with Haiku. It skips only the
+email, the Notion mirror, the `seen_jobs.json`, digest-memory, source-registry and
+run-stats writes, and the overlap claim. One state write is not skipped: newly drafted
+screening answers are still saved to the answer bank (`answers.json` locally, or the
+state bucket on AWS). Use `pytest tests/ -q` for an offline check. The same applies to
+the `DRY_RUN` input of the "Run job hunt now" workflow and `run-now.ps1 -DryRun`, whose
+descriptions say "no state change".
+
+A local run without `--dry-run` sends a real digest through Gmail and rewrites
+`seen_jobs.json`, `run_stats.jsonl` and the other state files in the working directory.
+The `seen_jobs.json` and `run_stats.jsonl` committed in this repo are a snapshot from the
+July 2026 move to AWS; production state now lives in S3.
+
+## Measured figures
+
+Figures that can be traced to something in this repository. Anything not listed here has
+not been re-measured.
+
+| Figure | Value | Measured | Source |
+|---|---|---|---|
+| Offline tests | 1,278 collected and passing | 2026-11-03 | `pytest tests/ -q`, Python 3.11, `constraints.txt` |
+| Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](config.py) |
+| Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](run_stats.jsonl) |
+| Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](seen_jobs.json) |
+| Postings sent to Claude | 252 (20 reached the digest) | 2026-09-04 | commit `005f8a1` message |
+| LLM bill for that run | about 20 cents, about 7 of them the removed Sonnet re-score | 2026-09-04 | commit `005f8a1` message |
+| Expected bill after the cuts | about 7 cents (an estimate, not re-measured here) | 2026-09-04 | commit `005f8a1` message |
+| Full-run duration | 40.3 min (range 36 to 72); one slow healthy run 2 h 03 min | July and October 2026 | [aws/README.md](aws/README.md), commit `c377268` message |
+
+The current per-run LLM cost and run time are in each run's `llm_cost_usd` and `phases`
+fields in `run_stats.jsonl` in the S3 state bucket, which this repo does not contain.
+
+## License
+
+MIT, see [LICENSE.md](LICENSE.md).
