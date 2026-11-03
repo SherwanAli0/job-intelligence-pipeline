@@ -78,9 +78,11 @@ not a generic one. A Sonnet re-score of the finalists used to follow; it was mea
 at a third of every run's bill for a second opinion on an order Haiku had already set,
 and removed. Structured outputs constrain each response to valid JSON; they say nothing
 about whether a score is right, which is what the golden set and `calibrate.py` below
-are for. A retry plus a score-0 default means a bad API moment cannot crash the run.
-Known limitation: a job whose scoring fails both attempts keeps score 0 and is marked
-seen like any other, so it is not retried on the next run.
+are for. A retry plus a score-0 default means a bad API moment cannot crash the run, and
+a job the model returned no score for is left out of `seen_jobs.json` so the next run
+tries it again, at most three attempts in total (`score_retry.json` counts them, the same
+pattern as the ad-body retry). A retried job still passes through every filter, the
+freshness filter included.
 
 **A measured scoring pipeline, not vibes.** A hand-labeled golden set
 ([golden/](golden/golden_set.jsonl)) gates the deterministic pre-screen in CI on
@@ -178,7 +180,7 @@ scorer reads them, and they contain the owner's contact e-mail address.
 | [liveness.py](liveness.py) | Drops postings an employer's own API reports as closed |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
-| [tests/](tests/) | 1,278 offline tests (`pytest --collect-only -q`, 2026-11-03), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,295 offline tests (`pytest --collect-only -q`, 2026-11-03), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -239,7 +241,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,278 collected and passing | 2026-11-03 | `pytest tests/ -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,295 collected and passing | 2026-11-03 | `pytest tests/ -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](seen_jobs.json) |

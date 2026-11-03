@@ -964,6 +964,11 @@ def _apply_scores(batch: list[dict], raw: str) -> None:
                 batch[idx]["cv_hint"] = hint.strip()
 
 
+# Marker left in `reason` when the model returned no score for a job. main.py's
+# node_persist uses it to leave such jobs unseen for a bounded number of retries.
+SCORER_FAILED_PREFIX = "[scorer-failed]"
+
+
 def _finalize_scores(batch: list[dict]) -> list[dict]:
     """Guarantee every job leaves with a score. setdefault keeps this safe for
     the Sonnet re-score stage too: on a Stage-3 failure the jobs already
@@ -971,7 +976,7 @@ def _finalize_scores(batch: list[dict]) -> list[dict]:
     failure yields score 0 instead of a missing key that would crash main."""
     for j in batch:
         j.setdefault("score", 0)
-        j.setdefault("reason", "[scorer-failed] no score returned")
+        j.setdefault("reason", f"{SCORER_FAILED_PREFIX} no score returned")
     return batch
 
 
