@@ -4,7 +4,7 @@ Tests for the AWS entrypoint.
 The dry-run switch is the one that matters: an earlier version honoured
 DRY_RUN only in lambda_handler, while Fargate starts the container as
 `python handler.py`. A DRY_RUN=1 container override was therefore ignored and
-the task performed a REAL run — emailing a digest and writing state — while
+the task performed a REAL run - emailing a digest and writing state - while
 the operator believed nothing would be sent. A safety switch that silently
 does not apply is worse than no switch at all.
 """
@@ -81,7 +81,7 @@ class TestClaimSkipIsNotAFailure:
     def test_skipped_outcome_exits_zero(self):
         """The overlap guard declining a second concurrent hunt is correct
         behaviour. A real user clicked Run while the scheduled hunt was
-        mid-flight and received a red failure email for it — red must be
+        mid-flight and received a red failure email for it - red must be
         reserved for genuinely broken runs."""
         src = open(handler.__file__, encoding="utf-8").read()
         main_block = src.split('if __name__ == "__main__":')[1]

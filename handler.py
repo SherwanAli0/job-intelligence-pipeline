@@ -1,11 +1,11 @@
 """
-handler.py — AWS entrypoint for the job hunter.
+handler.py - AWS entrypoint for the job hunter.
 
 The same image serves both compute options, because the choice between them is
 still open pending the scrape-timing measurement:
 
-  * AWS Lambda  — invoked as `handler.lambda_handler`
-  * AWS Fargate — the container is run directly, `python handler.py`
+  * AWS Lambda  - invoked as `handler.lambda_handler`
+  * AWS Fargate - the container is run directly, `python handler.py`
 
 Secrets and state are already environment-driven (see secrets_loader.py and
 storage.py), so this file only has to translate an invocation into a run and
@@ -28,7 +28,7 @@ def _run(mode: str = "full", dry_run: bool = False) -> dict:
     # Mutual exclusion: EventBridge has no equivalent of the GitHub Actions
     # concurrency group, and two overlapping runs would each see the same jobs
     # as unseen (seen_jobs is written only at the end) and both send a digest.
-    # Skipping is a success, not a failure — the run that holds the claim is
+    # Skipping is a success, not a failure - the run that holds the claim is
     # doing the work.
     claim_name = f"run-{mode}"
     if not dry_run and not storage.claim(claim_name):
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     outcome = _run(dry_run=_dry)
     # "skipped" means the overlap guard correctly declined to start a second
     # concurrent hunt (a manual click while the scheduled run was mid-flight).
-    # That is the system working, not a failure — exiting 1 for it made GitHub
+    # That is the system working, not a failure - exiting 1 for it made GitHub
     # send a red failure email for correct behaviour, which teaches the owner
     # to ignore red emails. Red must mean genuinely broken.
     sys.exit(0 if outcome["status"] in ("ok", "skipped") else 1)

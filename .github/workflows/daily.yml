@@ -1,5 +1,5 @@
-# ─────────────────────────────────────────────────────────────────────────────
-#  ROLLBACK ONLY — the pipeline now runs on AWS ECS Fargate.
+#
+#  ROLLBACK ONLY - the pipeline now runs on AWS ECS Fargate.
 #
 #  Migrated 2026-07-20 after source parity was verified: 8,948 postings from
 #  Fargate against a 8,901 GitHub baseline, no source regressed.
@@ -16,19 +16,19 @@
 #  NOTE: state diverged at migration. This workflow reads seen_jobs.json from
 #  the repo; AWS reads s3://<private-state-bucket>/state/. After a
 #  rollback the first run may re-send jobs AWS has already shown you.
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 name: Daily Job Hunt
 
 on:
   schedule:
     # Two runs per day so we catch fresh postings before the applicant rush.
-    # GitHub cron is UTC and DST-naive — Berlin is UTC+1 (winter) / UTC+2 (summer).
+    # GitHub cron is UTC and DST-naive - Berlin is UTC+1 (winter) / UTC+2 (summer).
     - cron: "0 5 * * *"   # ~7 AM Berlin (winter) / ~7 AM (summer) → morning digest
     - cron: "0 13 * * *"  # ~2 PM Berlin (winter) / ~3 PM (summer) → afternoon refresh
   workflow_dispatch:        # lets you trigger it manually from GitHub
 
-# Never run two hunts at once — a manual run colliding with a cron run makes
+# Never run two hunts at once - a manual run colliding with a cron run makes
 # the loser's seen_jobs.json push fail (non-fast-forward). Queue instead.
 concurrency:
   group: daily-hunt
@@ -75,7 +75,7 @@ jobs:
       # Personal data never lives in this public repo. The answer bank is kept
       # between runs via the Actions cache; the application tracker arrives via
       # a repo secret (track.py syncs it up with `gh secret set` locally).
-      - name: Restore answer bank (private, cached — never committed)
+      - name: Restore answer bank (private, cached - never committed)
         uses: actions/cache@v4
         with:
           path: answers.json
@@ -97,7 +97,7 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-          # Optional — scraper is a graceful no-op if these aren't set.
+          # Optional - scraper is a graceful no-op if these aren't set.
           # Sign up at developer.adzuna.com (free, 1000 calls/month) to enable
           # coverage of Mercedes-Benz, BMW, Allianz, Deutsche Bank, P&G,
           # Unilever, and other companies whose sites are Cloudflare-blocked.

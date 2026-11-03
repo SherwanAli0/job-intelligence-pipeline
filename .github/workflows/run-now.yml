@@ -1,6 +1,6 @@
 name: Run job hunt now
 
-# Trigger a hunt on demand, from a browser button — no laptop, no AWS console,
+# Trigger a hunt on demand, from a browser button - no laptop, no AWS console,
 # no CLI. GitHub → Actions → "Run job hunt now" → Run workflow.
 #
 # It starts the same ECS Fargate task the schedule uses, so it runs on the same
@@ -63,7 +63,7 @@ jobs:
             echo "Mode: ${{ inputs.dry_run == true && 'DRY RUN (no email)' || 'full run (digest will be emailed)' }}"
             echo ""
             echo "Takes roughly 15-45 minutes depending on the Claude batch queue."
-            echo "It runs in AWS — closing this page does not stop it."
+            echo "It runs in AWS - closing this page does not stop it."
             echo ""
             echo "[CloudWatch logs](https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#logsV2:log-groups/log-group/\$252Fecs\$252Fjob-hunter/log-events/run\$252Fjob-hunter\$252F$ID)"
           } >> "$GITHUB_STEP_SUMMARY"

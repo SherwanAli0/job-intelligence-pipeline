@@ -1,17 +1,17 @@
 """
-health_check.py — monthly sweep that flags dead company boards.
+health_check.py - monthly sweep that flags dead company boards.
 
 Companies migrate ATS platforms every few months; when a slug 404s we silently
 lose that company's jobs (Delivery Hero's 1,087 vanished this way). This script
 HTTP-tests every board in config.py and reports:
 
-  - DEAD  : HTTP 404/error — the board is GONE (needs relocation)
-  - EMPTY : HTTP 200 but 0 jobs — company just has no openings (fine, kept)
+  - DEAD  : HTTP 404/error - the board is GONE (needs relocation)
+  - EMPTY : HTTP 200 but 0 jobs - company just has no openings (fine, kept)
   - OK    : HTTP 200 with jobs
 
 Run:   py -3.11 health_check.py
 CI:    .github/workflows/health.yml (monthly). Exits 1 only when DEAD boards
-       exist, so GitHub emails a failure — EMPTY never fails the build.
+       exist, so GitHub emails a failure - EMPTY never fails the build.
 """
 
 import sys
@@ -56,7 +56,7 @@ def _smartrecruiters(slug):
     return r.status_code, (r.json().get("totalFound", 0) if r.status_code == 200 else 0)
 
 
-# (platform label, config list, checker) — extend here when a new ATS is added
+# (platform label, config list, checker) - extend here when a new ATS is added
 _TARGETS = [
     ("greenhouse",      getattr(C, "GREENHOUSE_SLUGS", []),      _greenhouse),
     ("lever",           getattr(C, "LEVER_SLUGS", []),           _lever),
@@ -73,9 +73,9 @@ def _probe(platform, slug, checker):
 
     Verdicts:
       OK          200 with jobs
-      EMPTY       200/429 with 0 jobs — company just has no openings (kept)
-      DEAD        404/410 — board genuinely removed (needs relocation → fails CI)
-      UNREACHABLE network error or 403/5xx after a retry — transient/blocked,
+      EMPTY       200/429 with 0 jobs - company just has no openings (kept)
+      DEAD        404/410 - board genuinely removed (needs relocation → fails CI)
+      UNREACHABLE network error or 403/5xx after a retry - transient/blocked,
                   NOT a migration, so it does NOT fail the build
 
     Only DEAD fails the build, so a timeout or a Cloudflare 403 never triggers
@@ -92,7 +92,7 @@ def _probe(platform, slug, checker):
                 return (platform, slug, "EMPTY", status, n)
             if status in (404, 410):
                 return (platform, slug, "DEAD", status, 0)
-            # 403 / 5xx / other — retry then treat as unreachable, not dead
+            # 403 / 5xx / other - retry then treat as unreachable, not dead
         except Exception as exc:
             last_status = type(exc).__name__
         if attempt == 0:
@@ -116,24 +116,24 @@ def main() -> int:
 
     total_jobs = sum(r[4] for r in ok)
     print(f"OK:          {len(ok):4d} boards  ({total_jobs:,} jobs live)")
-    print(f"EMPTY:       {len(empty):4d} boards  (200 but 0 jobs — kept, will repopulate)")
-    print(f"UNREACHABLE: {len(unreach):4d} boards  (timeout/403/5xx — transient, not failing build)")
-    print(f"DEAD:        {len(dead):4d} boards  (404/410 — need relocation)\n")
+    print(f"EMPTY:       {len(empty):4d} boards  (200 but 0 jobs \u2014 kept, will repopulate)")
+    print(f"UNREACHABLE: {len(unreach):4d} boards  (timeout/403/5xx \u2014 transient, not failing build)")
+    print(f"DEAD:        {len(dead):4d} boards  (404/410 \u2014 need relocation)\n")
 
     if empty:
-        print("── EMPTY (informational) ──")
+        print("\u2500\u2500 EMPTY (informational) \u2500\u2500")
         for p, s, _, st, _ in sorted(empty):
             print(f"  {p:16s} {s:26s} HTTP {st}")
         print()
 
     if unreach:
-        print("── UNREACHABLE (transient — re-check next run) ──")
+        print("\u2500\u2500 UNREACHABLE (transient \u2014 re-check next run) \u2500\u2500")
         for p, s, _, st, _ in sorted(unreach):
             print(f"  {p:16s} {s:26s} {st}")
         print()
 
     if dead:
-        print("── DEAD — RELOCATE OR REMOVE ──")
+        print("\u2500\u2500 DEAD \u2014 RELOCATE OR REMOVE \u2500\u2500")
         for p, s, _, st, _ in sorted(dead):
             print(f"  {p:16s} {s:26s} {st}")
         print(f"\n{len(dead)} dead board(s). Re-probe their new ATS with a relocation sweep, "

@@ -3,7 +3,7 @@ Golden-set pre-screen regression (the FREE calibration layer).
 
 Every labeled case in golden/golden_set.jsonl either must be hard-disqualified
 (with the labeled category) or must survive the pre-screen. Runs offline on
-every push — a prompt/filter edit that flips a golden case fails CI.
+every push - a prompt/filter edit that flips a golden case fails CI.
 The paid LLM band layer lives in calibrate.py (manual).
 """
 import calibrate

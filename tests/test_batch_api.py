@@ -1,7 +1,7 @@
 """
 Tests for the T3 cost layer: Message Batches API path (50% discount) with its
 sync fallback, structured-output parsing, and per-model thinking config.
-All offline — fake clients only.
+All offline - fake clients only.
 """
 from types import SimpleNamespace as NS
 
@@ -77,7 +77,7 @@ class TestApplyScores:
 
 class TestThinkingConfig:
     def test_sonnet5_disables_adaptive_thinking(self):
-        # Sonnet 5 runs adaptive thinking when the field is omitted — scoring
+        # Sonnet 5 runs adaptive thinking when the field is omitted - scoring
         # must disable it explicitly or every call spends thinking tokens.
         kw = scorer._thinking_kwargs(scorer.SONNET_MODEL)
         assert kw == {"thinking": {"type": "disabled"}}
@@ -150,7 +150,7 @@ class TestBatchAPIPath:
 
 class TestTimeoutKeepsCompletedWork:
     """A real run had 8 of 15 groups succeed, then cancelled all 15 on timeout
-    and re-scored everything synchronously — paying for the batch AND again at
+    and re-scored everything synchronously - paying for the batch AND again at
     full price ($0.22 vs the usual $0.07). Completed groups must survive."""
 
     def test_timeout_harvests_succeeded_groups_and_only_redoes_stragglers(self, monkeypatch):

@@ -145,7 +145,7 @@ class TestMainUsesStorage:
         assert history[0]["platform"] in ("local", "github-actions", "aws-lambda")
 
 
-# ── Run claims (mutual exclusion) ─────────────────────────────────────────────
+# -- Run claims (mutual exclusion) ---------------------------------------------
 # EventBridge has no equivalent of the GitHub Actions concurrency group, so two
 # overlapping runs would each see the same jobs as unseen and both send a
 # digest. The same guard covers a future check-and-exit consumer, where the

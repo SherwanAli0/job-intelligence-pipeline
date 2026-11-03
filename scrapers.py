@@ -1,8 +1,8 @@
 """
-scrapers.py — pulls jobs from all configured sources.
+scrapers.py - pulls jobs from all configured sources.
 
 Sources:
-  1. JobSpy       → LinkedIn + Indeed (reliable, no Glassdoor — Cloudflare blocked)
+  1. JobSpy       → LinkedIn + Indeed (reliable, no Glassdoor - Cloudflare blocked)
   2. Arbeitnow    → free JSON API, English-language jobs, Germany-focused
   3. Remotive     → free JSON API, remote jobs worldwide
   4. Arbeitsagentur → official German employment agency API
@@ -30,14 +30,14 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
-# ── Concurrent board fetching ────────────────────────────────────────────────
+# -- Concurrent board fetching ------------------------------------------------
 # The ATS scrapers fetch 300+ company boards, and almost all of that time is
 # spent waiting on the network rather than doing work: sequentially, one full
 # scrape took 36 minutes, which exceeds AWS Lambda's 15-minute ceiling.
 # Fetching boards in parallel removes the waiting without changing what is
 # collected.
 #
-# Set JOBHUNTER_SCRAPE_WORKERS=1 to restore the exact sequential behaviour —
+# Set JOBHUNTER_SCRAPE_WORKERS=1 to restore the exact sequential behaviour -
 # that switch is what makes an A/B comparison of the two modes possible, and
 # it is the escape hatch if a provider ever starts rate-limiting.
 #
@@ -49,11 +49,11 @@ SCRAPE_WORKERS = max(1, int(os.environ.get("JOBHUNTER_SCRAPE_WORKERS", "6")))
 # Per-scraper wall time from the last scrape_all(), for the run-stats record.
 SCRAPER_TIMINGS: dict[str, float] = {}
 
-# ── Per-scraper timeout ──────────────────────────────────────────────────────
+# -- Per-scraper timeout ------------------------------------------------------
 # Observed live: after several full scrapes in one evening, LinkedIn/Indeed
 # began rate-limiting and JobSpy retried silently forever. Both a local run and
 # a Fargate task sat at the same line for over 20 minutes with no output and no
-# error. Without a timeout, one throttled source stalls the whole run — on
+# error. Without a timeout, one throttled source stalls the whole run - on
 # Fargate that means paying for a container that will never deliver a digest.
 #
 # The scraper runs on a daemon thread we can abandon: Python cannot kill a
@@ -61,7 +61,7 @@ SCRAPER_TIMINGS: dict[str, float] = {}
 # every other source. Losing one source's jobs beats losing the entire digest.
 SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("JOBHUNTER_SCRAPER_TIMEOUT", "600"))
 
-# ── Background sources ───────────────────────────────────────────────────────
+# -- Background sources -------------------------------------------------------
 # Some sources are slow for reasons we cannot fix: LinkedIn/Indeed (via JobSpy)
 # and the DuckDuckGo web search both self-throttle deliberately, and going
 # faster risks being blocked outright. Measured on Fargate: jobspy 600s+ and
@@ -102,7 +102,7 @@ def _start_scraper(scraper):
 # Scrapers that blew the timeout, kept so their results can be collected if
 # they finish while the remaining sources are still running. Observed live: a
 # throttled JobSpy timed out at 420s, then completed with 696 real jobs while
-# later scrapers ran for another 20 minutes — those jobs were simply thrown
+# later scrapers ran for another 20 minutes - those jobs were simply thrown
 # away. The thread is already running and already paid for; discarding a
 # completed result is pure waste.
 _PENDING_SCRAPERS: list = []
@@ -145,10 +145,10 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
         # discard everything: six runs of history show LinkedIn/Indeed
         # returning either ~380 jobs or exactly 0, never anything between,
         # because a slow run lost the lot. Partial results are worth far more
-        # than none — they still get filtered and scored like any other job.
+        # than none - they still get filtered and scored like any other job.
         partial = list(_JOBSPY_PARTIAL) if scraper.__name__ == "scrape_jobspy" else []
         if partial:
-            print(f"  [{scraper.__name__}] timed out — keeping {len(partial)} "
+            print(f"  [{scraper.__name__}] timed out \u2014 keeping {len(partial)} "
                   f"jobs collected so far, still watching for the rest")
         _PENDING_SCRAPERS.append((scraper.__name__, box, t))
         return partial, True
@@ -161,11 +161,11 @@ def _recover_late_scrapers(grace_seconds: int = 300) -> list[dict]:
     for name, box, t in _PENDING_SCRAPERS:
         t.join(grace_seconds if t.is_alive() else 0)
         if not t.is_alive() and box["jobs"]:
-            print(f"  [{name}] finished late — recovering {len(box['jobs'])} jobs")
+            print(f"  [{name}] finished late \u2014 recovering {len(box['jobs'])} jobs")
             recovered.extend(box["jobs"])
             SCRAPER_TIMINGS[name + " (late)"] = 0.0
         elif t.is_alive():
-            print(f"  [{name}] still hung after the grace period — permanently skipped")
+            print(f"  [{name}] still hung after the grace period \u2014 permanently skipped")
     _PENDING_SCRAPERS.clear()
     return recovered
 
@@ -176,8 +176,8 @@ def _parallel_collect(items: list, fetch_one, label: str = "",
     Map fetch_one over items and concatenate the resulting lists.
 
     Order is preserved exactly as in the sequential version (ThreadPoolExecutor
-    .map yields results in input order), so downstream cross-source dedup —
-    which keeps the FIRST occurrence of a duplicate — behaves identically.
+    .map yields results in input order), so downstream cross-source dedup -
+    which keeps the FIRST occurrence of a duplicate - behaves identically.
 
     fetch_one must swallow its own exceptions and return a list; one dead board
     must never take down the rest of the batch.
@@ -248,7 +248,7 @@ HEADERS = {
 }
 
 
-# ── helpers ────────────────────────────────────────────────────────────────────
+# -- helpers --------------------------------------------------------------------
 
 def make_id(url: str, title: str, company: str) -> str:
     raw = f"{url}{title}{company}".lower()
@@ -264,18 +264,18 @@ def job(title, company, location, url, source, description="", posted_at="",
         "location": location,
         "url": url,
         "source": source,
-        "description": description[:5000],  # cap size — must be long enough that the requirements section isn't lost behind a verbose intro
+        "description": description[:5000],  # cap size - must be long enough that the requirements section isn't lost behind a verbose intro
         "posted_at": posted_at,  # ISO 8601 string, empty if source doesn't expose it
-        # ── Enrichment fields (additive; empty when the source doesn't expose them) ──
+        # -- Enrichment fields (additive; empty when the source doesn't expose them) --
         "apply_url": apply_url,   # direct "apply on company site" link (skips the board relay)
         "contact":   contact,     # named contact / email / phone pulled from the ad body
-        "salary":    salary,      # salary band string, e.g. "50,000–60,000 €"
+        "salary":    salary,      # salary band string, e.g. "50,000-60,000 €"
         "score": 0,
         "reason": "",
     }
 
 
-# ── 1. JobSpy (LinkedIn + Indeed + Google Jobs) ───────────────────────────────
+# -- 1. JobSpy (LinkedIn + Indeed + Google Jobs) -------------------------------
 
 def _jobspy_active_queries() -> list[str]:
     """
@@ -322,7 +322,7 @@ def _jobspy_active_queries() -> list[str]:
 # Why this exists: fetching every description inline (JobSpy's
 # linkedin_fetch_description) cost one request per posting and pushed the
 # scraper past its timeout, at which point the run discarded ALL LinkedIn and
-# Indeed jobs. Measured across six runs, it was binary — finish under the
+# Indeed jobs. Measured across six runs, it was binary - finish under the
 # timeout and get ~380 jobs, exceed it and get 0.
 #
 # Descriptions are not optional: without them the filters cannot see the
@@ -341,7 +341,7 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
     `screen_titles=False` is for main._fill_missing_bodies: its candidates have
     already passed the employment-form filter, so a seniority word in the
     title ("Intern - Office of the Chief Data Officer", "Praktikum Expert
-    Systems") is no reason to skip the fetch — skipping there meant the ad
+    Systems") is no reason to skip the fetch - skipping there meant the ad
     could only ever fail the language test."""
     from filters import title_is_worth_fetching
 
@@ -373,8 +373,8 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
         return [j] if text else []
 
     # LinkedIn drops concurrent description requests (measured: 5/5 fetched
-    # sequentially, 38/200 at 6 workers), so its URLs go through a slow lane —
-    # low concurrency plus pacing — while every other host keeps the full pool.
+    # sequentially, 38/200 at 6 workers), so its URLs go through a slow lane -
+    # low concurrency plus pacing - while every other host keeps the full pool.
     li = [j for j in need if "linkedin.com" in (j.get("url") or "")]
     other = [j for j in need if j not in li]
     fetched = []
@@ -413,7 +413,7 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None) 
                 continue
             seen_urls.add(url)
         posted = row.get("date_posted", "") or ""
-        # job_url_direct = the "apply on company site" link JobSpy resolves —
+        # job_url_direct = the "apply on company site" link JobSpy resolves -
         # applying at the ATS source (vs the LinkedIn/Indeed relay) lands in the
         # same queue earlier and isn't deprioritized as an aggregated apply.
         direct = str(row.get("job_url_direct", "") or "")
@@ -445,7 +445,7 @@ def scrape_jobspy() -> list[dict]:
         active = _jobspy_active_queries()
         seen_urls: set[str] = set()
 
-        # LinkedIn + Indeed — the reliable pair (glassdoor = Cloudflare blocked)
+        # LinkedIn + Indeed - the reliable pair (glassdoor = Cloudflare blocked)
         for query in active:
             try:
                 df = scrape_jobs(
@@ -454,7 +454,7 @@ def scrape_jobspy() -> list[dict]:
                     location=LOCATION,
                     # Two-phase fetching. JobSpy returns TITLES ONLY here,
                     # which is fast (measured: 10 postings in ~1s, versus
-                    # 420-600s when it fetched every description inline —
+                    # 420-600s when it fetched every description inline -
                     # slow enough that it timed out and returned ZERO jobs on
                     # half of all runs).
                     #
@@ -470,7 +470,7 @@ def scrape_jobspy() -> list[dict]:
                     # 24h normally; 168h during the one-time catch-up window
                     hours_old=_max_age_hours(),
                     country_indeed="Germany",
-                    # WITHOUT this, LinkedIn rows carry only a short snippet —
+                    # WITHOUT this, LinkedIn rows carry only a short snippet -
                     # the requirements section is never downloaded at all. That
                     # is why "Around 4+ years" and German C1 demands sailed
                     # through every filter: the text simply was not there, and
@@ -514,7 +514,7 @@ def scrape_jobspy() -> list[dict]:
         return []
 
 
-# ── 2. Arbeitnow API (free JSON API — English-language jobs, Germany-focused) ──
+# -- 2. Arbeitnow API (free JSON API - English-language jobs, Germany-focused) --
 
 _ARBEITNOW_KEYWORDS = {
     "data scientist", "data science", "machine learning", "ml engineer",
@@ -582,11 +582,11 @@ def scrape_arbeitnow() -> list[dict]:
     return results
 
 
-# ── 3. Remotive API (free JSON API — remote jobs worldwide) ───────────────────
+# -- 3. Remotive API (free JSON API - remote jobs worldwide) -------------------
 
 def scrape_remotive() -> list[dict]:
     """
-    Remotive.com free API — remote-only jobs, international.
+    Remotive.com free API - remote-only jobs, international.
     API docs: https://remotive.com/api/remote-jobs
     """
     results = []
@@ -628,7 +628,7 @@ def scrape_remotive() -> list[dict]:
     return results
 
 
-# ── 3b. Hacker News "Who is hiring?" monthly thread ──────────────────────────
+# -- 3b. Hacker News "Who is hiring?" monthly thread --------------------------
 # Hidden gem: posted on the 1st of every month, ~600 hiring comments from
 # YC and YC-adjacent companies. Founder-direct applications, much smaller
 # applicant pools (10-30 typical) than LinkedIn. Free Algolia API.
@@ -662,7 +662,7 @@ _HN_ROLE_KEYWORDS = (
 def scrape_hn_who_is_hiring() -> list[dict]:
     """
     Scrape the latest 'Ask HN: Who is hiring?' monthly threads.
-    Returns relevant comments as job postings — small pool, often founder-direct.
+    Returns relevant comments as job postings - small pool, often founder-direct.
     """
     results = []
     try:
@@ -753,13 +753,13 @@ def scrape_hn_who_is_hiring() -> list[dict]:
     return results
 
 
-# ── 4. Greenhouse API ──────────────────────────────────────────────────────────
+# -- 4. Greenhouse API ----------------------------------------------------------
 
-# ── Germany-or-remote test shared by the Greenhouse and Lever scrapers ───────
+# -- Germany-or-remote test shared by the Greenhouse and Lever scrapers -------
 # Both used to keep a posting only when its location string contained
-# "germany", "deutschland" or "remote". A location written as a bare city —
+# "germany", "deutschland" or "remote". A location written as a bare city -
 # "Düsseldorf", "Köln", "Bielefeld", which is how most German employers write
-# it — matched nothing and was dropped inside the scraper, before any shared
+# it - matched nothing and was dropped inside the scraper, before any shared
 # filter saw it. Measured live on 2026-10-04: 698 German-city postings dropped
 # across the Greenhouse boards, trivago's entire Düsseldorf board among them,
 # on the very boards that were added FOR their Köln and Düsseldorf offices.
@@ -844,7 +844,7 @@ def scrape_greenhouse() -> list[dict]:
     return results
 
 
-# ── 5. Lever API ───────────────────────────────────────────────────────────────
+# -- 5. Lever API ---------------------------------------------------------------
 
 def _lever_board(slug: str) -> list[dict]:
     out = []
@@ -904,7 +904,7 @@ def scrape_lever() -> list[dict]:
     return results
 
 
-# ── 7. Arbeitsagentur (German Federal Employment Agency — official API) ────────
+# -- 7. Arbeitsagentur (German Federal Employment Agency - official API) --------
 
 # Werkstudent-only across the four tracks (AI / ML / Data Science / Data
 # Analyst). The Arbeitsagentur API is the official German employment agency,
@@ -934,7 +934,7 @@ ARBEITSAGENTUR_NATIONWIDE_QUERIES = [
 # Part-time pass (added 2026-09-03). arbeitszeit=tz is the API's own Teilzeit
 # filter, so this is a structured query rather than a keyword guess: every
 # hit is a part-time contract, and the tech keyword narrows it to IT work.
-# Radius-anchored on Bonn — a part-time role, unlike a remote one, has to be
+# Radius-anchored on Bonn - a part-time role, unlike a remote one, has to be
 # reachable.
 ARBEITSAGENTUR_PARTTIME_QUERIES = [
     "Data", "Informatik", "Softwareentwicklung", "Data Analyst",
@@ -984,7 +984,7 @@ ARBEITSAGENTUR_QUERIES = [
     "Pflichtpraktikum Informatik",
 ]
 
-# ── Arbeitsagentur enrichment (idea 3 + idea 1-lite) ─────────────────────────
+# -- Arbeitsagentur enrichment (idea 3 + idea 1-lite) -------------------------
 # The search endpoint returns only a snippet. The jobdetails endpoint returns
 # the FULL ad text, salary band, contract type, a staffing-agency flag, and
 # (sometimes) the employer's own application URL. Verified live 2026-07-02:
@@ -996,7 +996,7 @@ import re as _re_ba
 
 _BA_ENRICH_CAP = 350  # max jobdetails calls per run (each ~0.3s); raised 2026-09-07 for the nationwide pass
 
-# ── Arbeitsagentur endpoint configuration ────────────────────────────────────
+# -- Arbeitsagentur endpoint configuration ------------------------------------
 # SEARCH is v6-only (v4/v5 return 403 since ~2026-08-10). DETAILS are v4-only
 # (v5/v6 return 403). Both verified live before shipping this.
 _BA_SEARCH_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs"
@@ -1090,7 +1090,7 @@ def _ba_enrich(ref: str) -> dict:
             out["apply_url"] = str(ext)
         lo, hi = d.get("gehaltsspanneVon"), d.get("gehaltsspanneBis")
         if lo or hi:
-            out["salary"] = f"{lo or '?'}–{hi or '?'} € / Jahr"
+            out["salary"] = f"{lo or '?'}\u2013{hi or '?'} € / Jahr"
         if d.get("istArbeitnehmerueberlassung") or d.get("istArbeitnehmerUeberlassung"):
             out["is_staffing"] = True
         return out
@@ -1135,7 +1135,7 @@ def _ba_posted_at(item: dict) -> str:
 
 
 def scrape_arbeitsagentur() -> list[dict]:
-    """Bundesagentur für Arbeit job search — Germany's official federal job
+    """Bundesagentur für Arbeit job search - Germany's official federal job
     board, and the densest source of German Werkstudent ads.
 
     API VERSIONS ARE SPLIT, which is why this broke silently for five days:
@@ -1149,9 +1149,9 @@ def scrape_arbeitsagentur() -> list[dict]:
 
     Two passes, because Werkstudent work is either close enough to reach
     between lectures or fully remote:
-      1. radius pass  — wo=Bonn with umkreis, so the API does the distance
+      1. radius pass  - wo=Bonn with umkreis, so the API does the distance
          filtering server-side and returns entfernung (km) per hit
-      2. homeoffice pass — arbeitszeit=ho nationwide, catching DE-remote roles
+      2. homeoffice pass - arbeitszeit=ho nationwide, catching DE-remote roles
          whose office address is nowhere near Bonn
     """
     results: list[dict] = []
@@ -1260,11 +1260,11 @@ def scrape_arbeitsagentur() -> list[dict]:
     return results
 
 
-# ── 8. Workday API (used by BMW, Siemens, Bosch, Telekom, SAP, etc.) ──────────
+# -- 8. Workday API (used by BMW, Siemens, Bosch, Telekom, SAP, etc.) ----------
 
-# Companies using Workday — format: (tenant, site, display_name)
+# Companies using Workday - format: (tenant, site, display_name)
 WORKDAY_TENANTS = [
-    # ── Bonn commute belt (2026-08-15 regional sweep, verified live) ─────────
+    # -- Bonn commute belt (2026-08-15 regional sweep, verified live) ---------
     # Koblenz is 32-47 min from Bonn Hbf, and these two are the densest
     # Werkstudent employers found anywhere in the belt: a "Werkstudent" search
     # returned 14 and 8 open roles respectively, including Werkstudent
@@ -1340,7 +1340,7 @@ def scrape_workday() -> list[dict]:
     return results
 
 
-# ── 9. SAP SuccessFactors (large German companies) ────────────────────────────
+# -- 9. SAP SuccessFactors (large German companies) ----------------------------
 
 SF_COMPANIES = [
     ("volkswagen", "Volkswagen"),
@@ -1382,12 +1382,12 @@ def scrape_successfactors() -> list[dict]:
     return results
 
 
-# ── 10. Brave Search API (official, reliable web search) ─────────────────────
+# -- 10. Brave Search API (official, reliable web search) ---------------------
 
 # Per-run Brave query budget.
 #
 # DELIBERATE CHOICE: run the full query list. Coverage is worth more than the
-# money here — a missed posting cannot be recovered later, whereas the cost is
+# money here - a missed posting cannot be recovered later, whereas the cost is
 # a few euros a month.
 #
 # Cost model: the plan bills $5.00 per 1,000 requests and includes $5 of credit
@@ -1395,7 +1395,7 @@ def scrape_successfactors() -> list[dict]:
 # ~1,800 requests/month, about $9 of usage, so roughly $4/month after the
 # credit. The Brave dashboard's monthly spend override MUST be raised above $0
 # or the account returns HTTP 402 once the credit is spent and the source dies
-# silently for the rest of the month — which is exactly what happened.
+# silently for the rest of the month - which is exactly what happened.
 #
 # Lower this (or set BRAVE_MAX_QUERIES) to trade coverage for cost; the slice
 # rotates, so a smaller budget still reaches every query over several days.
@@ -1419,13 +1419,13 @@ def _brave_query_slice() -> list[str]:
 
 def scrape_brave_search() -> list[dict]:
     """
-    Brave Search API — official web search over company career pages.
+    Brave Search API - official web search over company career pages.
 
     This scraper reports WHY it returned nothing. The previous version read
     `data["web"]["results"]` without ever checking the HTTP status, so a 401
     (revoked key), a 429 (rate limit) and a quota-exhausted response all
     decoded as valid JSON with no "web" key and printed a cheerful
-    "[Brave] 0 jobs" — indistinguishable from a genuinely empty search. It
+    "[Brave] 0 jobs" - indistinguishable from a genuinely empty search. It
     silently returned 0 for two days before anyone noticed.
 
     Three distinct causes are now separated in the output:
@@ -1442,7 +1442,7 @@ def scrape_brave_search() -> list[dict]:
 
     results = []
     seen_urls: set[str] = set()
-    # Filter funnel — distinguishes "API gave us nothing" from "we dropped it all"
+    # Filter funnel - distinguishes "API gave us nothing" from "we dropped it all"
     raw_hits = queries_ok = 0
     drop_domain = drop_keyword = drop_dupe = 0
     http_errors: dict[int, int] = {}
@@ -1450,7 +1450,7 @@ def scrape_brave_search() -> list[dict]:
 
     # Stay inside the free tier. 29 queries x 2 scheduled runs/day is 1,740 a
     # month against a 2,000 allowance, which leaves no room for manual runs or
-    # local testing — and it duly ran out. A smaller per-run budget, rotated so
+    # local testing - and it duly ran out. A smaller per-run budget, rotated so
     # every query still gets used across runs, keeps total usage well under the
     # cap while losing almost nothing: this source yields ~15 jobs out of ~8,900.
     queries = _brave_query_slice()
@@ -1482,7 +1482,7 @@ def scrape_brave_search() -> list[dict]:
                     continue
                 break
 
-            # Record remaining quota once — this is what makes a future
+            # Record remaining quota once - this is what makes a future
             # quota exhaustion diagnosable from the log alone.
             if qi == 0:
                 remaining = (r.headers.get("X-RateLimit-Remaining")
@@ -1494,7 +1494,7 @@ def scrape_brave_search() -> list[dict]:
             # making 28 more doomed calls.
             if r.status_code in (401, 403):
                 detail = (r.text or "")[:160].replace("\n", " ")
-                print(f"  [Brave] AUTH FAILED (HTTP {r.status_code}) — key rejected. "
+                print(f"  [Brave] AUTH FAILED (HTTP {r.status_code}) \u2014 key rejected. "
                       f"Regenerate BRAVE_API_KEY at api-dashboard.search.brave.com "
                       f"and update the repo secret. Detail: {detail}")
                 return []
@@ -1557,7 +1557,7 @@ def scrape_brave_search() -> list[dict]:
                 full_desc = _fetch_full_description(url)
                 description = full_desc if len(full_desc) > len(snippet) else snippet
 
-                # Don't blindly tag as "Germany" — extract the actual location
+                # Don't blindly tag as "Germany" - extract the actual location
                 # from the description so the location filter can do its job.
                 location_hint = _extract_location_hint(description) or _extract_location_hint(snippet)
 
@@ -1580,28 +1580,28 @@ def scrape_brave_search() -> list[dict]:
     if http_errors:
         detail = ", ".join(f"HTTP {code} x{n}" for code, n in sorted(http_errors.items()))
         print(f"  [Brave] request failures: {detail}"
-              + (" — 429 means the rate limit was hit" if 429 in http_errors else ""))
+              + (" \u2014 429 means the rate limit was hit" if 429 in http_errors else ""))
     if raw_hits and not results:
         print(f"  [Brave] all {raw_hits} results were filtered out "
               f"(job-board domain: {drop_domain}, no job keyword: {drop_keyword}, "
-              f"duplicate: {drop_dupe}) — the API is healthy, our filters removed everything")
+              f"duplicate: {drop_dupe}) \u2014 the API is healthy, our filters removed everything")
     elif queries_ok and not raw_hits:
         print("  [Brave] API healthy but returned no web results at all "
               "(freshness=past week may be too narrow)")
     return results
 
 
-# ── 11. Web search (DuckDuckGo — finds jobs on ANY company website) ───────────
+# -- 11. Web search (DuckDuckGo - finds jobs on ANY company website) -----------
 
-# Domains already covered by other scrapers — skip to avoid duplicates
+# Domains already covered by other scrapers - skip to avoid duplicates
 _SKIP_DOMAINS = {
     "linkedin.com", "indeed.com", "glassdoor.com", "stepstone.de",
     "xing.com", "monster.de", "karriere.at", "jobs.ch", "jobware.de",
     "greenhouse.io", "lever.co", "workday.com", "smartrecruiters.com",
     "recruitee.com", "bamboohr.com", "join.com", "jobteaser.com",
     # Aggregators-of-aggregators and listing portals. A search hit on
-    # these is a directory PAGE, not a posting — the 2026-08-16 digest
-    # carried "Praktikum bei Telekom AG — freie Praktikumsplätze" (a
+    # these is a directory PAGE, not a posting - the 2026-08-16 digest
+    # carried "Praktikum bei Telekom AG - freie Praktikumsplätze" (a
     # Praktikumsstellen index page) at score 72, and a Jobgether remint
     # of a SIXT Portugal role at 78. Real postings on real career pages
     # still come through; these hosts never carry one.
@@ -1666,12 +1666,12 @@ def _extract_location_hint(text: str) -> str:
     treats empty as 'pass through to the scorer'.
     """
     t = text.lower()[:3000]
-    # German cities first — expanded list per recall fix
+    # German cities first - expanded list per recall fix
     GERMAN_CITIES = (
         "berlin", "munich", "münchen", "muenchen", "hamburg", "frankfurt",
         "köln", "cologne", "düsseldorf", "duesseldorf", "stuttgart", "leipzig",
         "bochum", "dortmund", "essen", "bonn", "germany", "deutschland",
-        # Newly added cities — expanded recall
+        # Newly added cities - expanded recall
         "heidelberg", "nürnberg", "nuernberg", "nuremberg",
         "mannheim", "karlsruhe", "aachen", "bremen",
         "hannover", "hanover", "mainz", "wiesbaden",
@@ -1683,7 +1683,7 @@ def _extract_location_hint(text: str) -> str:
     for city in GERMAN_CITIES:
         if city in t:
             return city.title()
-    # Other places — surface them so the location filter can drop accordingly
+    # Other places - surface them so the location filter can drop accordingly
     for place in ("london", "paris", "amsterdam", "madrid", "warsaw", "milan",
                   "new york", "san francisco", "boston", "toronto",
                   "sydney", "dubai", "singapore", "mumbai", "bangalore",
@@ -1823,7 +1823,7 @@ def scrape_web_search() -> list[dict]:
     return results
 
 
-# ── 12. Amazon Jobs API (custom public JSON) ─────────────────────────────────
+# -- 12. Amazon Jobs API (custom public JSON) ---------------------------------
 # Amazon is the largest single tech employer in Germany. Their own API is
 # public, no auth, returns JSON. We run multiple queries because their search
 # only matches the query string, not a category.
@@ -1897,9 +1897,9 @@ def scrape_amazon() -> list[dict]:
     return results
 
 
-# ── 13. Personio XML feeds ───────────────────────────────────────────────────
+# -- 13. Personio XML feeds ---------------------------------------------------
 # Personio is the German Mittelstand's favourite HR system. Each company has
-# a public XML feed at {slug}.jobs.personio.de/xml — no auth, full descriptions.
+# a public XML feed at {slug}.jobs.personio.de/xml - no auth, full descriptions.
 
 def _personio_text(el, tag):
     """Find a child tag by name and return its text, or empty string."""
@@ -1987,13 +1987,13 @@ def scrape_personio() -> list[dict]:
     return results
 
 
-# ── 14. SmartRecruiters API (enterprise ATS) ─────────────────────────────────
+# -- 14. SmartRecruiters API (enterprise ATS) ---------------------------------
 # Used by Bosch, Continental, Visa, Roland Berger, and many other large
 # industrial/consultancy employers. Public API, country pre-filter, no auth.
 
 _SR_API = "https://api.smartrecruiters.com/v1/companies/{slug}/postings"
 # Only run the SR scraper if a relevant role title or function. Postings list
-# does NOT include the full description — that requires per-posting fetch.
+# does NOT include the full description - that requires per-posting fetch.
 # We keep description as the company industry + function as a stub; main.py
 # filters and Claude will see title + this stub.
 
@@ -2095,7 +2095,7 @@ def scrape_smartrecruiters() -> list[dict]:
 
                         # Listing metadata only. Useful to the employment-form
                         # filter ("Employment type: Part-time"), never to the
-                        # language test — hence the _stub flag below.
+                        # language test - hence the _stub flag below.
                         industry = (p.get("industry") or {}).get("label", "")
                         function = (p.get("function") or {}).get("label", "")
                         department = (p.get("department") or {}).get("label", "")
@@ -2134,11 +2134,11 @@ def scrape_smartrecruiters() -> list[dict]:
     return results
 
 
-# ── 15. Workday CXS API (public POST endpoint) ───────────────────────────────
+# -- 15. Workday CXS API (public POST endpoint) -------------------------------
 # Each Workday-using company exposes a hosted career site at
 # {tenant}.wd{N}.myworkdayjobs.com/{site}. The page is backed by the CXS API:
-#   POST  https://{host}/wday/cxs/{tenant}/{site}/jobs        — list jobs
-#   GET   https://{host}/wday/cxs/{tenant}/{site}/job/{path}  — job detail
+#   POST  https://{host}/wday/cxs/{tenant}/{site}/jobs        - list jobs
+#   GET   https://{host}/wday/cxs/{tenant}/{site}/job/{path}  - job detail
 # Public, no auth. Tenant slug + Workday region (wd1, wd3, wd5, wd12) + site
 # name vary per company and must be discovered manually (browser network tab).
 # We pre-filter at title level to AI/ML/data-relevant roles before fetching
@@ -2162,7 +2162,7 @@ _WD_AI_KEYWORDS = (
 # Search strings run on every tenant that has no explicit one. Before this,
 # 15 global tenants (NVIDIA, Salesforce, Intel, Philips, Sanofi, ...) were
 # walked 200 postings deep in Workday's default order and the first 30 titles
-# matching ANY keyword above were kept — "Senior Software Engineer" filled the
+# matching ANY keyword above were kept - "Senior Software Engineer" filled the
 # slots and a German working-student role was reached only by luck.
 _WD_STUDENT_SEARCHES = ("working student", "intern", "werkstudent")
 # Regular full-time, entry level (2026-10-14).
@@ -2246,7 +2246,7 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
     """
     Second-stage GET to pull the full job description.
     externalPath from the listing already starts with '/job/...', so the
-    detail URL is just /wday/cxs/{tenant}/{site}{externalPath} — no extra
+    detail URL is just /wday/cxs/{tenant}/{site}{externalPath} - no extra
     /job/ prefix, that's how Workday wired it.
     """
     if not external_path:
@@ -2290,12 +2290,12 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
     host = f"{tenant}.{region}.myworkdayjobs.com"
     list_url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
 
-    # Phase 1 — LIST. Collect candidates across every pass before spending a
+    # Phase 1 - LIST. Collect candidates across every pass before spending a
     # single detail request, so the detail budget can go to the best ones.
     #
     # The Germany country facet is tried on EVERY tenant (2026-10-04; it used
     # to be opt-in). Verified live: Sanofi and Adobe accept it (49 and 7
-    # German postings — the whole German list fits in one walk), NVIDIA,
+    # German postings - the whole German list fits in one walk), NVIDIA,
     # Salesforce, Intel and Philips answer HTTP 400, which falls back to the
     # plain request, as does a facet that matches nothing.
     #
@@ -2365,7 +2365,7 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
     except Exception as e:
         print(f"  [WD-CXS/{tenant}] failed: {e}")
 
-    # Phase 2 — RANK. Base / all: student-form titles first, then junior ones,
+    # Phase 2 - RANK. Base / all: student-form titles first, then junior ones,
     # then the rest. Full-time pass: tech titles first (the title gate in
     # main._fulltime_title_ok drops the others anyway), junior before not.
     # Within each tier, postings known to be in Germany (facet hit or a German
@@ -2392,7 +2392,7 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
             else _WD_KEEP_FULLTIME if mode == "fulltime" else _WD_KEEP_PER_TENANT)
     picked = sorted(cands.values(), key=_rank)[:keep]
 
-    # Phase 3 — DETAIL. One GET per kept posting.
+    # Phase 3 - DETAIL. One GET per kept posting.
     for n, c in enumerate(picked):
         if time.time() >= detail_stop:
             _wd_count("details_skipped", len(picked) - n)    # the lowest-ranked ones
@@ -2472,7 +2472,7 @@ def scrape_workday_cxs_fulltime() -> list[dict]:
     return results
 
 
-# ── 16. Adzuna API (aggregator) ──────────────────────────────────────────────
+# -- 16. Adzuna API (aggregator) ----------------------------------------------
 # Adzuna aggregates German job postings from company career pages that are
 # otherwise impossible to scrape directly (Mercedes-Benz, BMW, VW, Audi,
 # Porsche, Allianz, Deutsche Bank, Bayer, BASF, Henkel, P&G, Unilever, etc.).
@@ -2524,7 +2524,7 @@ def scrape_adzuna() -> list[dict]:
     app_id = os.environ.get("ADZUNA_APP_ID", "").strip()
     app_key = os.environ.get("ADZUNA_APP_KEY", "").strip()
     if not app_id or not app_key:
-        print("  [Adzuna] ADZUNA_APP_ID / ADZUNA_APP_KEY not set — skipping. "
+        print("  [Adzuna] ADZUNA_APP_ID / ADZUNA_APP_KEY not set \u2014 skipping. "
               "Sign up at developer.adzuna.com (free) to enable.")
         return []
 
@@ -2555,7 +2555,7 @@ def scrape_adzuna() -> list[dict]:
             if r.status_code != 200:
                 # Free tier rate limit hit, or auth error
                 if r.status_code == 401:
-                    print(f"  [Adzuna] 401 unauthorized — check APP_ID/APP_KEY")
+                    print(f"  [Adzuna] 401 unauthorized \u2014 check APP_ID/APP_KEY")
                     return []
                 if r.status_code == 429:
                     print(f"  [Adzuna] 429 rate limit hit on '{query}', stopping early")
@@ -2589,7 +2589,7 @@ def scrape_adzuna() -> list[dict]:
                     description=description,
                     posted_at=posted,
                 ))
-            time.sleep(0.5)  # be polite — free tier
+            time.sleep(0.5)  # be polite - free tier
         except Exception as e:
             print(f"  [Adzuna] query '{query}' failed: {e}")
             continue
@@ -2598,7 +2598,7 @@ def scrape_adzuna() -> list[dict]:
     return results
 
 
-# ── 17. Ashby ATS (used by frontier AI startups: Perplexity, Deepgram, etc.) ─
+# -- 17. Ashby ATS (used by frontier AI startups: Perplexity, Deepgram, etc.) -
 # Public, no auth: GET https://api.ashbyhq.com/posting-api/job-board/{slug}
 # Response: top-level "jobs" array. Per-slug try/except so one bad slug
 # never aborts the run.
@@ -2611,7 +2611,7 @@ def scrape_ashby() -> list[dict]:
     """
     results: list[dict] = []
     if not ASHBY_SLUGS:
-        print("  [Ashby] no slugs configured — skipping")
+        print("  [Ashby] no slugs configured \u2014 skipping")
         return results
 
     for slug in ASHBY_SLUGS:
@@ -2635,13 +2635,13 @@ def scrape_ashby() -> list[dict]:
                 if not title:
                     continue
 
-                # Location signals — Ashby exposes location, isRemote, workplaceType
+                # Location signals - Ashby exposes location, isRemote, workplaceType
                 location = jp.get("location") or ""
                 is_remote = jp.get("isRemote") or jp.get("workplaceType") == "Remote"
                 if is_remote and "remote" not in location.lower():
                     location = (location + " (Remote)").strip()
 
-                # Same coarse filter as Greenhouse — keep DE / Deutschland /
+                # Same coarse filter as Greenhouse - keep DE / Deutschland /
                 # Remote / Unknown. Downstream filter in main.py decides finally.
                 loc_low = location.lower()
                 if loc_low and not any(k in loc_low for k in (
@@ -2690,7 +2690,7 @@ def scrape_ashby() -> list[dict]:
     return results
 
 
-# ── 18. Recruitee ATS (EU startups) ──────────────────────────────────────────
+# -- 18. Recruitee ATS (EU startups) ------------------------------------------
 # Public, no auth: GET https://{slug}.recruitee.com/api/offers
 
 def scrape_recruitee() -> list[dict]:
@@ -2700,7 +2700,7 @@ def scrape_recruitee() -> list[dict]:
     """
     results: list[dict] = []
     if not RECRUITEE_SLUGS:
-        print("  [Recruitee] no slugs configured — skipping")
+        print("  [Recruitee] no slugs configured \u2014 skipping")
         return results
 
     for slug in RECRUITEE_SLUGS:
@@ -2763,7 +2763,7 @@ def scrape_recruitee() -> list[dict]:
     return results
 
 
-# ── 19. germantechjobs.de RSS ────────────────────────────────────────────────
+# -- 19. germantechjobs.de RSS ------------------------------------------------
 # Public, no auth: https://www.germantechjobs.de/rss
 # Big German tech-jobs aggregator. Each <item> title is formatted as
 # "{role} @ {company} [{salary range}]". We split on " @ " to lift the
@@ -2804,7 +2804,7 @@ def scrape_germantechjobs() -> list[dict]:
             return results
         soup = BeautifulSoup(r.text, "xml")
         items = soup.find_all("item")
-        # Cap at 300 items (most recent first) — keeps scrape time reasonable
+        # Cap at 300 items (most recent first) - keeps scrape time reasonable
         for item in items[:300]:
             raw_title = (item.find("title").text if item.find("title") else "").strip()
             title, company = _parse_gtj_title(raw_title)
@@ -2834,7 +2834,7 @@ def scrape_germantechjobs() -> list[dict]:
     return results
 
 
-# ── 19b. Remote-EU boards (WorkingNomads + WeWorkRemotely) ───────────────────
+# -- 19b. Remote-EU boards (WorkingNomads + WeWorkRemotely) -------------------
 # Two free, no-auth remote-job feeds discovered by mining peer projects
 # (career-ops / EuroJobHunter). They're remote-focused, so the downstream
 # location filter keeps only Germany/EU-remote-eligible roles and drops the
@@ -2843,7 +2843,7 @@ def scrape_germantechjobs() -> list[dict]:
 def scrape_remote_eu_boards() -> list[dict]:
     results: list[dict] = []
 
-    # WorkingNomads — clean JSON list
+    # WorkingNomads - clean JSON list
     try:
         r = requests.get("https://www.workingnomads.com/api/exposed_jobs/",
                          headers=HEADERS, timeout=15)
@@ -2866,7 +2866,7 @@ def scrape_remote_eu_boards() -> list[dict]:
     except Exception as e:
         print(f"  [WorkingNomads] failed: {e}")
 
-    # WeWorkRemotely — programming + data RSS categories
+    # WeWorkRemotely - programming + data RSS categories
     for cat in ("remote-programming-jobs", "remote-data-jobs"):
         try:
             r = requests.get(f"https://weworkremotely.com/categories/{cat}.rss",
@@ -2902,11 +2902,11 @@ def scrape_remote_eu_boards() -> list[dict]:
     return results
 
 
-# ── 20. Generic company career-page scraper (RESTORED) ───────────────────────
+# -- 20. Generic company career-page scraper (RESTORED) -----------------------
 # Many large German companies use JavaScript-rendered SPAs, so this scraper
 # often returns navigation links rather than real job titles. That is expected
 # and accepted under the "attempt everything, tolerate errors" policy. We do
-# not pre-exclude any URL here — every page is attempted on every run, errors
+# not pre-exclude any URL here - every page is attempted on every run, errors
 # are swallowed with a one-line status, and the rest of the pipeline continues.
 
 def scrape_company_page(company_cfg: dict[str, Any]) -> list[dict]:
@@ -2951,7 +2951,7 @@ def scrape_company_pages() -> list[dict]:
     return results
 
 
-# ── 21. berlinstartupjobs.com RSS (best-effort) ──────────────────────────────
+# -- 21. berlinstartupjobs.com RSS (best-effort) ------------------------------
 # Probed earlier and the feed was intermittently behind Cloudflare 403. Per
 # "attempt everything, tolerate errors" we still try the RSS every run and
 # no-op cleanly when the feed isn't reachable.
@@ -2998,7 +2998,7 @@ def scrape_berlinstartupjobs() -> list[dict]:
     return results
 
 
-# ── 22. join.com (best-effort, no public listing API found) ─────────────────
+# -- 22. join.com (best-effort, no public listing API found) -----------------
 # Probed earlier and every endpoint variant returned 404 or 401. Per
 # "attempt everything, tolerate errors" we still try a few candidate URLs
 # every run, accept that none may respond, and print a one-line status.
@@ -3031,7 +3031,7 @@ def scrape_join() -> list[dict]:
                     data = r.json()
                 except Exception:
                     continue
-                # Try common shapes — none confirmed working
+                # Try common shapes - none confirmed working
                 items = (
                     data.get("jobs") if isinstance(data, dict) else None
                     or (data.get("results") if isinstance(data, dict) else None)
@@ -3085,12 +3085,12 @@ def scrape_join() -> list[dict]:
         except Exception as e:
             # try the next candidate URL; don't abort
             continue
-    print(f"  [Join] no public endpoint responded — skipping (will retry next run)")
+    print(f"  [Join] no public endpoint responded \u2014 skipping (will retry next run)")
     return results
 
 
-# ── 23. XING jobs (Germany's recruiter-native network) ───────────────────────
-# XING carries German SME / Mittelstand roles that never reach LinkedIn — the
+# -- 23. XING jobs (Germany's recruiter-native network) -----------------------
+# XING carries German SME / Mittelstand roles that never reach LinkedIn - the
 # channel new grads most often credit for interviews. Public GraphQL endpoint
 # at xing-one/api; the operation/field shape below was reverse-engineered live
 # (introspection is disabled, so it was derived from the endpoint's own
@@ -3268,7 +3268,7 @@ def scrape_xing() -> list[dict]:
     return results
 
 
-# ── Shared: JSON-LD JobPosting extractor ─────────────────────────────────────
+# -- Shared: JSON-LD JobPosting extractor -------------------------------------
 # Many German boards embed a schema.org JobPosting block in each posting page.
 # Pages often carry several ld+json blocks (BreadcrumbList, ItemList, ...), so
 # the parser must select @type == JobPosting specifically.
@@ -3298,7 +3298,7 @@ def _jsonld_location(d: dict) -> str:
     return ", ".join(cities[:3]) or "Germany"
 
 
-# ── Absolventa (D2) — German graduate/trainee board via sitemap + JSON-LD ────
+# -- Absolventa (D2) - German graduate/trainee board via sitemap + JSON-LD ----
 # Germany's dedicated graduate-entry board: trainee programmes and
 # Direkteinstieg roles that ATS APIs never surface. sitemap-stellen.xml lists
 # ~9,100 posting URLs (verified live); slugs are descriptive, so a vocabulary
@@ -3389,7 +3389,7 @@ def scrape_absolventa() -> list[dict]:
         return []
 
 
-# ── get-in-IT (D1) — German entry-level IT board via sitemap + __NEXT_DATA__ ─
+# -- get-in-IT (D1) - German entry-level IT board via sitemap + __NEXT_DATA__ -
 # A board of junior/graduate IT roles in Germany, largely SMEs without a
 # Greenhouse/Personio presence. Landing-page pagination is broken (verified:
 # ?page=2 returns page 1's jobs), so the sitemap's ~1,200 individual posting
@@ -3458,7 +3458,7 @@ def scrape_getinit() -> list[dict]:
         return []
 
 
-# ── hiring.cafe (G1) — one aggregated feed over 40+ ATS platforms ────────────
+# -- hiring.cafe (G1) - one aggregated feed over 40+ ATS platforms ------------
 # hiring.cafe indexes ATS boards directly, including platforms this repo has
 # no client for (Teamtailor, iCIMS, Avature, Dover, OracleCloud...). Its
 # Next.js data route serves the search server-side filtered by country.
@@ -3488,7 +3488,7 @@ def scrape_hiringcafe() -> list[dict]:
         home = requests.get("https://hiringcafe.com", headers=HEADERS, timeout=20)
         m = _HIRINGCAFE_BUILDID_RE.search(home.text)
         if not m:
-            print("  [HiringCafe] buildId not found on homepage — site redeployed with a new layout?")
+            print("  [HiringCafe] buildId not found on homepage \u2014 site redeployed with a new layout?")
             return []
         build_id = m.group(1)
 
@@ -3546,7 +3546,7 @@ def scrape_hiringcafe() -> list[dict]:
     return results
 
 
-# ── LinkedIn guest API (direct, server-side filtered) ─────────────────────────
+# -- LinkedIn guest API (direct, server-side filtered) -------------------------
 # LinkedIn serves logged-out job search through a public guest endpoint that
 # accepts filters JobSpy does not expose, crucially f_TPR (time range).
 # LinkedIn rate-limits at roughly 10 pages (~250 results) per IP, so the
@@ -3597,8 +3597,8 @@ def scrape_linkedin_guest() -> list[dict]:
     # the old query-by-query loop spent that entire budget on the FIRST query:
     # a real run 429'd on query 2 of 7 and the last five queries never ran at
     # all, so "werkstudent informatik" and the English phrasings contributed
-    # nothing. Pages are therefore interleaved — page 1 of every query, then
-    # page 2 of every query — so a throttle costs depth on every query equally
+    # nothing. Pages are therefore interleaved - page 1 of every query, then
+    # page 2 of every query - so a throttle costs depth on every query equally
     # instead of erasing most of them. Page 1 is also where the freshest and
     # most relevant hits sit, so shallow-and-wide beats deep-and-narrow here.
     exhausted: set[str] = set()
@@ -3624,7 +3624,7 @@ def scrape_linkedin_guest() -> list[dict]:
                 if r.status_code == 429:
                     # Per-IP budget exhausted. Keep what we have; pushing on
                     # just makes LinkedIn block harder.
-                    print(f"  [LinkedIn-Guest] 429 at '{query}' page {page + 1} — "
+                    print(f"  [LinkedIn-Guest] 429 at '{query}' page {page + 1} \u2014 "
                           f"stopping with {len(results)} jobs from "
                           f"{len(_LI_GUEST_QUERIES) - len(exhausted)} live queries")
                     exhausted.update(_LI_GUEST_QUERIES)
@@ -3674,7 +3674,7 @@ def scrape_linkedin_guest() -> list[dict]:
     return results
 
 
-# ── Stellenwerk — the university job boards of Bonn, Köln and Düsseldorf ─────
+# -- Stellenwerk - the university job boards of Bonn, Köln and Düsseldorf -----
 # The single best-matched source in the pipeline: stellenwerk.de/bonn-rhein-sieg
 # is the joint board of the University of Bonn and Hochschule Bonn-Rhein-Sieg,
 # i.e. the board the owner's own university runs for its own students. Werkstudent
@@ -3688,11 +3688,11 @@ def scrape_linkedin_guest() -> list[dict]:
 _STELLENWERK_SITEMAP = "https://www.stellenwerk.de/sitemap.xml"
 # Germany-wide since 2026-09-07: every city board. Measured that day on the
 # sitemap, slug-matched student tech postings: Hamburg 21, Stuttgart 13,
-# Düsseldorf 9, Köln 8, Erlangen-Nürnberg 8, Berlin 6 — and Bonn's own board
+# Düsseldorf 9, Köln 8, Erlangen-Nürnberg 8, Berlin 6 - and Bonn's own board
 # 1. The belt boards stay listed as the documented origin; the URL pattern
 # accepts any board, and the location filter runs downstream.
 _STELLENWERK_CITIES = ("bonn-rhein-sieg", "koeln", "duesseldorf")
-# /{city}/{slug}-{YYMMDD}-{id} — the trailing id is the dedup key, because
+# /{city}/{slug}-{YYMMDD}-{id} - the trailing id is the dedup key, because
 # roughly a quarter of postings are cross-listed under several cities.
 _STELLENWERK_URL_RE = re.compile(
     r"stellenwerk\.de/(?:[a-z0-9\-]+)/[^/]+-(\d{6})-(\d+)$"
@@ -3776,18 +3776,18 @@ _STELLENWERK_VOCAB = re.compile(
 )
 
 
-# ── Fraunhofer + DLR (SAP SuccessFactors RMK) ────────────────────────────────
+# -- Fraunhofer + DLR (SAP SuccessFactors RMK) --------------------------------
 # Two of the strongest AI/ML research employers inside the commute belt run the
 # SAME job platform, so one scraper serves both:
-#   * Fraunhofer IAIS / FKIE — Sankt Augustin and Wachtberg, both ~20-30 min
+#   * Fraunhofer IAIS / FKIE - Sankt Augustin and Wachtberg, both ~20-30 min
 #     from Bonn, and among the largest AI research institutes in Germany
-#   * DLR — Köln-Porz and Bonn
+#   * DLR - Köln-Porz and Bonn
 # Their studentische-Hilfskraft roles ("Agentic AI", "Robotics and Autonomous
 # Systems") are precisely on target and are not reliably syndicated elsewhere.
 #
 # The city AND postal code sit in the URL path, so regional filtering costs no
 # extra requests. There is NO JSON-LD on these pages (checked), and the CSS
-# classes are unreliable — .jobTitle resolves to the "Jetzt bewerben" button —
+# classes are unreliable - .jobTitle resolves to the "Jetzt bewerben" button -
 # so the og:title and meta-description tags are the trustworthy fields.
 _RMK_SITES = (
     ("https://jobs.fraunhofer.de", "Fraunhofer"),
@@ -3824,8 +3824,8 @@ _RMK_CAP = 120      # 40 -> 80 on 2026-09-07 (Germany-wide), 120 on 2026-10-04
 # Other NRW institute cities. With _RMK_REGION (the Bonn belt) these are
 # sorted to the front before the cap is applied: when the belt pre-filter was
 # removed on 2026-09-07 the cap simply took the first 80 student URLs in
-# sitemap order, so Sankt Augustin and Wachtberg — the reason this source
-# exists — were no longer guaranteed a slot.
+# sitemap order, so Sankt Augustin and Wachtberg - the reason this source
+# exists - were no longer guaranteed a slot.
 _RMK_NRW = re.compile(
     r"/job/(Aachen|Dortmund|Duisburg|Oberhausen|Paderborn|Schmallenberg|Lemgo"
     r"|Essen|Bochum|M%C3%BCnster|Muenster|Bielefeld|J%C3%BClich|Juelich"
@@ -3875,7 +3875,7 @@ def _rmk_page(url: str, source: str) -> list[dict]:
 def _rmk_pick(urls: list[str]) -> list[str]:
     """Student-role URLs, home region first, capped.
 
-    Ordering only — nothing is filtered by region. Stable sort: Bonn belt,
+    Ordering only - nothing is filtered by region. Stable sort: Bonn belt,
     then the rest of NRW, then everything else in sitemap order, so the cap
     can only ever cut the last group."""
     student = [u for u in urls if _RMK_STUDENT.search(u)]
@@ -3906,7 +3906,7 @@ def scrape_research_institutes() -> list[dict]:
     return results
 
 
-# ── BWI GmbH — the Bundeswehr's IT company, headquartered in Bonn ────────────
+# -- BWI GmbH - the Bundeswehr's IT company, headquartered in Bonn ------------
 # The densest single Werkstudent employer found in the Bonn region: 16 open
 # student roles at one company, in Bonn, Meckenheim and Koblenz, covering
 # DevClient management, IT project work, testing and the Cyber Innovation Hub.
@@ -3967,7 +3967,7 @@ def scrape_bwi() -> list[dict]:
         subs = [s.replace("&amp;", "&") for s in re.findall(r"<loc>(.*?)</loc>", idx.text)]
         jobs_sitemap = next((s for s in subs if "sitemap=jobs" in s), "")
         if not jobs_sitemap:
-            print("  [BWI] no jobs sitemap in the index — site restructured?")
+            print("  [BWI] no jobs sitemap in the index \u2014 site restructured?")
             return []
 
         sm = requests.get(jobs_sitemap, headers=HEADERS, timeout=25)
@@ -3981,7 +3981,7 @@ def scrape_bwi() -> list[dict]:
         return []
 
 
-# ── igus GmbH — Köln, custom JSON API ────────────────────────────────────────
+# -- igus GmbH - Köln, custom JSON API ----------------------------------------
 # One of the best single finds of the regional sweep: karriere.igus.de/api/jobs
 # is clean JSON with the FULL ad text inline (introduction/tasks/profile/offer),
 # so zero per-job fetches. Live tonight: "Werkstudent AI & Workflow Automation",
@@ -3998,7 +3998,7 @@ def scrape_igus() -> list[dict]:
             return []
         payload = r.json()
         # The API wraps the list: {"data": [...]}. Iterating the dict
-        # instead of the list silently yields zero — the exact failure
+        # instead of the list silently yields zero - the exact failure
         # class this repo keeps finding, caught here in the live test.
         rows = payload.get("data", []) if isinstance(payload, dict) else payload
         out = []
@@ -4029,7 +4029,7 @@ def scrape_igus() -> list[dict]:
         return []
 
 
-# ── REWE Group — Köln HQ, custom JSON search API ─────────────────────────────
+# -- REWE Group - Köln HQ, custom JSON search API -----------------------------
 # jobs.rewe-group.com/api/job-search honours term+limit and returns clean JSON
 # (verified live). REWE and rewe_digital post Werkstudent data/engineering
 # roles in Köln and Hürth continuously.
@@ -4072,13 +4072,13 @@ def scrape_rewe() -> list[dict]:
     return out
 
 
-# ── d.vinci cluster — one scraper, four Köln employers ───────────────────────
+# -- d.vinci cluster - one scraper, four Köln employers -----------------------
 # Generali Deutschland, RheinEnergie, DER Touristik and REWE digital all run
 # d.vinci: GET https://{slug}.dvinci-hr.com/de/jobs with Accept:
 # application/json returns the whole board as JSON (verified live; Generali
 # alone carries 21 student roles right now, incl. Controlling/Data Quality).
 # The payload has no location field, so each tenant's home city is the
-# default — all four are Köln companies, which is the reason they are here.
+# default - all four are Köln companies, which is the reason they are here.
 _DVINCI_TENANTS = (
     ("generali-gruppe", "Generali Deutschland", "Köln"),
     ("rheinenergie", "RheinEnergie", "Köln"),
@@ -4086,7 +4086,7 @@ _DVINCI_TENANTS = (
     ("rewe-digital", "REWE digital", "Köln"),
     # A value containing a dot is a full host, not a *.dvinci-hr.com slug.
     ("jobs.dzne.de", "DZNE", "Bonn"),          # neuroscience research, English ads
-    ("inverto", "INVERTO", "Köln"),            # BCG procurement consultancy — English "Consulting Intern - Digital & AI"
+    ("inverto", "INVERTO", "Köln"),            # BCG procurement consultancy - English "Consulting Intern - Digital & AI"
 )
 _DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische"
                              r"|student (research )?assistant|hilfskraft|working student",
@@ -4106,7 +4106,7 @@ def scrape_dvinci() -> list[dict]:
                                       "Accept": "application/json"},
                              timeout=25)
             if r.status_code != 200 or "json" not in r.headers.get("content-type", ""):
-                print(f"  [d.vinci] {slug} HTTP {r.status_code} — not JSON")
+                print(f"  [d.vinci] {slug} HTTP {r.status_code} \u2014 not JSON")
                 continue
             n = 0
             for it in r.json() or []:
@@ -4130,7 +4130,7 @@ def scrape_dvinci() -> list[dict]:
     return out
 
 
-# ── Universität Bonn — the owner's own university's HiWi page ────────────────
+# -- Universität Bonn - the owner's own university's HiWi page ----------------
 # A single server-rendered page listing SHK/WHF (studentische Hilfskraft)
 # openings as PDF links. Tiny volume, zero overlap with anything else, and it
 # is literally his employer-to-be. robots.txt allows it with Crawl-delay: 1,
@@ -4173,37 +4173,37 @@ def scrape_unibonn() -> list[dict]:
         return []
 
 
-# ── SuccessFactors Career Site Builder — Zurich, Bayer, DEUTZ ────────────────
+# -- SuccessFactors Career Site Builder - Zurich, Bayer, DEUTZ ----------------
 # The replacement for the dead career4.successfactors.com XML API: CSB serves
-# a server-rendered search page with a.jobTitle-link anchors (verified live —
+# a server-rendered search page with a.jobTitle-link anchors (verified live -
 # Zurich has an open-ended "Initiativstelle Werkstudent" in Köln, DEUTZ runs
 # Werkstudent Frontend Development in Köln). TÜV Rheinland's search returned
 # zero and is deliberately not listed. Hrefs are pre-filtered to the commute
 # belt via _RMK_REGION, and detail pages are parsed by the same og:title/meta
-# routine the Fraunhofer/DLR scraper uses — same product family, same markup.
+# routine the Fraunhofer/DLR scraper uses - same product family, same markup.
 _CSB_SITES = (
     ("https://www.careers.zurich.com", "Zurich"),
     ("https://jobs.bayer.com", "Bayer"),
     ("https://career.deutz.com", "DEUTZ"),
     # Sector sweep 2026-09 (verified live via the RSS endpoint):
-    ("https://job.hdi.group", "HDI"),               # Köln — 20 Werkstudent in feed
-    ("https://karriere.nrwbank.de", "NRWBANK"),     # Düsseldorf — Werkstudent IT Kapitalmarkt
+    ("https://job.hdi.group", "HDI"),               # Köln - 20 Werkstudent in feed
+    ("https://karriere.nrwbank.de", "NRWBANK"),     # Düsseldorf - Werkstudent IT Kapitalmarkt
     ("https://karriere.stadt-koeln.de", "StadtKoeln"),
-    ("https://jobs.uniper.energy", "Uniper"),         # Düsseldorf — English "Working student" ads
-    ("https://jobs.swd-ag.de", "SWD"),                # Stadtwerke Düsseldorf — Werkstudent CX Systeme
-    ("https://career.1and1.org", "1und1"),            # Düsseldorf/Montabaur — Conversational AI, Data Analytics
+    ("https://jobs.uniper.energy", "Uniper"),         # Düsseldorf - English "Working student" ads
+    ("https://jobs.swd-ag.de", "SWD"),                # Stadtwerke Düsseldorf - Werkstudent CX Systeme
+    ("https://career.1and1.org", "1und1"),            # Düsseldorf/Montabaur - Conversational AI, Data Analytics
     ("https://opportunities.vodafone.com", "Vodafone"),
     ("https://jobs.deloitte.de", "Deloitte"),         # 39 in feed, 8 Düsseldorf/Köln Werkstudent
     ("https://careers.ey.com", "EY"),                 # 38 in feed, 5 belt incl. EY-Parthenon Decision Modelling
     # Germany-wide English sweep 2026-09-07 (verified live via the RSS endpoint):
-    ("https://jobs.rwe.com", "RWE"),                  # Essen — Working Student IT Security Governance, English ad
-    ("https://careers.eon.com", "E.ON"),              # Essen/Munich — E.ON Digital Technology Working Student ads
+    ("https://jobs.rwe.com", "RWE"),                  # Essen - Working Student IT Security Governance, English ad
+    ("https://careers.eon.com", "E.ON"),              # Essen/Munich - E.ON Digital Technology Working Student ads
 )
 # "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
 # "Student" first (2026-10-04): links are queued in query order and the cap
 # cuts the tail, so with the German forms first the English "Working Student"
-# and "Student Assistant" ads — the ones the English-only rule can actually
-# send — were the ones cut. Deloitte and EY alone carry ~39 student links.
+# and "Student Assistant" ads - the ones the English-only rule can actually
+# send - were the ones cut. Deloitte and EY alone carry ~39 student links.
 _CSB_QUERIES = ("Student", "Werkstudent", "Praktikum")
 _CSB_CAP_PER_SITE = 60      # 20 -> 40 on 2026-09-07, 60 on 2026-10-04
 
@@ -4267,7 +4267,7 @@ def scrape_csb() -> list[dict]:
     return out
 
 
-# ── BeeSite (milch & zucker) JSON search — GIZ, LVR, BaFin, BARMER ───────────
+# -- BeeSite (milch & zucker) JSON search - GIZ, LVR, BaFin, BARMER -----------
 # One JSON endpoint shared by several Bonn/Köln public-sector and NGO
 # employers. GET {host}/search/?data=<urlencoded JSON> returns every published
 # posting with title, city and career level; the public ad sits at
@@ -4350,7 +4350,7 @@ def scrape_beesite() -> list[dict]:
     return out
 
 
-# ── service.bund.de RSS — every federal agency in Bonn, plus Interamt imports ─
+# -- service.bund.de RSS - every federal agency in Bonn, plus Interamt imports -
 # The federal job portal re-imports Interamt ads and exposes a server-rendered
 # search with an RSS switch. One feed per keyword, 30 km around Bonn, covers
 # BSI, BfArM, Bundesnetzagentur, BaFin, ITZBund, BMZ, BLE, BIBB, DFG, DW and
@@ -4417,7 +4417,7 @@ def scrape_bund_rss() -> list[dict]:
     return out
 
 
-# ── Universitätsklinikum Bonn — WordPress REST ───────────────────────────────
+# -- Universitätsklinikum Bonn - WordPress REST -------------------------------
 # The UKB careers site is WordPress with the standard REST API left open:
 # /wp-json/wp/v2/jobs lists every posting (49 at verification, incl. several
 # Studentische/Wissenschaftliche Hilfskraft roles). The list carries no body,
@@ -4453,7 +4453,7 @@ def scrape_ukb() -> list[dict]:
     return out
 
 
-# ── rhenag Rheinische Energie — job list embedded in the page ────────────────
+# -- rhenag Rheinische Energie - job list embedded in the page ----------------
 # karriere.rhenag.de renders its whole job list into a data-pages attribute as
 # entity-escaped JSON ({title, uriPathSegment, jobDetailPageTags, date}). At
 # verification: 45 postings, 9 Werkstudent incl. "KI & Innovation" and
@@ -4471,7 +4471,7 @@ def scrape_rhenag() -> list[dict]:
         r = requests.get(_RHENAG_URL, headers=HEADERS, timeout=30)
         m = re.search(r'data-pages="([^"]+)"', r.text)
         if r.status_code != 200 or not m:
-            print(f"  [rhenag] HTTP {r.status_code} — data-pages attribute not found")
+            print(f"  [rhenag] HTTP {r.status_code} \u2014 data-pages attribute not found")
             return []
         rows = json.loads(_h.unescape(m.group(1)))
         picked = [x for x in rows if _RHENAG_STUDENT.search(
@@ -4497,7 +4497,7 @@ def scrape_rhenag() -> list[dict]:
     return out
 
 
-# ── Deutsche Bahn — db.jobs search JSON ──────────────────────────────────────
+# -- Deutsche Bahn - db.jobs search JSON --------------------------------------
 # db.jobs exposes its search as JSON (view=json). The result is a list of
 # postings with jobId, jobTitleInternational, locations (a stringified list)
 # and pubExternalDate. Only rows located in the Bonn belt are kept; the
@@ -4561,7 +4561,7 @@ def scrape_db_jobs() -> list[dict]:
     return out
 
 
-# ── Main entry point ───────────────────────────────────────────────────────────
+# -- Main entry point -----------------------------------------------------------
 
 def scrape_all() -> list[dict]:
     print("Scraping all sources...")
@@ -4569,40 +4569,40 @@ def scrape_all() -> list[dict]:
 
     scrapers_in_order = [
         scrape_jobspy,             # LinkedIn + Indeed
-        scrape_arbeitnow,          # Free JSON API — English jobs, Germany-focused
-        scrape_remotive,           # Free JSON API — remote jobs worldwide
-        # HN-Hiring DISABLED — produced dead links and unparseable rows.
+        scrape_arbeitnow,          # Free JSON API - English jobs, Germany-focused
+        scrape_remotive,           # Free JSON API - remote jobs worldwide
+        # HN-Hiring DISABLED - produced dead links and unparseable rows.
         # The function is kept defined in case we want it back with cleaning.
         # scrape_hn_who_is_hiring,
         scrape_arbeitsagentur,     # Official German employment agency API
         scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
         scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
-        scrape_bwi,                # BWI GmbH — Bundeswehr IT, Bonn/Meckenheim
-        scrape_igus,               # igus Köln — JSON API, full ad text inline
-        scrape_rewe,               # REWE Group Köln — JSON search API
+        scrape_bwi,                # BWI GmbH - Bundeswehr IT, Bonn/Meckenheim
+        scrape_igus,               # igus Köln - JSON API, full ad text inline
+        scrape_rewe,               # REWE Group Köln - JSON search API
         scrape_dvinci,             # Generali/RheinEnergie/DER Touristik/REWE digital
-        scrape_unibonn,            # Uni Bonn SHK/HiWi page — his own university
-        scrape_csb,                # Zurich/Bayer/DEUTZ/HDI/NRW.BANK/Stadt Köln — SuccessFactors CSB
-        scrape_beesite,            # GIZ/LVR/BaFin/BARMER — BeeSite JSON
-        scrape_bund_rss,           # service.bund.de — federal Bonn agencies + Interamt imports
-        scrape_ukb,                # Universitätsklinikum Bonn — WordPress REST
-        scrape_rhenag,             # rhenag Köln — embedded job JSON (Werkstudent KI & Innovation)
-        scrape_db_jobs,            # Deutsche Bahn — db.jobs search JSON, belt-filtered
+        scrape_unibonn,            # Uni Bonn SHK/HiWi page - his own university
+        scrape_csb,                # Zurich/Bayer/DEUTZ/HDI/NRW.BANK/Stadt Köln - SuccessFactors CSB
+        scrape_beesite,            # GIZ/LVR/BaFin/BARMER - BeeSite JSON
+        scrape_bund_rss,           # service.bund.de - federal Bonn agencies + Interamt imports
+        scrape_ukb,                # Universitätsklinikum Bonn - WordPress REST
+        scrape_rhenag,             # rhenag Köln - embedded job JSON (Werkstudent KI & Innovation)
+        scrape_db_jobs,            # Deutsche Bahn - db.jobs search JSON, belt-filtered
         scrape_amazon,             # Amazon Jobs API (Germany filter at API level)
         scrape_personio,           # German Mittelstand + AI startups (20 companies)
         scrape_smartrecruiters,    # Bosch, Continental, Visa, Roland Berger
         scrape_workday_cxs,        # NVIDIA, Adobe, Salesforce, AstraZeneca, Pfizer, Sanofi, Intel, Philips, etc. (15 tenants)
         scrape_workday_cxs_fulltime,  # the same tenants, entry-level full-time searches (own time budget)
-        scrape_adzuna,             # Aggregator — Mercedes, BMW, Allianz, DB, P&G, Unilever, etc. (needs ADZUNA_APP_ID/KEY)
-        scrape_workday,            # Legacy HTML scraper — kept for any URL it still works on
-        # scrape_successfactors DISABLED 2026-08-16 — silent zero.
+        scrape_adzuna,             # Aggregator - Mercedes, BMW, Allianz, DB, P&G, Unilever, etc. (needs ADZUNA_APP_ID/KEY)
+        scrape_workday,            # Legacy HTML scraper - kept for any URL it still works on
+        # scrape_successfactors DISABLED 2026-08-16 - silent zero.
         # career4.successfactors.com/career?company=X&resultType=XML now returns
         # a ~3.5KB HTML error page with HTTP 200 for ALL SEVEN configured
         # companies (volkswagen, adidas, porsche, henkel, munichre, tuigroup,
         # eon-energy), verified individually. The parser finds no rows and
         # reports success, so it has been costing scrape time for nothing.
         # These employers moved to SuccessFactors Career Site Builder, which
-        # serves {host}/search/?q= plus a real sitemap.xml — a different
+        # serves {host}/search/?q= plus a real sitemap.xml - a different
         # scraper, not a URL swap. The RMK-style pattern in
         # scrape_research_institutes is the closest working template.
         # scrape_successfactors,   # VW, Adidas, Porsche, etc.
@@ -4610,18 +4610,18 @@ def scrape_all() -> list[dict]:
         scrape_lever,              # Mistral, Qonto, MoonPay, Neon, TrustYou, Nuri
         scrape_ashby,              # Perplexity, Deepgram, Ramp, Supabase, Linear, etc.
         scrape_recruitee,          # Limehome and other EU startups
-        scrape_germantechjobs,     # germantechjobs.de RSS — German tech aggregator
+        scrape_germantechjobs,     # germantechjobs.de RSS - German tech aggregator
         scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
-        scrape_linkedin_guest,     # LinkedIn guest API — server-side entry-level filter
-        # scrape_hiringcafe DISABLED 2026-09-04 — hiringcafe.com now sits behind a
+        scrape_linkedin_guest,     # LinkedIn guest API - server-side entry-level filter
+        # scrape_hiringcafe DISABLED 2026-09-04 - hiringcafe.com now sits behind a
         # Cloudflare challenge (homepage HTTP 403 "Just a moment..."), so the
         # buildId bootstrap can never succeed. The dead-source alarm caught it
         # after three zero runs (median 490). Same rule as StepStone: no bot-
         # evasion in a public repo, so it stays off until the block is gone.
-        # scrape_hiringcafe,       # hiring.cafe — 40+ ATS platforms
-        scrape_absolventa,         # Absolventa — German graduate/trainee board
-        scrape_getinit,            # get-in-IT — German entry-level IT board
-        scrape_xing,               # XING GraphQL — German SME / recruiter-native market
+        # scrape_hiringcafe,       # hiring.cafe - 40+ ATS platforms
+        scrape_absolventa,         # Absolventa - German graduate/trainee board
+        scrape_getinit,            # get-in-IT - German entry-level IT board
+        scrape_xing,               # XING GraphQL - German SME / recruiter-native market
         scrape_berlinstartupjobs,  # berlinstartupjobs.com RSS (best-effort, Cloudflare-intermittent)
         scrape_join,               # join.com (best-effort, no confirmed public endpoint)
         scrape_company_pages,      # Generic German company pages (restored, noisy but attempted)
@@ -4642,7 +4642,7 @@ def scrape_all() -> list[dict]:
         jobs, timed_out = _run_scraper_guarded(scraper)
         if timed_out:
             print(f"  [{scraper.__name__}] TIMED OUT after {SCRAPER_TIMEOUT_SECONDS}s "
-                  f"— abandoned, continuing with the other sources")
+                  f"\u2014 abandoned, continuing with the other sources")
         all_jobs.extend(jobs)
         SCRAPER_TIMINGS[scraper.__name__] = round(time.time() - t0, 1)
 
@@ -4661,11 +4661,11 @@ def scrape_all() -> list[dict]:
             # salvaged jobs already carry descriptions and filter normally.
             partial = _salvage_background(name)
             if partial:
-                print(f"  [{name}] still running — salvaging {len(partial)} jobs "
+                print(f"  [{name}] still running \u2014 salvaging {len(partial)} jobs "
                       f"collected so far instead of skipping the source")
                 all_jobs.extend(partial)
             else:
-                print(f"  [{name}] still running after the grace period — skipped this run")
+                print(f"  [{name}] still running after the grace period \u2014 skipped this run")
         else:
             print(f"  [{name}] collected {len(box['jobs'])} jobs from background")
             all_jobs.extend(box["jobs"])
@@ -4681,7 +4681,7 @@ def scrape_all() -> list[dict]:
             seen_ids.add(j["id"])
             unique.append(j)
 
-    # Slowest scrapers first — this is what tells us where a long run actually
+    # Slowest scrapers first - this is what tells us where a long run actually
     # goes, and whether a scraper has started hanging rather than failing.
     slowest = sorted(SCRAPER_TIMINGS.items(), key=lambda x: -x[1])[:8]
     total = sum(SCRAPER_TIMINGS.values())

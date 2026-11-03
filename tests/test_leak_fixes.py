@@ -27,7 +27,7 @@ ENGLISH = ("We are looking for a working student to join our data team. You will
            "data. Our working language is English and the team is international.")
 
 
-# ── Step 1a: every query runs on the single daily run ────────────────────────
+# -- Step 1a: every query runs on the single daily run ------------------------
 
 class TestAllQueriesRunEveryMorning:
     def test_no_query_is_left_out_at_any_hour(self, monkeypatch):
@@ -66,7 +66,7 @@ class TestAllQueriesRunEveryMorning:
         assert scrapers.BACKGROUND_JOIN_SECONDS >= 900
 
 
-# ── Step 2: a failed description fetch is retried, not buried ────────────────
+# -- Step 2: a failed description fetch is retried, not buried ----------------
 
 class TestUnresolvedBodiesAreRetried:
     def _fake_enrich(self, texts):
@@ -178,7 +178,7 @@ class TestUnresolvedBodiesAreRetried:
         assert "body_unresolved" in RunState.__annotations__
 
 
-# ── Step 3: German cities survive the Greenhouse / Lever scrapers ────────────
+# -- Step 3: German cities survive the Greenhouse / Lever scrapers ------------
 
 class _Resp:
     def __init__(self, payload, status=200):
@@ -302,7 +302,7 @@ class TestDedupKeepsTheReachableCopy:
         assert "_where" not in a and "_where" not in b
 
 
-# ── Step 4: caps and keyword gates that hid student roles ────────────────────
+# -- Step 4: caps and keyword gates that hid student roles --------------------
 
 class TestSmartRecruitersAsksForStudentForms:
     def _run(self, monkeypatch, pages):
@@ -484,7 +484,7 @@ class TestSlicesKeepTheHomeRegion:
         assert '"max_days_old":     14' not in src
 
 
-# ── Place names match whole words ────────────────────────────────────────────
+# -- Place names match whole words --------------------------------------------
 
 class TestPlaceNamesMatchWholeWords:
     """Found by the recovery dry run of 2026-10-05: a Langenhagen job (Lower
@@ -513,7 +513,7 @@ class TestPlaceNamesMatchWholeWords:
     def test_hessen_remote_is_remote_not_hybrid(self):
         j = main._tag_where(_j("W", ENGLISH, location="Hessen (Remote)"))
         assert j["_where"] == "REMOTE"
-# ── Freshness for ONE run a day ──────────────────────────────────────────────
+# -- Freshness for ONE run a day ----------------------------------------------
 
 class TestFreshnessForOneRunADay:
     def _at(self, monkeypatch, now):
@@ -554,7 +554,7 @@ class TestFreshnessForOneRunADay:
         assert not main._is_fresh_enough(_j(posted_at=ts))
 
 
-# ── Arbeitsagentur: a window the API accepts ─────────────────────────────────
+# -- Arbeitsagentur: a window the API accepts ---------------------------------
 
 class TestArbeitsagenturWindow:
     """The API ignores any window other than 0/1/7/14/28 days. The pipeline
@@ -580,7 +580,7 @@ class TestArbeitsagenturWindow:
         assert windows == {1}
 
 
-# ── 2026-10-06: part-time, internship, student work - nothing else ──────────
+# -- 2026-10-06: part-time, internship, student work - nothing else ----------
 
 class TestEmploymentFormLabels:
     """Owner, 2026-10-06: "student work, internship, part-time, that's it" - and
@@ -597,7 +597,7 @@ class TestEmploymentFormLabels:
         ("Platform Engineer (Renovate)",
          "This is a full-time role. We are open to part-time arrangements for the right person. "
          "You will run our dependency automation in Python."),
-        ("Software Engineer (m/f/d) – AI Platform, all Level",
+        ("Software Engineer (m/f/d) \u2013 AI Platform, all Level",
          "We hire at all levels, from working students to senior engineers. Full-time, on site."),
         ("Junior Data Engineer (w/m/d)", "Build data pipelines in Python and SQL."),
         ("Data Engineer", "You have completed internships in data engineering. Python, Spark."),
@@ -626,7 +626,7 @@ class TestEmploymentFormLabels:
     def test_lookalike_words_are_not_student_work(self, title):
         assert main._job_form(_j(title, "Python and SQL.")) == "full-time"
 
-    @pytest.mark.parametrize("title", ["Project Coordinator – AI Competition (d/f/m), 50%",
+    @pytest.mark.parametrize("title", ["Project Coordinator \u2013 AI Competition (d/f/m), 50%",
                                        "Data Analyst (m/w/d) in Teilzeit", "Part-time Software Developer",
                                        "IT-Support 20 Std."])
     def test_part_time_titles_with_tech_are_labelled_part_time(self, title):

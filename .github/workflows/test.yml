@@ -22,5 +22,5 @@ jobs:
           pip install -r requirements.txt -c constraints.txt
           pip install pytest
 
-      - name: Run test suite (offline — no secrets needed)
+      - name: Run test suite (offline - no secrets needed)
         run: pytest tests/ -q

@@ -38,7 +38,7 @@ class _Resp:
         return self._p
 
 
-# ── the backspace bug ────────────────────────────────────────────────────────
+# -- the backspace bug --------------------------------------------------------
 def test_no_source_file_contains_a_control_character():
     """The first version of the change wrote \\b inside a non-raw string: eight
     literal backspace characters ended up in a regex and silently disabled it."""
@@ -61,7 +61,7 @@ def test_every_student_work_marker_rescues_a_thesis_or_phd_title(title):
     assert main._is_eligible_form(_j(title)), title
 
 
-# ── what is NOT a job ────────────────────────────────────────────────────────
+# -- what is NOT a job --------------------------------------------------------
 @pytest.mark.parametrize("title", [
     "Auszubildende Fachinformatikerin", "Azubi Fachinformatiker", "Dual Studium Informatik",
     "Abschlussarbeit Informatik", "Promotionsstelle Informatik", "Promotionsstudent (m/w/d) KI",
@@ -86,8 +86,8 @@ def test_real_job_titles_are_not_rejected_by_the_widened_gate(title):
 
 
 @pytest.mark.parametrize("title", [
-    "Gehalt im Bereich Artificial Intelligence 2026 – jobvector",
-    "Intro to Large Language Models Course (LLMs)—Enroll Now – 365 Data Science", "Bootcamp Data Science",
+    "Gehalt im Bereich Artificial Intelligence 2026 \u2013 jobvector",
+    "Intro to Large Language Models Course (LLMs)\u2014Enroll Now \u2013 365 Data Science", "Bootcamp Data Science",
     "Scholarship in Data Science", "Summer School Machine Learning 2027", "Master Data Science Studiengang",
 ])
 def test_web_search_pages_that_are_not_postings_are_dropped(title):
@@ -109,7 +109,7 @@ def test_dual_and_doctoral_students_are_not_labelled_students():
         assert not main._is_eligible_form(_j(t))
 
 
-# ── the full-time title gate ─────────────────────────────────────────────────
+# -- the full-time title gate -------------------------------------------------
 def _ft(title, **kw):
     j = _j(title, **kw)
     j["_form"] = main._job_form(j)
@@ -176,7 +176,7 @@ def test_title_gate_runs_before_the_body_fetch(monkeypatch):
     assert "ds" in fetched and "ws" in fetched
 
 
-# ── Master's filter: a Bachelor alternative is not a Master's requirement ────
+# -- Master's filter: a Bachelor alternative is not a Master's requirement ----
 @pytest.mark.parametrize("phrase", [
     "Bachelor's degree or Master's degree in Computer Science", "BSc or MSc in Computer Science or related field",
     "B.Sc./M.Sc. in Computer Science", "Bachelor's, Master's or PhD in a quantitative field",
@@ -193,7 +193,7 @@ def test_a_real_masters_requirement_still_drops_the_job(phrase):
     assert not main._no_masters_required({"title": "Data Scientist", "description": f"Requirements: {phrase}. Python."})
 
 
-# ── seniority qualifiers are whole words ─────────────────────────────────────
+# -- seniority qualifiers are whole words -------------------------------------
 @pytest.mark.parametrize("title", [
     "Senior Data Scientist - International", "Lead Data Engineer (Internal Platform)",
     "Principal ML Engineer, International Markets", "Staff Software Engineer - Reentry Systems",
@@ -220,7 +220,7 @@ def test_international_in_the_opening_of_a_senior_ad_does_not_rescue_it():
     assert main._not_fulltime_senior({"title": "Machine Learning Engineer", "description": body2})
 
 
-# ── scorer prompt: no leftovers of the old rule ──────────────────────────────
+# -- scorer prompt: no leftovers of the old rule ------------------------------
 class TestPromptHasNoLeftoversOfTheStudentOnlyRule:
     prompt = scorer._system_prompt(config.CV_PROFILE_DS)
 
@@ -253,7 +253,7 @@ class TestPromptHasNoLeftoversOfTheStudentOnlyRule:
         assert len(by) == len(rows), "golden ids must be unique"
 
 
-# ── scrapers: query lists, caps ──────────────────────────────────────────────
+# -- scrapers: query lists, caps ----------------------------------------------
 def test_every_source_has_all_its_full_time_queries():
     for q in ("junior", "graduate", "entry level", "berufseinsteiger", "data scientist", "machine learning", "ai engineer"):
         assert q in scrapers._SR_QUERIES, q
@@ -319,7 +319,7 @@ def test_xing_falls_back_to_the_generic_fetcher_when_json_ld_is_empty(monkeypatc
     assert scrapers._fetch_full_description("https://www.xing.com/jobs/berlin-ai-1234") == ""
 
 
-# ── Workday: two passes inside a time budget ─────────────────────────────────
+# -- Workday: two passes inside a time budget ---------------------------------
 class TestWorkdayTwoPasses:
     def _jp(self, title, i=0, loc="Germany, Munich"):
         return {"title": title, "locationsText": loc, "externalPath": f"/job/x/{i}", "postedOn": "Posted Today"}
@@ -462,7 +462,7 @@ class TestWorkdayTwoPasses:
         assert not ({r["url"] for r in base} & {r["url"] for r in ft}), "the full-time pass must skip the base rows"
 
 
-# ── application kit: no Werkstudent answers for full-time jobs ───────────────
+# -- application kit: no Werkstudent answers for full-time jobs ---------------
 class TestApplicationKitAndFullTime:
     def _run(self, monkeypatch, facts):
         asked = []

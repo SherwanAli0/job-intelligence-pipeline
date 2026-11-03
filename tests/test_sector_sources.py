@@ -1,6 +1,6 @@
 """Sector sweep sources (2026-09): BeeSite JSON, service.bund.de RSS, the
 SuccessFactors RSS pass, and the Bonn-belt Workday/Recruitee additions.
-All offline — fixtures mirror the live payloads the code was built against."""
+All offline - fixtures mirror the live payloads the code was built against."""
 
 import json
 

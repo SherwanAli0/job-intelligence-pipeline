@@ -40,7 +40,7 @@ class TestEnglishOnly:
             assert not main._is_english_friendly(_j(title, GERMAN)), title
 
     def test_bilingual_ad_with_a_full_english_version_survives(self):
-        """German first, English below — the common bilingual layout. The
+        """German first, English below - the common bilingual layout. The
         whole text is half German, but the English half is complete."""
         english_version = ENGLISH + (
             " You are enrolled at a university in Germany and can work with us "
@@ -123,7 +123,7 @@ class TestGermanyWideIsRankingNotFiltering:
         nrw = main._tag_where(_j("W", ENGLISH, location="Dortmund, North Rhine-Westphalia, Germany"))
         assert nrw["_where"] == "ON-SITE" and nrw["_nrw"] and not nrw["_belt"] and nrw["_where_rank"] == 2
         # Ashby-style "Berlin (Remote)": an office exists, so it is hybrid,
-        # not remote — the city still matters.
+        # not remote - the city still matters.
         assert main._tag_where(_j("W", ENGLISH, location="Berlin (Remote)"))["_where"] == "HYBRID"
         full = main._tag_where(_j("W", ENGLISH + " This role is 100% remote within Germany.",
                                   location="München, Germany"))

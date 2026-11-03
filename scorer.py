@@ -1,9 +1,9 @@
 """
-scorer.py — uses Claude to score each job against Sherwan's CV profile.
+scorer.py - uses Claude to score each job against Sherwan's CV profile.
 
 Pipeline:
-  1. _hard_disqualify()  — regex pre-screen, sets score=0, skips Claude API call
-  2. _score_batch()      — Claude Haiku scores the remaining jobs in batches of 10
+  1. _hard_disqualify()  - regex pre-screen, sets score=0, skips Claude API call
+  2. _score_batch()      - Claude Haiku scores the remaining jobs in batches of 10
 """
 
 import json
@@ -16,17 +16,17 @@ import anthropic
 from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS, SCORER_PROMPT_CONTEXT
 
 # The client is built on first use, not at import time. On Lambda the API key
-# arrives from Parameter Store during startup, which happens after imports —
+# arrives from Parameter Store during startup, which happens after imports -
 # building the client here would crash the function in its init phase with a
 # bare KeyError, before any of our own error handling could report why. Tests
 # and callers may still assign `scorer.client` directly to inject a fake.
 client = None
 
 
-# ── Token accounting ─────────────────────────────────────────────────────────
+# -- Token accounting ---------------------------------------------------------
 # Cost per run was previously an estimate quoted from memory. The API reports
 # exact usage on every response, so the pipeline now measures what it spent
-# instead — the same "measure, don't estimate" discipline that decided Fargate
+# instead - the same "measure, don't estimate" discipline that decided Fargate
 # over Lambda.
 TOKEN_USAGE: dict = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
                      "cache_write_1h": 0, "by_model": {}, "batched": False}
@@ -121,7 +121,7 @@ def _client():
         client = anthropic.Anthropic(api_key=key)
     return client
 
-# ── Per-track CV routing ──────────────────────────────────────────────────────
+# -- Per-track CV routing ------------------------------------------------------
 # Each job is classified into a track and scored against the CV framed for that
 # track, so a Data Scientist job is judged against the DS-framed CV (statistics,
 # experimentation, analytics) rather than the AI-framed one. This is what lifts
@@ -162,29 +162,29 @@ def _classify_track(j: dict) -> str:
 
 BATCH_SIZE = 10
 
-# Mean Haiku score per batch from the last run — a drift signal for
+# Mean Haiku score per batch from the last run - a drift signal for
 # run_stats.jsonl. If batch means trend up or down over weeks with a stable
 # job mix, the judge is drifting, not the market.
 SCORE_BATCH_MEANS: list = []
 
 # Two-stage scoring (budget mode):
-#   Stage 2 — Haiku scores everything that survives the pre-screen (cheap bulk)
-#   Stage 3 — Sonnet re-scores only the finalists Haiku rates >= the floor,
+#   Stage 2 - Haiku scores everything that survives the pre-screen (cheap bulk)
+#   Stage 3 - Sonnet re-scores only the finalists Haiku rates >= the floor,
 #             replacing their scores/reasons with sharper judgments.
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 # Sonnet 5: better than Sonnet 4.6 AND cheaper (intro $2/$10 per MTok through
-# 2026-08-31, then $3/$15 — never more than 4.6 cost). Sonnet 5 runs adaptive
+# 2026-08-31, then $3/$15 - never more than 4.6 cost). Sonnet 5 runs adaptive
 # thinking by default, so scoring calls explicitly disable it (see
 # _thinking_kwargs) to keep behaviour and cost flat.
 SONNET_MODEL = "claude-sonnet-5"
 SONNET_RESCORE_FLOOR = 50
 
-# ── T3 cost controls ─────────────────────────────────────────────────────────
+# -- T3 cost controls ---------------------------------------------------------
 # Message Batches API: 50% off ALL tokens; used when there's enough volume to
 # be worth the polling latency (a cron pipeline doesn't care about minutes).
-# Prompt caching: cache_control on the per-track system prompt — batches of
+# Prompt caching: cache_control on the per-track system prompt - batches of
 # the same track share the prompt, so repeats bill at ~0.1x.
-# Structured outputs: output_config guarantees valid JSON — no more losing a
+# Structured outputs: output_config guarantees valid JSON - no more losing a
 # batch of jobs to a malformed reply.
 _BATCH_API_MIN_JOBS = 30      # below this, sync calls are simpler and fine
 _BATCH_POLL_SECONDS = 20
@@ -193,7 +193,7 @@ _BATCH_POLL_SECONDS = 20
 #
 # Anthropic's queue is genuinely variable: 1.8 min one evening, 30.6 min the
 # next morning, for the same workload. The expensive outcome is falling back to
-# sync, because those tokens bill at FULL price — one run cost $0.22 instead of
+# sync, because those tokens bill at FULL price - one run cost $0.22 instead of
 # the usual $0.07 that way. Waiting costs almost nothing by comparison: the
 # Fargate task is idle-polling, roughly a cent an hour.
 #
@@ -239,33 +239,33 @@ def _system_blocks(cv_profile: str, long_ttl: bool = False) -> list[dict]:
 
 def _thinking_kwargs(model: str) -> dict:
     # Sonnet 5 defaults to adaptive thinking when the field is omitted; scoring
-    # is a structured judgment task where thinking spend buys little — disable
+    # is a structured judgment task where thinking spend buys little - disable
     # explicitly. Haiku 4.5 (older API generation) is thinking-off by default.
     if model == SONNET_MODEL:
         return {"thinking": {"type": "disabled"}}
     return {}
 
-# ── Hard disqualifiers — checked BEFORE any Claude API call ───────────────────
+# -- Hard disqualifiers - checked BEFORE any Claude API call -------------------
 # These patterns catch clear mismatches and set score=0 without spending tokens.
 
 # Numeric year patterns (3, 4, … years)
-# Allows ANY 0-3 word qualifier between "of" and "experience" — catches
+# Allows ANY 0-3 word qualifier between "of" and "experience" - catches
 # "industry experience", "hands-on experience", "relevant practical experience",
 # "applicable professional experience", etc.
 # Also catches: "with 3+ years", "demonstrated 3 years", "proven 3+ years",
-# "successful 5 years" — common phrasings in job descriptions.
-# The (?<![-–\d]) lookbehinds stop the UPPER bound of a range from matching:
+# "successful 5 years" - common phrasings in job descriptions.
+# The (?<![--\d]) lookbehinds stop the UPPER bound of a range from matching:
 # "2-3 years experience" must read as a 2-year ask (within target), not as
-# "3 years" — this false-positive was caught by the golden calibration set.
+# "3 years" - this false-positive was caught by the golden calibration set.
 _RE_EXP_NUM = re.compile(
-    r"\b(?<![-–\d])([3-9]|\d{2})\+?\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}experience"
-    r"|\b(?<![-–\d])([3-9]|\d{2})\+?\s*years?\s+experience"
+    '\\b(?<![-\u2013\\d])([3-9]|\\d{2})\\+?\\s*years?\\s+(?:of\\s+)?(?:[\\w-]+\\s+){0,3}experience'
+    '|\\b(?<![-\u2013\\d])([3-9]|\\d{2})\\+?\\s*years?\\s+experience'
     r"|\bminimum\s*(of\s+)?([3-9]|\d{2})\s*\+?\s*years?"
     r"|\bat\s+least\s+([3-9]|\d{2})\+?\s*years?"
-    r"|\b([3-9]|\d{2})\s*[-–]\s*\d+\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}experience"
-    r"|\b(?<![-–\d])([3-9]|\d{2})\+\s*years?"
+    '|\\b([3-9]|\\d{2})\\s*[-\u2013]\\s*\\d+\\s*years?\\s+(?:of\\s+)?(?:[\\w-]+\\s+){0,3}experience'
+    '|\\b(?<![-\u2013\\d])([3-9]|\\d{2})\\+\\s*years?'
     r"|\bexperience\s*:?\s*([3-9]|\d{2})\+?\s*years?"
-    # NEW: "with [optional adjective] N+ years" — e.g.
+    # NEW: "with [optional adjective] N+ years" - e.g.
     #   "with 3+ years", "with proven 3 years", "with strong 5+ years"
     r"|\bwith\s+(?:[\w-]+\s+){0,2}([3-9]|\d{2})\+?\s*years?"
     # NEW: "demonstrated|proven|successful N+ years"
@@ -283,7 +283,7 @@ _RE_EXP_TEXT = re.compile(
     re.IGNORECASE,
 )
 
-# Master's-required signals — a COMPLETED Master's/PhD only.
+# Master's-required signals - a COMPLETED Master's/PhD only.
 # Used in concert with _RE_BACHELOR_OK and _RE_ENROLLED_CONTEXT below.
 #
 # This regex used to also catch student-status phrasing ("currently enrolled
@@ -324,7 +324,7 @@ _RE_BACHELOR_OK = re.compile(
     re.IGNORECASE,
 )
 
-# Senior / Lead title — catches any slip-throughs from main.py filter.
+# Senior / Lead title - catches any slip-throughs from main.py filter.
 # Uses [a-z] lookbehind/lookahead (NOT \b which considers "_" a word char) so
 # titles like "Senior_AI_Engineer" (LinkedIn slug), "Senior-Engineer",
 # "(Senior)", "AI Engineer, Senior" all match.
@@ -358,7 +358,7 @@ _RE_NONPY_TITLE = re.compile(
 _NONPY_DESC_SIGNALS = ("golang", "typescript developer", "typescript engineer",
                         "rust developer", "rust engineer")
 
-# Wrong domain — completely different field
+# Wrong domain - completely different field
 _RE_BAD_DOMAIN = re.compile(
     r"\b("
     r"embedded\s+systems?|tinyml|tiny\s*ml|fpga|microcontroller|"
@@ -385,7 +385,7 @@ _RE_FREELANCE_DESC = re.compile(
     re.IGNORECASE,
 )
 
-# Web analytics focus — GA4, tag management, etc.
+# Web analytics focus - GA4, tag management, etc.
 _RE_WEB_ANALYTICS = re.compile(
     r"\b("
     r"ga4|google\s+analytics\s+4|looker\s+studio|econda|"
@@ -397,7 +397,7 @@ _RE_WEB_ANALYTICS = re.compile(
     re.IGNORECASE,
 )
 
-# ML/AI signals — if present alongside web analytics, keep the job
+# ML/AI signals - if present alongside web analytics, keep the job
 _RE_ML_SIGNALS = re.compile(
     r"\b("
     r"machine\s+learning|deep\s+learning|neural\s+network|"
@@ -407,7 +407,7 @@ _RE_ML_SIGNALS = re.compile(
     re.IGNORECASE,
 )
 
-# Non-Germany / Non-EU locations — pre-screener blocklist
+# Non-Germany / Non-EU locations - pre-screener blocklist
 _RE_NONGER_LOC = re.compile(
     r"\b("
     # UK
@@ -438,7 +438,7 @@ _RE_NONGER_LOC = re.compile(
     re.IGNORECASE,
 )
 
-# Germany-presence / remote-eligibility signals — shared with main.py's
+# Germany-presence / remote-eligibility signals - shared with main.py's
 # location filter via filters.py so the two stages can never drift apart again.
 from filters import (
     is_german_location as _is_german_location,
@@ -462,7 +462,7 @@ _RE_UNPAID = re.compile(
     re.IGNORECASE,
 )
 
-# Fluent / business / native German required — catches English-language JDs
+# Fluent / business / native German required - catches English-language JDs
 # that bury the German requirement in the body.  Sherwan is B1 only.
 # NOTE: phrasing varies wildly. JDs use "C1 German", "C1 fluency in German",
 # "fluency in German on C1", "C1-level German", "German skills (C1)" etc.
@@ -477,7 +477,7 @@ _GERMAN_FLUENCY_PHRASES = (
     "business level german", "business-level german",
     "professional level german", "professional-level german",
     "business proficiency in german",
-    # CEFR level mentions — catch any C1/C2 + German combo regardless of word order
+    # CEFR level mentions - catch any C1/C2 + German combo regardless of word order
     "c1 german", "c2 german", "c1-german", "c2-german",
     "c1 fluency", "c2 fluency", "c1 level", "c2 level",
     "c1-level", "c2-level", "level c1", "level c2",
@@ -530,7 +530,7 @@ def _requires_fluent_german(d_low: str) -> bool:
         window_end   = idx + len(phrase) + 50
         window = d_low[window_start:window_end]
         if any(soft in window for soft in _GERMAN_SOFTENING):
-            continue  # soft requirement — don't disqualify on this match
+            continue  # soft requirement - don't disqualify on this match
         return True
     return False
 
@@ -549,14 +549,14 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     desc     = (j.get("description") or "")
     loc      = (j.get("location")    or "")
     # "(Senior)" as a parenthesized prefix = German-ad convention for "senior
-    # OPTIONAL — mid/junior also considered". Neutralize before title tests.
+    # OPTIONAL - mid/junior also considered". Neutralize before title tests.
     title_for_seniority = re.sub(r"\(\s*senior\s*\)", " ", title, flags=re.IGNORECASE)
     t_low    = title.lower()
     d_low    = desc.lower()
     combined = f"{t_low} {d_low}"
 
     # Graduate-designed titles (graduate/trainee/VIE/intern/Praktikum/
-    # Absolvent/entry-level/junior) skip the experience checks — body-text
+    # Absolvent/entry-level/junior) skip the experience checks - body-text
     # year mentions are boilerplate in programmes built for fresh grads.
     graduate_designed = bool(re.search(
         r"\b(graduate|trainee|vie|intern(?:ship)?|praktikum|praktikant(?:in)?|"
@@ -564,7 +564,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
         t_low,
     ))
 
-    # ── Check 1: Experience requirement ───────────────────────────────────────
+    # -- Check 1: Experience requirement ---------------------------------------
     # 1a. Numeric patterns: "3+ years", "minimum 4 years", "3-5 years experience",
     #     "with 3+ years", "demonstrated 3 years", "proven 5+ years"
     if not graduate_designed and _RE_EXP_NUM.search(d_low):
@@ -578,22 +578,22 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
         if not _junior_qualifier_in_title(t_low):
             return True, "Senior/Lead title with no junior qualifier", "senior_title"
 
-    # ── Check 2: Fluent German required (English JDs that bury the German req)
+    # -- Check 2: Fluent German required (English JDs that bury the German req)
     if _requires_fluent_german(d_low):
-        return True, "Requires fluent/native German — candidate is B1", "german_required"
+        return True, "Requires fluent/native German \u2014 candidate is B1", "german_required"
 
-    # ── Check 3: Non-Python primary language ──────────────────────────────────
+    # -- Check 3: Non-Python primary language ----------------------------------
     if _RE_NONPY_TITLE.search(title) and "python" not in combined:
         return True, "Primary language is not Python (no Python mentioned)", "non_python"
     for signal in _NONPY_DESC_SIGNALS:
         if signal in combined and "python" not in combined:
             return True, f"Primary language appears non-Python ({signal})", "non_python"
 
-    # ── Check 4: Wrong domain ─────────────────────────────────────────────────
+    # -- Check 4: Wrong domain -------------------------------------------------
     if _RE_BAD_DOMAIN.search(combined):
         return True, "Wrong domain (embedded / hardware / biomedical / pharma)", "wrong_domain"
 
-    # ── Check 5: Location — Germany on-site OR remote-that-covers-Germany ─────
+    # -- Check 5: Location - Germany on-site OR remote-that-covers-Germany -----
     # Sherwan lives in Bochum (NRW). He needs jobs he can attend from Germany:
     #   - Germany on-site/hybrid → keep
     #   - Remote with Germany or EU-wide coverage → keep
@@ -624,7 +624,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
 
     # Non-EU location + remote, but no Germany/EU coverage → drop
     if has_blocked and has_remote and not germany_in_loc_or_desc and not remote_covers_de:
-        return True, "Remote based outside Germany — coverage not confirmed", "location"
+        return True, "Remote based outside Germany \u2014 coverage not confirmed", "location"
 
     # Plain "remote" with zero Germany/EU signal → drop
     if has_remote and not has_blocked and not germany_in_loc_or_desc and not remote_covers_de:
@@ -633,7 +633,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
         # model. The rule bites when the LOCATION says remote, is empty, or is
         # positively foreign.
         if "remote" in loc_low or not loc_low or _is_foreign_location(loc_low):
-            return True, "Remote role — Germany not confirmed as eligible location", "location"
+            return True, "Remote role \u2014 Germany not confirmed as eligible location", "location"
 
     # Catch-all: a non-empty location, no German evidence, not remote, not
     # covered - dropped only on POSITIVE evidence that the place is abroad (a
@@ -648,50 +648,50 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
         if _is_foreign_location(loc_low):
             return True, "Location outside Germany and no remote/EU-wide coverage", "location"
 
-    # ── Check 6: Freelance / contractor only ──────────────────────────────────
+    # -- Check 6: Freelance / contractor only ----------------------------------
     if _RE_FREELANCE_TITLE.search(title):
-        return True, "Freelance role — seeking permanent/fixed-term employment", "freelance"
+        return True, "Freelance role \u2014 seeking permanent/fixed-term employment", "freelance"
     if _RE_FREELANCE_DESC.search(d_low):
-        return True, "Contractor/freelance only — not permanent employment", "freelance"
+        return True, "Contractor/freelance only \u2014 not permanent employment", "freelance"
 
-    # ── Check 7: Web analytics primary focus without ML/AI ───────────────────
+    # -- Check 7: Web analytics primary focus without ML/AI -------------------
     if _RE_WEB_ANALYTICS.search(combined):
         if not _RE_ML_SIGNALS.search(combined) and "python" not in combined:
             return True, "Primary focus is web analytics (GA4/tag management), not ML/AI", "web_analytics"
 
-    # ── Check 8: Unpaid / equity-only ────────────────────────────────────────
+    # -- Check 8: Unpaid / equity-only ----------------------------------------
     if _RE_UNPAID.search(d_low):
-        return True, "Unpaid or equity-only role — not paid employment", "unpaid"
+        return True, "Unpaid or equity-only role \u2014 not paid employment", "unpaid"
 
-    # ── Check 9: Master's degree strictly required (no Bachelor's alternative)
+    # -- Check 9: Master's degree strictly required (no Bachelor's alternative)
     bachelor_mentioned = bool(_RE_BACHELOR_OK.search(d_low))
     # An ad written for enrolled students is not asking for a finished degree.
     enrolled_context = bool(_RE_ENROLLED_CONTEXT.search(d_low))
     if not bachelor_mentioned and not enrolled_context:
         if _RE_MASTERS_REQ.search(d_low):
-            return True, "Master's degree required and no Bachelor's alternative — candidate has B.Sc.", "masters_required"
+            return True, "Master's degree required and no Bachelor's alternative \u2014 candidate has B.Sc.", "masters_required"
         ctx = _RE_MASTERS_CONTEXT.search(d_low)
         if ctx and not _RE_BACHELOR_OK.search(ctx.group(0)):
-            return True, "Master's required under qualifications header — candidate has B.Sc.", "masters_required"
+            return True, "Master's required under qualifications header \u2014 candidate has B.Sc.", "masters_required"
 
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
     return f"""{SCORER_PROMPT_CONTEXT["intro"]}
 
-CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
+CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch \u2014 score against it directly):
 {cv_profile}
 
-═══════════════════════════════════════════════════════════════
-SCORING SCALE — be calibrated, not generous
-═══════════════════════════════════════════════════════════════
-- 85-100: Excellent fit. Real shot at interview. Werkstudent, internship, part-time or entry-level full-time role, no fluent-German demand, remote/hybrid in Germany or on-site in NRW, in ANY of the four tracks (AI, ML, Data Science, Data Analyst — see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+SCORING SCALE \u2014 be calibrated, not generous
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+- 85-100: Excellent fit. Real shot at interview. Werkstudent, internship, part-time or entry-level full-time role, no fluent-German demand, remote/hybrid in Germany or on-site in NRW, in ANY of the four tracks (AI, ML, Data Science, Data Analyst \u2014 see ladder below). Examples across tracks: Working Student AI Agents in Köln, Werkstudent Machine Learning with PyTorch in Bonn, Werkstudent Data Science with scikit-learn in Düsseldorf, Werkstudent Data Analytics on SQL + Power BI, remote within Germany.
 - 70-84: Good fit. Worth a tailored application. Minor gaps but core fit is real.
 - 55-69: Decent fit. Apply only if you have time and a tailored angle.
 - 40-54: Weak. Likely auto-rejected. Skip unless desperate.
 - 0-39: Wrong field, wrong stack, wrong seniority, or wrong language requirement.
 
-CALIBRATION ANCHORS — score every job RELATIVE TO THESE THREE, not relative
+CALIBRATION ANCHORS \u2014 score every job RELATIVE TO THESE THREE, not relative
 to the other jobs in this batch. A batch full of weak jobs must not inflate a
 mediocre one; a batch full of strong jobs must not deflate a good one.
 - ANCHOR 75: "Werkstudent Machine Learning (m/w/d), Köln. Python, PyTorch.
@@ -706,9 +706,9 @@ mediocre one; a batch full of strong jobs must not deflate a good one.
   cannot lift it. (An ENTRY-LEVEL full-time data scientist role in the same
   place is a normal fit and is scored like any other form.)
 
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 WORK AUTHORIZATION (highest priority, applied before any other cap)
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 The candidate is authorized to work in Germany only, not the US, UK, or
 other non-EU countries. Score 0 to 15 for any role that is US-only,
 US-remote-only, requires US/UK or other non-EU work authorization, or is
@@ -719,7 +719,7 @@ hybrid roles ANYWHERE in Germany, on-site roles only in North Rhine-
 Westphalia (Bonn, Köln, Düsseldorf, Dortmund, Essen, Aachen, Münster ...)
 or the Bonn belt (Koblenz, Remagen, Andernach). On-site roles elsewhere are
 removed BEFORE you see them, so do NOT cap or penalise a role for its German
-city — a hybrid role in Munich or Berlin is in scope by his decision; the
+city \u2014 a hybrid role in Munich or Berlin is in scope by his decision; the
 digest shows the city and work mode and he judges the commute himself. Only
 locations outside Germany (handled above) are penalised.
 
@@ -727,10 +727,10 @@ LANGUAGE OF THE AD: every ad you see has already passed an English-language
 test. Do not reward or penalise the ad's language; judge only the German
 level the role DEMANDS (see the cap below).
 
-═══════════════════════════════════════════════════════════════
-HARD CAPS — these set a MAXIMUM score the role can receive.
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+HARD CAPS \u2014 these set a MAXIMUM score the role can receive.
 Apply the LOWEST applicable cap. Boosts cannot exceed the cap.
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 CAP AT 15 if the role is the WRONG employment form:
 - Ausbildung or dual study (duales Studium), thesis (Abschlussarbeit/
@@ -750,7 +750,7 @@ CAP AT 20 if ANY of these are true:
 - Role requires fluent/business/native German (C1+), even if the JD is written in English. Look for: "fluent German", "verhandlungssicheres Deutsch", "Mandatory: English and German", "business-fluent German", "German native". Sherwan is B1.
 - Role requires 5+ years professional experience. Sherwan has zero.
 - Role title contains: Senior, Lead, Principal, Staff, Head of, Director, VP, Vice President, Manager, Architect (without "junior"/"associate" qualifier).
-- Role requires a COMPLETED Master's or PhD. Sherwan has a completed B.Sc. and is an ENROLLED M.Sc. student from October 2026 — ads asking for "enrolled Bachelor's or Master's students" are his exact situation and must NOT trigger this cap.
+- Role requires a COMPLETED Master's or PhD. Sherwan has a completed B.Sc. and is an ENROLLED M.Sc. student from October 2026 \u2014 ads asking for "enrolled Bachelor's or Master's students" are his exact situation and must NOT trigger this cap.
 - Role is in a domain Sherwan has zero exposure to AND requires domain knowledge: energy markets / power trading, public sector / municipal, embedded systems / firmware / FPGA, hardware engineering, biomedical / clinical / pharma, manufacturing OT / SCADA / PLC, financial risk / actuarial.
 
 CAP AT 35 if ANY of these are true:
@@ -765,15 +765,15 @@ CAP AT 50 if ANY of these are true:
 - Role is general DevOps / platform engineering / Kubernetes primary focus.
 - Role is general full-stack web dev with no data/AI component.
 
-═══════════════════════════════════════════════════════════════
-TARGET ROLE LADDER — four EQUAL tracks: AI · ML · Data Science · Data Analyst
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+TARGET ROLE LADDER \u2014 four EQUAL tracks: AI · ML · Data Science · Data Analyst
 Score generously when these match. The candidate is equally interested in
-AI engineering, machine learning, data science, AND data analytics — do NOT
+AI engineering, machine learning, data science, AND data analytics \u2014 do NOT
 favour AI roles over data-analyst or data-science roles. All four tracks below
 start at the SAME score.
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
-All tiers assume the role IS an acceptable form — a Werkstudent/working-
+All tiers assume the role IS an acceptable form \u2014 a Werkstudent/working-
 student role, an internship, a part-time (Teilzeit) role, or an entry-level
 full-time role. Anything else is already capped at 15. The four forms are
 scored EQUALLY: judge on the work, the seniority, the location and the
@@ -785,7 +785,7 @@ full-time role the LEVEL decides: junior / associate / graduate / entry-level
 experience and seniority caps above (2 years -> 50, 3-4 years -> 35, 5+ years
 or a Senior/Lead/Manager title -> 20) apply in full.
 
-TIER 1 (start at 80, then apply caps and adjustments) — Werkstudent in ANY
+TIER 1 (start at 80, then apply caps and adjustments) \u2014 Werkstudent in ANY
 of the 4 tracks:
   AI track:
     - Werkstudent AI / Working Student AI Engineering / GenAI / LLM
@@ -810,10 +810,10 @@ TIER 2 (start at 70, then apply caps and adjustments):
 
 TIER 3 (start at 60, then apply caps and adjustments):
 - IT / software engineering without a data/AI component but with Python or a
-  modern web stack, in any of the four forms — acceptable to stay funded,
+  modern web stack, in any of the four forms \u2014 acceptable to stay funded,
   less CV value.
 
-OFF-TARGET (CAP AT 25 — a hard maximum, boosts cannot lift it):
+OFF-TARGET (CAP AT 25 \u2014 a hard maximum, boosts cannot lift it):
 - A role of ANY form with NO data/AI/software content. The 2026-08-16
   digest carried an outlet sales assistant, a retail sales operation
   role and a quality-management role as near misses because off-target
@@ -822,55 +822,55 @@ OFF-TARGET (CAP AT 25 — a hard maximum, boosts cannot lift it):
 - Examples: retail/outlet/cashier, sales/Vertrieb, marketing/
   communications, HR/recruiting, office management, event management,
   pure QM, pure controlling/accounting, legal, logistics floor work.
-- IT/software WITHOUT data content is NOT off-target — it is Tier 3 above.
+- IT/software WITHOUT data content is NOT off-target \u2014 it is Tier 3 above.
   Off-target means no technical content at all. A FULL-TIME role that is
   IT helpdesk / user support / system administration / finance / sales with
   no development, data or AI work in it is off-target too.
 
-═══════════════════════════════════════════════════════════════
-BOOSTS — additive, but never exceed the applicable cap.
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+BOOSTS \u2014 additive, but never exceed the applicable cap.
 IMPORTANT: exactly ONE track-specific boost block applies per job (the one
 matching its track). Do not let a job's track determine whether ANY boost is
-reachable — each track has an equal-value +15 and +10 boost available.
+reachable \u2014 each track has an equal-value +15 and +10 boost available.
 Never apply an AI-track boost to a non-AI role just because AI is trendy.
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
-TRACK-SPECIFIC BOOSTS (pick the block matching the job's track — each track
+TRACK-SPECIFIC BOOSTS (pick the block matching the job's track \u2014 each track
 has an equally-weighted +15 and +10 available, so no track has a structural
 ceiling advantage over another):
 
-  AI track — +15 if JD mentions: Claude Code, Claude Agent SDK, MCP, custom
+  AI track \u2014 +15 if JD mentions: Claude Code, Claude Agent SDK, MCP, custom
     skills, hooks, plan/execute/review loop, LangGraph, LangChain agents,
     agentic systems, agent workflows, tool calling, function calling.
     {SCORER_PROMPT_CONTEXT["work_match"]}
-  AI track — +10 if JD mentions: LLM evaluation frameworks, RAG, vector
+  AI track \u2014 +10 if JD mentions: LLM evaluation frameworks, RAG, vector
     databases, prompt engineering, fine-tuning (LoRA/QLoRA), Anthropic API,
     OpenAI API, Hugging Face, hallucination detection/evaluation.
 
-  ML track — +15 if JD mentions: production ML pipelines, model deployment/
+  ML track \u2014 +15 if JD mentions: production ML pipelines, model deployment/
     serving, MLOps tooling (MLflow, Weights & Biases, Kubeflow), CI/CD for
     ML, imbalanced classification, ensemble methods (XGBoost/boosting).
-    (Matches Sherwan's CSRBoost forensic-audit project — imbalanced-learn,
+    (Matches Sherwan's CSRBoost forensic-audit project \u2014 imbalanced-learn,
     75k configurations, reproducibility engineering.)
-  ML track — +10 if JD mentions: PyTorch, TensorFlow, scikit-learn, computer
+  ML track \u2014 +10 if JD mentions: PyTorch, TensorFlow, scikit-learn, computer
     vision, transformers, transfer learning, hyperparameter tuning,
     cross-validation, model reproducibility/benchmarking.
 
-  Data Science track — +15 if JD mentions: experimentation / A-B testing,
+  Data Science track \u2014 +15 if JD mentions: experimentation / A-B testing,
     statistical rigor, hypothesis testing, causal inference, recommender
     systems, research replication/reproducibility.
-    (Matches Sherwan's FUS recommender-system replication — 10-fold CV,
+    (Matches Sherwan's FUS recommender-system replication \u2014 10-fold CV,
     matched paper metrics to 4 decimal places.)
-  Data Science track — +10 if JD mentions: NumPy/Pandas-heavy analysis,
+  Data Science track \u2014 +10 if JD mentions: NumPy/Pandas-heavy analysis,
     feature engineering, model evaluation methodology, Jupyter-based
     research workflows, published/reproducible results.
 
-  Data Analyst track — +15 if JD mentions: SQL-heavy analysis, dashboarding
+  Data Analyst track \u2014 +15 if JD mentions: SQL-heavy analysis, dashboarding
     (Tableau, Power BI, Looker), stakeholder reporting, KPI definition,
     data storytelling for non-technical audiences.
-    (Matches Sherwan's Google Advanced Data Analytics cert — Tableau,
-    regression, statistics — and IBM SQL for Data Science cert.)
-  Data Analyst track — +10 if JD mentions: business intelligence tooling,
+    (Matches Sherwan's Google Advanced Data Analytics cert \u2014 Tableau,
+    regression, statistics \u2014 and IBM SQL for Data Science cert.)
+  Data Analyst track \u2014 +10 if JD mentions: business intelligence tooling,
     ETL/data pipeline basics, A/B test reporting, data quality/cleaning,
     cohort or funnel analysis.
 
@@ -878,17 +878,17 @@ UNIVERSAL BOOSTS (apply regardless of track):
 
 +8: Working language is explicitly English / international team / "we work in English"
 
-+8: Located in Bonn or Köln — walkable/20-minute commute from his university city (zero friction alongside lectures; no relocation for a full-time job)
++8: Located in Bonn or Köln \u2014 walkable/20-minute commute from his university city (zero friction alongside lectures; no relocation for a full-time job)
 
-+5: Genuinely remote within Germany, or explicitly flexible hours / "flexible Arbeitszeiten passend zum Stundenplan" — fits around lectures or any other commitments
++5: Genuinely remote within Germany, or explicitly flexible hours / "flexible Arbeitszeiten passend zum Stundenplan" \u2014 fits around lectures or any other commitments
 
 +5: Visa sponsorship not required (Sherwan has full work auth)
 
-+5: Company is an English-first tech/data/AI startup known for strong engineering culture (e.g. Aleph Alpha, deepset, parloa, Helsing, Black Forest Labs, n8n, Langfuse, Cohere, Mistral, Hugging Face, Stability for AI; Celonis, Personio, N26, DeepL, Contentful for broader tech/data) — this boost is NOT AI-exclusive, apply it to any track if the company fits the profile.
++5: Company is an English-first tech/data/AI startup known for strong engineering culture (e.g. Aleph Alpha, deepset, parloa, Helsing, Black Forest Labs, n8n, Langfuse, Cohere, Mistral, Hugging Face, Stability for AI; Celonis, Personio, N26, DeepL, Contentful for broader tech/data) \u2014 this boost is NOT AI-exclusive, apply it to any track if the company fits the profile.
 
-═══════════════════════════════════════════════════════════════
-PENALTIES — subtractive, applied AFTER caps and boosts
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+PENALTIES \u2014 subtractive, applied AFTER caps and boosts
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 -15: Ad restricts to students of a DIFFERENT field ("enrolled in business administration / mechanical engineering / law") with no computer-science/AI/data option listed
 
@@ -896,9 +896,9 @@ PENALTIES — subtractive, applied AFTER caps and boosts
 
 -10: Role description shows clear professional-level expectations despite the student or junior title (e.g. "ownership of large systems", "on-call", "drive technical roadmap")
 
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
 Return ONLY a valid JSON array. No preamble, no markdown fences, no commentary.
 Each entry MUST have: {{"index": N, "score": 0-100, "reason": "ONE concrete sentence: identify the cap that applied OR the tier match, and the single biggest factor."}}
@@ -911,8 +911,8 @@ Examples of good reasons:
 - "Tier 1 Werkstudent AI Agents match, LangGraph mentioned (+15), English-first (+8), Köln (+8) → 90"
 - "Tier 1 Werkstudent Data Science match, scikit-learn/XGBoost (+15), remote in Germany (+5) → 84"
 - "Tier 1 Werkstudent BI match, SQL + Power BI dashboarding (+15), Bonn (+8) → 85"
-- "Capped at 15: PhD position — wrong employment form"
-- "Capped at 15: on-site Werkstudent in Hamburg — not commutable from Bonn, no remote option"
+- "Capped at 15: PhD position \u2014 wrong employment form"
+- "Capped at 15: on-site Werkstudent in Hamburg \u2014 not commutable from Bonn, no remote option"
 - "Capped at 20: explicitly requires fluent German for DACH customer-facing role"
 - "Off-target: Werkstudent marketing, no data component → 30"
 
@@ -1011,7 +1011,7 @@ def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
 
 def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bool:
     """
-    Score [(jobs, model, cv_profile), ...] through the Message Batches API —
+    Score [(jobs, model, cv_profile), ...] through the Message Batches API -
     50% off every token. Returns True if the batch ran; False means the caller
     must fall back to the sync path (nothing was scored). Groups whose entries
     error inside an otherwise-successful batch are re-scored synchronously.
@@ -1048,9 +1048,9 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
                 # Cancel the stragglers, but HARVEST whatever already finished.
                 # Returning False here used to discard completed work: one real
                 # run had 8 of 15 groups succeed, cancelled all 15, then
-                # re-scored everything synchronously — paying for the batch and
+                # re-scored everything synchronously - paying for the batch and
                 # again at full price ($0.22 instead of the usual $0.07).
-                print(f"  [BatchAPI] timeout after {waited}s — cancelling stragglers, "
+                print(f"  [BatchAPI] timeout after {waited}s \u2014 cancelling stragglers, "
                       f"keeping whatever finished")
                 try:
                     _client().messages.batches.cancel(batch.id)
@@ -1098,14 +1098,14 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
         return True
 
     except Exception as e:
-        print(f"  [BatchAPI] unavailable ({e}) — using sync scoring")
+        print(f"  [BatchAPI] unavailable ({e}) \u2014 using sync scoring")
         return False
 
 
 def score_jobs(jobs: list[dict]) -> list[dict]:
     print(f"Scoring {len(jobs)} jobs...")
 
-    # ── Stage 1: hard pre-screening (no Claude API call) ──────────────────────
+    # -- Stage 1: hard pre-screening (no Claude API call) ----------------------
     to_score: list[dict] = []
     prescreened_out = 0
     for j in jobs:
@@ -1123,7 +1123,7 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
 
     # Tag each survivor with its track so both scoring stages route it to the
     # matching CV profile. Jobs are grouped by track and each group scored with
-    # its own profile — a DS job is judged against the DS-framed CV, etc.
+    # its own profile - a DS job is judged against the DS-framed CV, etc.
     for j in to_score:
         j["_track"] = _classify_track(j)
     from collections import Counter
@@ -1142,7 +1142,7 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
         for track, group in _by_track(pool).items():
             profile = _TRACK_PROFILES.get(track, CV_PROFILE_AI)
             # P2 debias: batches used to form in stable scrape order, so a
-            # job's neighbours were always the same source's postings — and a
+            # job's neighbours were always the same source's postings - and a
             # pointwise judge's absolute score is measurably contaminated by
             # its batch context (arXiv:2506.22316, 2406.07791). Shuffling
             # breaks the systematic pairing; a fresh seed per run means any
@@ -1154,7 +1154,7 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
                 out.append((group[i : i + BATCH_SIZE], model, profile))
         return out
 
-    # ── Stage 2: Haiku scoring, per-track profile (cheap bulk pass) ────────────
+    # -- Stage 2: Haiku scoring, per-track profile (cheap bulk pass) ------------
     # Large runs go through the Message Batches API (50% off every token, and
     # a cron pipeline doesn't mind minutes of polling); small runs and any
     # batch failure use the sync path.
@@ -1174,11 +1174,11 @@ def score_jobs(jobs: list[dict]) -> list[dict]:
         if vals:
             SCORE_BATCH_MEANS.append(round(sum(vals) / len(vals), 1))
 
-    # ── Stage 3: Sonnet re-score of finalists (budget mode), per-track profile ─
+    # -- Stage 3: Sonnet re-score of finalists (budget mode), per-track profile -
     # Only jobs Haiku rates >= SONNET_RESCORE_FLOOR get the expensive second
     # opinion. Scoring overwrites score/reason in place on success and leaves
     # the Haiku values untouched on any failure, so this stage can never lose
-    # a job — worst case it just keeps the Haiku ranking.
+    # a job - worst case it just keeps the Haiku ranking.
     # Stage 3 REMOVED 2026-09-04 (owner decision, cost): the Sonnet re-score
     # of finalists was a third of every run's bill (~$0.07 of $0.20) for a
     # second opinion on jobs Haiku already ranked. Haiku's ranking is what

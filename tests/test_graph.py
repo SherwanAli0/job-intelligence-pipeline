@@ -2,7 +2,7 @@
 Tests for the LangGraph pipeline orchestration.
 
 The graph must be behaviour-preserving: the same stages run in the same order
-with the same data. The one deliberate behaviour CHANGE is the quiet-day path —
+with the same data. The one deliberate behaviour CHANGE is the quiet-day path -
 as a linear function, "nothing new today" called sys.exit() before the stats
 write, so quiet days left no trace in the run history. As a graph it is a
 conditional edge to persist, so state and stats are still recorded.
@@ -53,7 +53,7 @@ class TestTopology:
 
     def test_quiet_day_skips_scoring_but_still_persists(self):
         """The behaviour change worth having: no new jobs means no scoring,
-        ranking or emailing — but state and run stats are still written."""
+        ranking or emailing - but state and run stats are still written."""
         calls = []
         nodes = _nodes(calls)
         nodes["filter"] = lambda s: (calls.append("filter"), {"new_jobs": []})[1]

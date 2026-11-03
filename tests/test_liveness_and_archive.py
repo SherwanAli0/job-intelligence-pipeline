@@ -34,7 +34,7 @@ def _job(url, title="Junior Data Scientist", **kw):
     return d
 
 
-# ── which URL is mapped to which API ─────────────────────────────────────────
+# -- which URL is mapped to which API -----------------------------------------
 class TestProbe:
     def test_greenhouse_both_hosts(self):
         for host in ("boards.greenhouse.io", "job-boards.greenhouse.io", "job-boards.eu.greenhouse.io"):
@@ -80,7 +80,7 @@ class TestProbe:
         assert liveness.probe(url) is None
 
 
-# ── verdicts ─────────────────────────────────────────────────────────────────
+# -- verdicts -----------------------------------------------------------------
 class TestCheck:
     GH = "https://boards.greenhouse.io/acme/jobs/1"
 
@@ -152,7 +152,7 @@ def test_a_broken_liveness_module_never_stops_the_digest(monkeypatch):
     assert [j["id"] for j in out["top"]] == ["a"] and out["closed_dropped"] == 0
 
 
-# ── fact gate ────────────────────────────────────────────────────────────────
+# -- fact gate ----------------------------------------------------------------
 FACTS = "Available from August 2030, up to 20 hours per week. B.Sc. grade 2.4. Contact: me@example.com. Gross salary 51,234 EUR."
 
 
@@ -203,7 +203,7 @@ class TestFactGate:
         assert [x["a"] for x in job["app_kit"]] == ["I can start in August 2030."]
 
 
-# ── posting archive ──────────────────────────────────────────────────────────
+# -- posting archive ----------------------------------------------------------
 class TestArchive:
     def _store(self, monkeypatch):
         files = {}

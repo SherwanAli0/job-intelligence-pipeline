@@ -8,7 +8,7 @@ import main
 import filters
 
 
-# ── Location: Germany-attendable only ─────────────────────────────────────────
+# -- Location: Germany-attendable only -----------------------------------------
 
 class TestLocationFilter:
     def test_berlin_kept(self, job):
@@ -36,12 +36,12 @@ class TestLocationFilter:
     def test_eu_remote_covering_germany_kept(self, job):
         assert main._is_attendable_from_germany(
             job(location="Madrid, Spain",
-                description="Spain HQ but fully remote within Europe — work from anywhere in the EU."))
+                description="Spain HQ but fully remote within Europe \u2014 work from anywhere in the EU."))
 
     def test_drift_case_hiring_across_europe(self, job):
         # Regression for the filters.py merge: this phrasing passed main's
         # filter but was killed by scorer's copy before the merge.
-        j = job(location="Remote", description="Fully remote — hiring across Europe. English team.")
+        j = job(location="Remote", description="Fully remote \u2014 hiring across Europe. English team.")
         assert main._is_attendable_from_germany(j)
         import scorer
         dq, _, _ = scorer._hard_disqualify(j)
@@ -62,11 +62,11 @@ class TestLocationFilter:
         assert scorer._REMOTE_COVERS_GERMANY_SIGNALS is filters.REMOTE_COVERS_GERMANY_SIGNALS
 
 
-# ── Experience: ≤2 years target, graduate-title immunity ─────────────────────
+# -- Experience: ≤2 years target, graduate-title immunity ---------------------
 
 class TestExperienceFilter:
     def test_four_plus_years_dropped(self, job):
-        # Neutral title — a 'Junior'/'Graduate' title is deliberately immune.
+        # Neutral title - a 'Junior'/'Graduate' title is deliberately immune.
         assert not main._no_experience_overload(
             job(title="Data Scientist",
                 description="Requirements: 4+ years of professional experience with Python."))
@@ -103,7 +103,7 @@ class TestExperienceFilter:
                 description="You have 5+ years of curiosity and 3 years of Python."))
 
 
-# ── Senior titles ─────────────────────────────────────────────────────────────
+# -- Senior titles -------------------------------------------------------------
 
 class TestSeniorFilter:
     def test_plain_senior_dropped(self, job):
@@ -115,7 +115,7 @@ class TestSeniorFilter:
 
     def test_wolt_parenthesized_senior_regression(self, job):
         # REAL regression: '(Senior) Applied Scientist' is German-ad convention
-        # for 'senior optional' — it must SURVIVE.
+        # for 'senior optional' - it must SURVIVE.
         assert main._not_fulltime_senior(job(title="(Senior) Applied Scientist"))
 
     def test_junior_kept(self, job):
@@ -131,7 +131,7 @@ class TestSeniorFilter:
         assert main._not_fulltime_senior(job(title="Machine Learning Engineer"))
 
 
-# ── Masters/PhD requirement ───────────────────────────────────────────────────
+# -- Masters/PhD requirement ---------------------------------------------------
 
 class TestMastersFilter:
     def test_masters_required_dropped(self, job):
@@ -158,7 +158,7 @@ class TestMastersFilter:
         assert main._no_masters_required(job(description="Bachelor's degree welcome."))
 
 
-# ── Cross-source dedup ────────────────────────────────────────────────────────
+# -- Cross-source dedup --------------------------------------------------------
 
 class TestDedup:
     def test_ats_beats_search(self, job):
@@ -172,7 +172,7 @@ class TestDedup:
         assert main._normalize_company("Foo AG") == main._normalize_company("Foo")
 
     def test_distinct_companies_not_merged(self):
-        # Over-aggressive stripping once caused false merges — 'Acme AI' and
+        # Over-aggressive stripping once caused false merges - 'Acme AI' and
         # 'Acme' may be unrelated companies.
         assert main._normalize_company("Acme AI") != main._normalize_company("Acme")
 
@@ -182,7 +182,7 @@ class TestDedup:
         assert len(main._dedup_cross_source([a, b])) == 2
 
 
-# ── A1 diversity quotas ───────────────────────────────────────────────────────
+# -- A1 diversity quotas -------------------------------------------------------
 
 class TestDiversify:
     def test_quota_guarantees_minority_tracks(self, job):
@@ -200,7 +200,7 @@ class TestDiversify:
         assert [j["score"] for j in picked] == sorted([j["score"] for j in picked], reverse=True)
 
 
-# ── B6 ghost detection ────────────────────────────────────────────────────────
+# -- B6 ghost detection --------------------------------------------------------
 
 class TestGhosts:
     def test_old_posting_penalized_and_tagged(self, job):

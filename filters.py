@@ -1,11 +1,11 @@
 """
-filters.py — single source of truth for Germany-eligibility term lists.
+filters.py - single source of truth for Germany-eligibility term lists.
 
 main.py (pre-scorer location filter) and scorer.py (hard disqualifier) used to
 carry their own copies of these three tuples, and they drifted: scorer knew
 "dach"/"german market" but not "hiring across europe"; main knew the reverse.
 Result: a job could pass one stage and be killed by the other, and any tuning
-fix applied to one file silently didn't apply to the other — the same failure
+fix applied to one file silently didn't apply to the other - the same failure
 shape as the two historical filter regressions.
 
 Every list below is the UNION of the two former copies. Add new signals HERE
@@ -14,7 +14,7 @@ and only here; both stages pick them up automatically.
 
 import re
 
-# ── Title-only screen, used to decide whether a description is worth fetching ─
+# -- Title-only screen, used to decide whether a description is worth fetching -
 # LinkedIn descriptions cost one HTTP request each. Fetching all ~1,100 results
 # took 420-600s and made JobSpy time out entirely, returning ZERO jobs on half
 # the runs. Screening on the title first means we only spend requests on
@@ -23,7 +23,7 @@ import re
 # This must stay CONSERVATIVE. It is an optimisation, not a filter: the real
 # filter chain in main.py still sees every job that gets through. Anything
 # dropped here is dropped without ever being read, so only patterns that are
-# certain — never "probably" — belong in this list.
+# certain - never "probably" - belong in this list.
 
 _RE_TITLE_HARD_SENIOR = re.compile(
     r"(?<![a-z])(expert|senior|sr\.?|lead|principal|staff|head\s+of|director|"
@@ -71,7 +71,7 @@ def title_is_worth_fetching(title: str) -> bool:
     return True
 
 
-# Germany-presence signals — these confirm a role is doable from Germany.
+# Germany-presence signals - these confirm a role is doable from Germany.
 GERMANY_TERMS = (
     "germany", "deutschland", "berlin", "munich", "münchen", "hamburg",
     "frankfurt", "cologne", "köln", "düsseldorf", "bochum", "dortmund",
@@ -79,8 +79,8 @@ GERMANY_TERMS = (
     "saxony", "sachsen", "hessen", "baden-württemberg",
     # The Bonn commute belt. These were MISSING, and the omission was
     # expensive: a posting whose location field reads just "Bonn",
-    # "Bonn-Rhein-Sieg", "Sankt Augustin" or "Koblenz" — which is how
-    # Stellenwerk, Fraunhofer, BWI and Debeka all write it — matched no
+    # "Bonn-Rhein-Sieg", "Sankt Augustin" or "Koblenz" - which is how
+    # Stellenwerk, Fraunhofer, BWI and Debeka all write it - matched no
     # Germany term at all and was hard-disqualified by the scorer as being
     # outside Germany. The pipeline's own home region was the one region it
     # could not recognise.
@@ -94,7 +94,7 @@ GERMANY_TERMS = (
     "dach", "german market", "german office", "german team",
 )
 
-# ── German places, for LOCATION strings only ────────────────────────────────
+# -- German places, for LOCATION strings only --------------------------------
 # GERMANY_TERMS above is matched as a substring and is kept short on purpose.
 # The scorer's pre-screen used it to decide whether a location is in Germany,
 # and anything it did not recognise was dropped as "outside Germany" (the only
@@ -202,7 +202,7 @@ GERMAN_PLACES = NRW_PLACES + (
     "wildau", "teltow", "kleinmachnow", "oranienburg", "neuruppin", "brandenburg an der havel",
 )
 
-# ── v2 (2026-10-14, after the review of v1) ─────────────────────────────────
+# -- v2 (2026-10-14, after the review of v1) ---------------------------------
 # More NRW municipalities: the regional gaps the review found (Halver, Kamen,
 # Werne, Hamminkeln, Warburg, Sundern ...). Ambiguous words are left out on
 # purpose (Lage, Much, Alpen, Senden, Horn, Hille ...): a location field is
@@ -289,7 +289,7 @@ OTHER_STATE_NAMES = (
     "schleswig holstein", "thüringen", "thueringen", "thuringia",
 )
 
-# ── Evidence of a place OUTSIDE Germany ─────────────────────────────────────
+# -- Evidence of a place OUTSIDE Germany -------------------------------------
 # The scorer's catch-all used to drop every location it could not recognise as
 # German. That removed real German towns (a finite list cannot hold ~11,000
 # municipalities) and, because the same list was the only thing that said
@@ -544,7 +544,7 @@ REMOTE_COVERS_GERMANY_SIGNALS = (
     "location independent", "location-independent", "work from anywhere",
 )
 
-# Phrases that REVOKE Germany eligibility — even if "remote" appears, these
+# Phrases that REVOKE Germany eligibility - even if "remote" appears, these
 # lock the role outside Germany.
 REMOTE_LOCKED_OUT_SIGNALS = (
     "us-based only", "us only", "united states only", "must be based in the us",
@@ -558,7 +558,7 @@ REMOTE_LOCKED_OUT_SIGNALS = (
 )
 
 
-# ── Junior qualifiers in a seniority-flagged title ───────────────────────────
+# -- Junior qualifiers in a seniority-flagged title ---------------------------
 # Shared by main._not_fulltime_senior and scorer._hard_disqualify. WHOLE words
 # only: the old substring test let "International" / "Internal" (intern) and
 # "Gentry" (entry) turn "Senior Data Scientist - International" into a junior

@@ -1,5 +1,5 @@
 """
-calibrate.py — measure the scoring pipeline against the hand-labeled golden set.
+calibrate.py - measure the scoring pipeline against the hand-labeled golden set.
 
 The 180-line scoring prompt gets edited often; without measurement every edit
 is vibes. This runs golden/golden_set.jsonl through the REAL pipeline and
@@ -7,16 +7,16 @@ reports where reality disagrees with the labels, so a prompt change can be
 judged before it decides which jobs you ever see.
 
 Two layers:
-  FREE  — expect_dq cases go through scorer._hard_disqualify (deterministic,
+  FREE  - expect_dq cases go through scorer._hard_disqualify (deterministic,
           no API). Also run in CI by tests/test_golden.py on every push.
-  PAID  — expect_band cases go through the real Haiku scorer per track
+  PAID  - expect_band cases go through the real Haiku scorer per track
           (~EUR 0.07/run). Manual only:  py -3.11 calibrate.py
           or the 'Calibrate scorer' workflow_dispatch action.
 
 Band definitions (score ranges the label maps to):
   high 70-100 | mid 45-69 | low 0-44
 
-Edit the labels in golden/golden_set.jsonl as you learn — the set is only as
+Edit the labels in golden/golden_set.jsonl as you learn - the set is only as
 good as its labels. Add every future mis-scored job you notice as a new line.
 """
 
@@ -90,12 +90,12 @@ def run_llm(rows: list[dict]) -> int:
             results.append((g, score, hit))
 
     hits = sum(1 for _, _, h in results if h)
-    print(f"\n── LLM band calibration: {hits}/{len(results)} in expected band ──")
+    print(f"\n\u2500\u2500 LLM band calibration: {hits}/{len(results)} in expected band \u2500\u2500")
     for g, score, hit in sorted(results, key=lambda r: r[2]):
         lo, hi = BANDS[g["expect_band"]]
         mark = "OK  " if hit else "MISS"
         print(f"  {mark} {g['id']} [{g.get('track','?')}] scored {score:3d}, "
-              f"expected {g['expect_band']} ({lo}-{hi})  {g['title']} — {g.get('note','')}")
+              f"expected {g['expect_band']} ({lo}-{hi})  {g['title']} \u2014 {g.get('note','')}")
     acc = hits / len(results) if results else 0.0
     print(f"\nBand accuracy: {acc:.0%}  "
           f"(edit golden/golden_set.jsonl labels if the label, not the scorer, is wrong)")
@@ -113,7 +113,7 @@ def main() -> int:
         # scorer.py builds an API client at import; the free layer never uses it
         os.environ.setdefault("ANTHROPIC_API_KEY", "sk-free-only-dummy")
     elif not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY not set — use --free-only for the no-API layer.")
+        print("ANTHROPIC_API_KEY not set \u2014 use --free-only for the no-API layer.")
         return 2
 
     rows = load_golden()
@@ -122,7 +122,7 @@ def main() -> int:
           f"{sum(1 for g in rows if not g.get('expect_dq'))} LLM-band)")
 
     failures, lines = run_prescreen(rows)
-    print(f"\n── Pre-screen layer: {len(lines) - failures}/{len(lines)} correct ──")
+    print(f"\n\u2500\u2500 Pre-screen layer: {len(lines) - failures}/{len(lines)} correct \u2500\u2500")
     print("\n".join(lines))
     if args.free_only:
         return 1 if failures else 0

@@ -39,7 +39,7 @@ class _Resp:
         return {}
 
 
-# ── Master's filter: the Bachelor alternative must sit NEXT to the Master's ──
+# -- Master's filter: the Bachelor alternative must sit NEXT to the Master's --
 @pytest.mark.parametrize("text", [
     "Master's degree required; Bachelor's students may apply for internships.",
     "A Master's degree in statistics is required. Experience beyond a bachelor's degree is not considered.",
@@ -61,13 +61,13 @@ def test_a_bachelor_next_to_the_masters_keeps_the_job(text):
     assert main._no_masters_required({"title": "Junior Data Scientist", "description": f"We want: {text}. Python."}), text
 
 
-# ── page-type titles only matter for web search ──────────────────────────────
+# -- page-type titles only matter for web search ------------------------------
 def test_page_type_words_are_not_applied_to_ats_postings():
-    assert main._is_eligible_form(_j("Data Engineer – Salary Platform", source="Lever"))
-    assert not main._is_eligible_form(_j("Data Engineer – Salary Guide", source="BraveSearch"))
+    assert main._is_eligible_form(_j("Data Engineer \u2013 Salary Platform", source="Lever"))
+    assert not main._is_eligible_form(_j("Data Engineer \u2013 Salary Guide", source="BraveSearch"))
 
 
-# ── tech vocabulary, non-tech veto, level veto ───────────────────────────────
+# -- tech vocabulary, non-tech veto, level veto -------------------------------
 def _ft(title, **kw):
     j = _j(title, **kw)
     j["_form"] = main._job_form(j)
@@ -96,7 +96,7 @@ def test_mid_level_titles_are_not_entry_level(title):
     assert not main._fulltime_title_ok(_ft(title)), title
 
 
-# ── "hybridMultilevel" is Word markup, not hybrid work ───────────────────────
+# -- "hybridMultilevel" is Word markup, not hybrid work -----------------------
 @pytest.mark.parametrize("text,expected", [
     ("mso-list:l0 hybridMultilevel level1", False), ("we run on a hybrid cloud platform", False),
     ("hybrid work model, two days in the office", True), ("hybrides Arbeiten möglich", True),
@@ -111,7 +111,7 @@ def test_word_markup_does_not_turn_an_onsite_ad_into_hybrid():
     assert j["_where"] != "hybrid"
 
 
-# ── liveness: circuit breaker, ordering, run stats ───────────────────────────
+# -- liveness: circuit breaker, ordering, run stats ---------------------------
 GH = "https://boards.greenhouse.io/acme/jobs/{}"
 
 
@@ -176,7 +176,7 @@ def test_closed_dropped_is_part_of_the_graph_state():
     assert "closed_dropped" in graph.RunState.__annotations__
 
 
-# ── fact gate ────────────────────────────────────────────────────────────────
+# -- fact gate ----------------------------------------------------------------
 FACTS = "B.Sc. grade 2.4. Up to 20 hours per week. Reach me: me@example.com.au, site https://x.org/ab. Salary 51,234."
 
 
@@ -242,7 +242,7 @@ class TestKitFlow:
         assert len(asked) == expected, facts
 
 
-# ── the posting archive is written by node_persist, and only for a sent digest ──
+# -- the posting archive is written by node_persist, and only for a sent digest --
 class TestPersistArchives:
     def _run(self, monkeypatch, tmp_path, email_ok, dry_run):
         files = {}
@@ -272,7 +272,7 @@ class TestPersistArchives:
         assert self._run(monkeypatch, tmp_path, email_ok, dry_run) == {}
 
 
-# ── the same link under an edited title is still the same job ────────────────
+# -- the same link under an edited title is still the same job ----------------
 class TestSameLinkNewTitle:
     def test_the_hash_is_the_one_track_py_and_the_shown_log_use(self):
         import hashlib

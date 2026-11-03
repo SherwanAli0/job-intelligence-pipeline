@@ -1,5 +1,5 @@
 """
-Scorer tests: the hard pre-screen, track routing, and — most importantly —
+Scorer tests: the hard pre-screen, track routing, and - most importantly -
 the JSON parse paths of _score_batch, which crashed the whole pipeline when a
 Haiku response was partial or the API errored (bug B1, fixed 2026-07-19).
 """
@@ -10,7 +10,7 @@ import pytest
 import scorer
 
 
-# ── Fake Anthropic clients ────────────────────────────────────────────────────
+# -- Fake Anthropic clients ----------------------------------------------------
 
 class _Resp:
     def __init__(self, text):
@@ -47,7 +47,7 @@ def _jobs(n=2):
             for i in range(n)]
 
 
-# ── _score_batch parse paths (bug B1 regressions) ─────────────────────────────
+# -- _score_batch parse paths (bug B1 regressions) -----------------------------
 
 class TestScoreBatch:
     def test_clean_json(self, monkeypatch):
@@ -103,7 +103,7 @@ class TestScoreBatch:
         assert out[0]["score"] == 0
 
 
-# ── Hard pre-screen ───────────────────────────────────────────────────────────
+# -- Hard pre-screen -----------------------------------------------------------
 
 class TestHardDisqualify:
     def _j(self, **kw):
@@ -151,7 +151,7 @@ class TestHardDisqualify:
         assert dq
 
 
-# ── Track routing ─────────────────────────────────────────────────────────────
+# -- Track routing -------------------------------------------------------------
 
 class TestClassifyTrack:
     def _j(self, title, desc=""):

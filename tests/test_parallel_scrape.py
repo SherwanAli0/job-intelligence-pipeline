@@ -4,7 +4,7 @@ Tests for concurrent board fetching.
 The requirement this exists to protect is the user's, stated plainly: making
 the scrape concurrent must not change which jobs come back. So the properties
 pinned here are equivalence and ordering against the sequential path, not
-speed — a faster scrape that quietly drops a board would be a regression, not
+speed - a faster scrape that quietly drops a board would be a regression, not
 an improvement.
 """
 
@@ -136,7 +136,7 @@ class TestLinkedInSlowLane:
     finally. JobSpy calls it once per query while scrape_linkedin_guest and
     main._fill_missing_bodies call it from other threads, so two calls
     overlapped: the later one saved the already-lowered 2, finished last, and
-    'restored' it — leaving every later _parallel_collect at 2 workers for the
+    'restored' it - leaving every later _parallel_collect at 2 workers for the
     rest of the run."""
 
     @staticmethod

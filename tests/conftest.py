@@ -1,4 +1,4 @@
-"""Shared fixtures. All tests run fully offline — no API keys, no network."""
+"""Shared fixtures. All tests run fully offline - no API keys, no network."""
 import os
 import sys
 from pathlib import Path

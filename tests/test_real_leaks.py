@@ -43,7 +43,7 @@ def _survives_pipeline(j):
     return not disqualified
 
 
-# ── The real jobs that should NEVER have arrived ─────────────────────────────
+# -- The real jobs that should NEVER have arrived -----------------------------
 
 class TestGermanLanguageBodies:
     def test_dkb_mlops_german_body_and_c1_german(self):
@@ -130,7 +130,7 @@ class TestMultiYearExperienceWithoutDigits:
 class TestRequirementsBelowTheTruncationPoint:
     def test_four_plus_years_deep_in_a_long_description(self):
         """Air Apps: 'Around 4+ years'. The filter drops this correctly when it
-        can see it — it sat below the 1,500-char cut applied at scrape time."""
+        can see it - it sat below the 1,500-char cut applied at scrape time."""
         filler = "About Air Apps. We believe in thinking bigger. " * 60
         j = _job("AI/ML Engineer",
                  filler + " Requirements: Around 4+ years of experience in AI/ML development.")
@@ -165,7 +165,7 @@ class TestSeniorityAndLocationHiddenInTheBody:
         assert not _survives_pipeline(j)
 
 
-# ── Guardrails: these MUST still get through ─────────────────────────────────
+# -- Guardrails: these MUST still get through ---------------------------------
 
 class TestGoodJobsStillSurvive:
     def test_english_junior_role_in_germany(self):
@@ -188,7 +188,7 @@ class TestGoodJobsStillSurvive:
 
     def test_parenthesised_senior_still_means_optional(self):
         """'(Senior) Applied Scientist' is German-ad convention for
-        'senior OPTIONAL' — juniors are explicitly considered."""
+        'senior OPTIONAL' - juniors are explicitly considered."""
         j = _job("(Senior) Applied Scientist", """
             We welcome candidates at all levels. The team language is English.
             Python and machine learning experience is valued. You will design
@@ -365,7 +365,7 @@ class TestGermanMarketIsNotGermanLanguage:
 
     def test_german_bodied_student_ad_is_dropped(self):
         """Flipped four times; current state (2026-09-07) is ENGLISH-ONLY for
-        every role type, on the owner's explicit instruction — see the
+        every role type, on the owner's explicit instruction - see the
         _is_english_friendly docstring. A German BODY drops a student role
         exactly as it drops a full-time one."""
         j = _job("Werkstudent Data Science (m/w/d)", """
@@ -387,7 +387,7 @@ class TestGermanMarketIsNotGermanLanguage:
         assert not main._is_english_friendly(j)
 
     def test_short_stub_student_ad_fails_the_language_test(self):
-        """A two-line stub carries no English evidence, so it fails — which
+        """A two-line stub carries no English evidence, so it fails - which
         is exactly why node_filter fetches the full ad for stubs
         (_fill_missing_bodies) before this test runs."""
         j = _job("Werkstudent Data Science (m/w/d)", "Werkstudent gesucht.",
@@ -403,7 +403,7 @@ class TestGermanMarketIsNotGermanLanguage:
 
 
 class TestEnglishOnlyForEveryRoleType:
-    """This rule has flipped four times — the history lives in the
+    """This rule has flipped four times - the history lives in the
     _is_english_friendly docstring. Current state (2026-09-07, owner's
     explicit instruction): only ads whose body READS AS ENGLISH are sent,
     for student, part-time and full-time roles alike. Everything German
@@ -449,7 +449,7 @@ class TestEnglishOnlyForEveryRoleType:
 
     def test_english_ad_with_german_employment_term_in_title_survives(self):
         """'Werkstudent' in the TITLE is a German-law employment form, not
-        language evidence — English-language ads use it too. Only the body
+        language evidence - English-language ads use it too. Only the body
         language decides."""
         j = _job("Werkstudent Machine Learning (m/w/d)", """
             Join our ML platform team for 20 hours per week alongside your
@@ -533,8 +533,8 @@ class TestBonnRegionIsRecognisedAsGermany:
 
     GERMANY_TERMS listed Berlin, Munich, Köln and the big states, but not
     Bonn. A posting whose location field reads just "Bonn", "Bonn-Rhein-Sieg",
-    "Sankt Augustin" or "Koblenz" — exactly how Stellenwerk, Fraunhofer, BWI
-    and Debeka write it — matched nothing and was hard-disqualified by the
+    "Sankt Augustin" or "Koblenz" - exactly how Stellenwerk, Fraunhofer, BWI
+    and Debeka write it - matched nothing and was hard-disqualified by the
     scorer as being outside Germany, after surviving every other filter.
     """
 
@@ -564,8 +564,8 @@ class TestCommutableFromBonn:
     """He studies in Bonn; the belt is an explicit ~1h-by-train list, NOT
     'anywhere in NRW': Bielefeld and Münster are in NRW and over two hours
     away. Since 2026-09-07 this function no longer DROPS anything in the
-    pipeline — the search is Germany-wide and the belt only orders the
-    digest (see _tag_where) — but the belt definition itself is pinned here."""
+    pipeline - the search is Germany-wide and the belt only orders the
+    digest (see _tag_where) - but the belt definition itself is pinned here."""
 
     def _at(self, location, description="Werkstudent role, English team."):
         return _job("Werkstudent Data Science", description, location=location)
@@ -592,7 +592,7 @@ class TestCommutableFromBonn:
         assert not main._is_commutable_or_remote(self._at("München, Germany"))
 
     def test_aachen_is_dropped_even_though_it_is_nrw(self):
-        """Aachen is NRW but 1h11+ from Bonn Hbf — the reason this filter is
+        """Aachen is NRW but 1h11+ from Bonn Hbf - the reason this filter is
         an explicit city list and not a state match."""
         assert not main._is_commutable_or_remote(self._at("Aachen, Germany"))
 
@@ -618,7 +618,7 @@ class TestRemoteFromAnywhereInGermany:
     and home office ones and the face to face must be in places around bonn".
 
     So the employer's city stops mattering the moment a role is genuinely
-    remote — hybrid means office days. "Teilweise Home-Office" is the most
+    remote - hybrid means office days. "Teilweise Home-Office" is the most
     common phrase on German ads and it is HYBRID, not remote. Since 2026-09-07
     this decides the digest ORDER (remote first) rather than dropping; the
     remote/hybrid distinction is pinned here because the label depends on it."""

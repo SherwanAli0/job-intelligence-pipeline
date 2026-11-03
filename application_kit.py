@@ -1,10 +1,10 @@
 """
-application_kit.py — pre-draft answers to real screening questions (feature B4).
+application_kit.py - pre-draft answers to real screening questions (feature B4).
 
 Screening questions are where junior applications die (wrong salary number,
 blank "why us", hesitant visa answer). For each digest job hosted on a
 Greenhouse board (the largest, cleanest public question API), this fetches the
-ACTUAL custom questions and drafts answers with Haiku — so applying takes 3
+ACTUAL custom questions and drafts answers with Haiku - so applying takes 3
 minutes instead of 30.
 
 A reusable answer bank (answers.json) stores answers keyed by normalized
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import requests
 
-BANK_FILE = Path("answers.json")  # gitignored — persisted via Actions cache, never committed
+BANK_FILE = Path("answers.json")  # gitignored - persisted via Actions cache, never committed
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126"}
 MAX_KIT_JOBS = 12  # only build kits for the top digest jobs (bounded cost)
 
@@ -44,7 +44,7 @@ def _load_facts() -> str:
             return ""
     return ""
 
-# ── Fact gate ────────────────────────────────────────────────────────────────
+# -- Fact gate ----------------------------------------------------------------
 # The drafting prompt says "using ONLY these facts", and a model can still slip
 # a number in: "5 years", a wrong date, an e-mail address. These answers go into
 # real applications, so each draft is checked deterministically: every number,
@@ -184,7 +184,7 @@ def enrich_with_kits(jobs: list[dict], persist: bool = True) -> None:
     added = 0
     if unknown and not facts:
         print("  [AppKit] no fact sheet (APPKIT_FACTS secret / personal/facts.md) "
-              "— skipping answer drafting")
+              "\u2014 skipping answer drafting")
     elif unknown:
         try:
             import anthropic
