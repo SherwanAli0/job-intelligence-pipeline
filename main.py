@@ -1204,12 +1204,13 @@ def _body_retry_ids() -> set[str]:
         return set()
 
 
-def _body_retry_update(unresolved_ids: list[str]) -> set[str]:
-    """Record one more attempt for each unresolved id. Returns the ids that
-    still have attempts left and must therefore NOT be marked seen."""
-    ids = [i for i in dict.fromkeys(unresolved_ids or []) if i]
+def _retry_update(ids_in: list[str], path: Path, max_attempts: int,
+                  label: str, what: str) -> set[str]:
+    """Record one more attempt for each id. Returns the ids that still have
+    attempts left and must therefore NOT be marked seen."""
+    ids = [i for i in dict.fromkeys(ids_in or []) if i]
     try:
-        raw = storage.read_text(str(_BODY_RETRY_FILE))
+        raw = storage.read_text(str(path))
         attempts = dict(json.loads(raw)) if raw else {}
     except Exception:
         attempts = {}
@@ -1217,22 +1218,45 @@ def _body_retry_update(unresolved_ids: list[str]) -> set[str]:
     nxt: dict[str, int] = {}
     for i in ids:
         n = int(attempts.get(i, 0) or 0) + 1
-        if n < _BODY_RETRY_MAX:
+        if n < max_attempts:
             nxt[i] = n
             keep.add(i)
     try:
-        # Only ids unresolved in THIS run are carried: anything that resolved,
+        # Only ids that failed in THIS run are carried: anything that resolved,
         # vanished or aged out drops off by itself, so the file stays tiny.
-        storage.write_text(str(_BODY_RETRY_FILE), json.dumps(nxt, indent=1))
+        if nxt != attempts:             # nothing to record: do not create the file
+            storage.write_text(str(path), json.dumps(nxt, indent=1))
     except Exception as e:
         # If the attempt count cannot be remembered, fall back to the old
-        # behaviour (mark seen) rather than risk retrying a page forever.
-        print(f"  [Body retry] could not save retry state ({e}) — marking seen")
+        # behaviour (mark seen) rather than risk retrying forever.
+        print(f"  [{label}] could not save retry state ({e}) — marking seen")
         return set()
     if ids:
-        print(f"[Body retry] {len(keep)} unresolved ads left unseen for a retry, "
-              f"{len(ids) - len(keep)} given up after {_BODY_RETRY_MAX} attempts")
+        print(f"[{label}] {len(keep)} {what} left unseen for a retry, "
+              f"{len(ids) - len(keep)} given up after {max_attempts} attempts")
     return keep
+
+
+def _body_retry_update(unresolved_ids: list[str]) -> set[str]:
+    """Record one more attempt for each unresolved id. Returns the ids that
+    still have attempts left and must therefore NOT be marked seen."""
+    return _retry_update(unresolved_ids, _BODY_RETRY_FILE, _BODY_RETRY_MAX,
+                         "Body retry", "unresolved ads")
+
+
+# Jobs the model returned no score for (API outage, malformed response) used to
+# be scored 0 and marked seen like any other, so they were never looked at
+# again. They now stay unseen for a bounded number of runs, same pattern as
+# the body retry above. A retried job still goes through every filter, the
+# freshness filter included. Only meaningful for real runs: node_persist is
+# the only caller and only reaches it when the digest was delivered.
+_SCORE_RETRY_FILE = Path("score_retry.json")
+_SCORE_RETRY_MAX = 3             # total attempts, including the first
+
+
+def _score_retry_update(failed_ids: list[str]) -> set[str]:
+    return _retry_update(failed_ids, _SCORE_RETRY_FILE, _SCORE_RETRY_MAX,
+                         "Score retry", "unscored jobs")
 
 
 # ── Tech-relevance gate (free) ───────────────────────────────────────────────
@@ -2285,7 +2309,10 @@ def node_rank(state: dict) -> dict:
 
     try:
         from application_kit import enrich_with_kits
-        enrich_with_kits(top)
+        if state.get("dry_run"):
+            enrich_with_kits(top, persist=False)    # a dry run must not write the answer bank
+        else:
+            enrich_with_kits(top)
     except Exception as e:
         print(f"  [AppKit] skipped: {e}")
 
@@ -2330,6 +2357,11 @@ def node_persist(state: dict) -> dict:
         # ...except ads whose body could not be fetched this run: those stay
         # unseen for a bounded number of retries (_body_retry_update).
         retry = _body_retry_update(state.get("body_unresolved") or [])
+        # ...and jobs the model returned no score for (see _score_retry_update).
+        from scorer import SCORER_FAILED_PREFIX
+        retry |= _score_retry_update(
+            [j["id"] for j in state.get("scored", [])
+             if str(j.get("reason", "")).startswith(SCORER_FAILED_PREFIX)])
         seen.update({j["id"]: today for j in all_jobs if j["id"] not in retry})
         save_seen(seen)
         # Remember what was actually EMAILED by company+title, so the same

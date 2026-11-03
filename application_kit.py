@@ -145,11 +145,14 @@ def _greenhouse_questions(url: str) -> list[str]:
         return []
 
 
-def enrich_with_kits(jobs: list[dict]) -> None:
+def enrich_with_kits(jobs: list[dict], persist: bool = True) -> None:
     """
     For up to MAX_KIT_JOBS Greenhouse-hosted jobs, attach j['app_kit'] = list of
     {q, a}. Answers come from the bank first; unknowns are drafted in ONE Haiku
     call and saved back to the bank. Mutates in place; never raises.
+
+    persist=False (a dry run) still drafts and attaches the answers in memory
+    but never writes the bank: a dry run must not change state.
     """
     # The fact sheet and the banked answers were written for Werkstudent roles
     # ("hourly Werkstudent rate", "available alongside my M.Sc."). A full-time
@@ -230,7 +233,7 @@ def enrich_with_kits(jobs: list[dict]) -> None:
                         continue
                     bank[_norm_q(qlist[i])] = a
                     added += 1
-            if added:                       # never write the bank back when nothing was added
+            if added and persist:           # never write the bank back when nothing was added
                 save_bank(bank)
         except Exception as e:
             print(f"  [AppKit] drafting failed: {e}")
