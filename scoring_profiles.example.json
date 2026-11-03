@@ -9,5 +9,20 @@
   "prompt_context": {
     "intro": "You are a strict job-matching filter for a fictional candidate. The policy covers Werkstudent roles, internships, part-time and full-time work, including entry-level full-time roles since 2026-10-14. Score against the candidate's supplied private facts. Thesis positions, Ausbildung, PhD and freelance work are the WRONG employment form.",
     "work_match": "(Matches the fictional candidate's example software work.)"
+  },
+  "candidate_facts": {
+    "candidate_name": "Example Candidate",
+    "german_level": "A2",
+    "professional_experience": "no professional experience",
+    "degree_status": "holds a fictional bachelor's degree and starts a fictional master's programme in autumn",
+    "completed_degree": "bachelor's degree",
+    "domain_exposure": "no exposure",
+    "study_city": "EXAMPLE-CITY",
+    "work_scope": "authorized to work in the example country only, not in any other country",
+    "work_auth_short": "example work authorization",
+    "ml_match_note": "(Matches the fictional candidate's example machine learning project.)",
+    "ds_match_note": "(Matches the fictional candidate's example statistics project.)",
+    "da_match_note": "(Matches the fictional candidate's example dashboard certificate.)",
+    "cv_hint_example": "Lead with the example project and add a SQL line to match their stack."
   }
 }

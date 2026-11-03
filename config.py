@@ -46,7 +46,7 @@ def max_filter_age_hours(today=None) -> int:
 
 # Private scoring facts are required at runtime; no candidate CV is embedded.
 # Select private S3 or JOBHUNTER_PROFILE_FILE. See aws/private-profiles.md.
-from profile_loader import ProfilesUnavailable, load_profiles as _load_private_profiles
+from profile_loader import FACT_NAMES, ProfilesUnavailable, load_profiles as _load_private_profiles
 _loaded_profiles = _load_private_profiles()
 CV_PROFILE_AI = _loaded_profiles.values["AI"]
 CV_PROFILE_ML = _loaded_profiles.values["ML"]
@@ -56,6 +56,11 @@ CV_PROFILE = CV_PROFILE_AI
 SCORER_PROMPT_CONTEXT = _loaded_profiles.prompt_context
 if set(SCORER_PROMPT_CONTEXT) != {"intro", "work_match"}:
     raise ProfilesUnavailable("Private scoring prompt context is required")
+# Candidate facts used in scoring prompts and rule messages (see profile_loader.FACT_NAMES).
+# The private object must contain them before this code is deployed.
+CANDIDATE_FACTS = _loaded_profiles.candidate_facts
+if set(CANDIDATE_FACTS) != FACT_NAMES:
+    raise ProfilesUnavailable("Private candidate facts are required")
 
 # -- Search queries sent to job boards -----------------------------------------
 # BALANCED across four equal tracks: AI · ML · Data Scientist · Data Analyst.
