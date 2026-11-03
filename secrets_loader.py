@@ -1,5 +1,5 @@
 """
-secrets_loader.py — pull secrets from AWS SSM Parameter Store into the process.
+secrets_loader.py - pull secrets from AWS SSM Parameter Store into the process.
 
 The pipeline reads its credentials from environment variables (ANTHROPIC_API_KEY,
 GMAIL_APP_PASSWORD, ...). On GitHub Actions those come from repo secrets; on

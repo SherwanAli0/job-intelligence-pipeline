@@ -1,5 +1,5 @@
 """
-track.py — application tracker, follow-up engine, and funnel stats (feature B5).
+track.py - application tracker, follow-up engine, and funnel stats (feature B5).
 
 You apply to jobs manually; this records them so the daily digest can:
   - remind you to follow up on applications >6 days old with no response,
@@ -7,11 +7,11 @@ You apply to jobs manually; this records them so the daily digest can:
 so after ~30 applications you KNOW which tracks/channels actually convert
 instead of guessing.
 
-State lives in applied_jobs.json — gitignored (this repo is PUBLIC and your
+State lives in applied_jobs.json - gitignored (this repo is PUBLIC and your
 application history is personal data). After every change it is mirrored to the
 APPLIED_JOBS repo secret via `gh secret set`, which is how CI sees it.
 
-CLI (run locally — the secret sync happens automatically):
+CLI (run locally - the secret sync happens automatically):
   py -3.11 track.py apply  <job-url-or-id>  ["Job Title"]  ["Company"]
   py -3.11 track.py status <job-url-or-id>  interview|rejected|offer|awaiting
   py -3.11 track.py list
@@ -82,10 +82,10 @@ def _sync_secret(data: dict) -> None:
             capture_output=True, timeout=30,
         )
         if r.returncode != 0:
-            print("(note: could not sync to GitHub secret — CI won't see this "
+            print("(note: could not sync to GitHub secret \u2014 CI won't see this "
                   "update until `gh auth login` works)")
     except Exception:
-        print("(note: gh CLI not found — tracker is local-only until it is)")
+        print("(note: gh CLI not found \u2014 tracker is local-only until it is)")
 
 
 def mark_applied(url_or_id: str, title: str = "", company: str = "") -> None:
@@ -131,7 +131,7 @@ def _days_since(iso: str) -> float:
 
 
 def get_followups() -> list[dict]:
-    """Applications still 'applied'/'awaiting' past FOLLOWUP_DAYS — need a nudge."""
+    """Applications still 'applied'/'awaiting' past FOLLOWUP_DAYS - need a nudge."""
     out = []
     for k, v in load_applied().items():
         if v.get("status") in ("applied", "awaiting"):
@@ -152,13 +152,13 @@ def get_funnel() -> dict:
 
 
 def followup_draft(job: dict) -> str:
-    """A short, ready-to-send follow-up message (no LLM — a solid template)."""
+    """A short, ready-to-send follow-up message (no LLM - a solid template)."""
     company = job.get("company") or "your team"
     title = job.get("title") or "the role"
     return (
         f"Hi, I applied for {title} at {company} about {job['days']} days ago and "
         f"remain very interested. I'd be glad to share anything that would help your "
-        f"review — is there an update on the process, or a good time to talk briefly?"
+        f"review \u2014 is there an update on the process, or a good time to talk briefly?"
     )
 
 
@@ -166,8 +166,8 @@ def conversion_stats() -> dict:
     """
     Join what the pipeline SHOWED (shown_jobs.jsonl, written at digest time
     with track/source/band) against what the owner APPLIED to and what came
-    of it. This is the join the docstring's promise — 'after ~30 applications
-    you KNOW which channels convert' — actually requires.
+    of it. This is the join the docstring's promise - 'after ~30 applications
+    you KNOW which channels convert' - actually requires.
 
     Applied entries are keyed by md5(url); shown records carry that same hash
     alongside the pipeline id, so the join is a set lookup, with company+title
@@ -227,7 +227,7 @@ def conversion_stats() -> dict:
 def _print_conversion() -> None:
     per = conversion_stats()
     if not per:
-        print("\n(no shown-jobs history yet — the conversion table appears "
+        print("\n(no shown-jobs history yet \u2014 the conversion table appears "
               "after the pipeline has digested jobs with the O2 logging live)")
         return
     for dim in ("track", "source"):

@@ -131,7 +131,7 @@ class TestUnchangedHappyPath:
 
 class TestQuotaHandling:
     """HTTP 402 is Brave's 'monthly free-tier allowance spent' response. It is
-    account-level, so every remaining query would fail too — the real incident
+    account-level, so every remaining query would fail too - the real incident
     burned three calls before giving up, and the log said nothing about quota."""
 
     def test_402_fails_fast_with_quota_message(self, monkeypatch, capsys):

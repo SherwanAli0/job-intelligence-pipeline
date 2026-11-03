@@ -232,7 +232,7 @@ class TestTwoPhaseDescriptionFetching:
 
 
 class TestBackgroundPathSalvage:
-    """The partial-results fix was first applied only to the guarded path —
+    """The partial-results fix was first applied only to the guarded path -
     but scrape_jobspy runs on the BACKGROUND path, which still discarded
     everything on grace expiry. Result: three consecutive production runs with
     linkedin=0, indeed=0, a dead-source warning in the digest, and the fix

@@ -49,7 +49,7 @@ class TestStellenwerk:
 
     def test_umlauts_survive_the_missing_charset_header(self, monkeypatch):
         """The server sends no charset, so requests would decode as
-        ISO-8859-1 and turn Köln into KÃ¶ln — which also corrupts the
+        ISO-8859-1 and turn Köln into KÃ¶ln - which also corrupts the
         company name used as the cross-source dedup key."""
         html = STELLENWERK_HTML.replace("synalis GmbH & Co. KG", "Kölner Träger gGmbH")
 
@@ -225,7 +225,7 @@ class TestLongLivedSourceFreshness:
     def test_aggregators_still_obey_the_24h_cap(self, monkeypatch):
         """The exemption must stay narrow: the repeat problem it was built for
         is an aggregator problem, and aggregators keep the strict rule.
-        Pinned to normal mode — the 2026-08-16 catch-up day widens the live
+        Pinned to normal mode - the 2026-08-16 catch-up day widens the live
         cap to 168h, which is not what this test is about."""
         import config
         import main
@@ -269,6 +269,6 @@ class TestWiring:
 
     def test_the_greenhouse_metro_trap_is_not_configured(self):
         """boards-api.greenhouse.io/v1/boards/metro returns 200 with real
-        jobs — for Unity One, a security firm in Idaho, not METRO Düsseldorf."""
+        jobs - for Unity One, a security firm in Idaho, not METRO Düsseldorf."""
         from config import GREENHOUSE_SLUGS
         assert "metro" not in GREENHOUSE_SLUGS

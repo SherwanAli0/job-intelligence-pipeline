@@ -1,5 +1,5 @@
 """
-storage.py — where the pipeline's state files live.
+storage.py - where the pipeline's state files live.
 
 On your laptop (and on GitHub Actions) state is just files in the repo folder,
 exactly as before. On AWS Lambda the filesystem is wiped between runs, so the
@@ -112,7 +112,7 @@ def append_line(name: str, line: str) -> None:
     write_text(name, existing + line + "\n")
 
 
-# ── Run claims (mutual exclusion) ────────────────────────────────────────────
+# -- Run claims (mutual exclusion) --------------------------------------------
 # GitHub Actions prevented overlapping runs with a `concurrency` group after a
 # real collision. EventBridge has no equivalent, so the guard has to live in
 # the pipeline: two tasks that start together would both see the same jobs as
@@ -181,7 +181,7 @@ def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
         return True
     except Exception as e:
         if "PreconditionFailed" not in str(e) and "412" not in str(e):
-            # Not a lost race — don't let an unrelated S3 error silently
+            # Not a lost race - don't let an unrelated S3 error silently
             # block the run. No claim was written, so nothing is owned and
             # release() will leave the object alone. If S3 is genuinely
             # unreachable the run stops at its first state read instead.
@@ -191,9 +191,9 @@ def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
             held_raw = read_text(key)
         except StorageUnavailable as err:
             # The claim exists (412) but cannot be read. It used to be parsed
-            # as "{}", i.e. claimed in 1970, and taken over — stealing a claim
+            # as "{}", i.e. claimed in 1970, and taken over - stealing a claim
             # that could be seconds old. Not knowing is not abandonment.
-            print(f"  [Claim] {name} exists but could not be read ({err}) — exiting")
+            print(f"  [Claim] {name} exists but could not be read ({err}) \u2014 exiting")
             return False
         try:
             held = json.loads(held_raw or "{}")
@@ -201,7 +201,7 @@ def claim(name: str, ttl_seconds: int = _CLAIM_TTL_SECONDS) -> bool:
         except Exception:
             age = ttl_seconds + 1        # unparseable claim = abandoned
         if age < ttl_seconds:
-            print(f"  [Claim] {name} held by another run ({int(age)}s ago) — exiting")
+            print(f"  [Claim] {name} held by another run ({int(age)}s ago) \u2014 exiting")
             return False
         print(f"  [Claim] taking over abandoned {name} claim ({int(age)}s old)")
         write_text(key, payload)
@@ -231,7 +231,7 @@ def release(name: str) -> None:
         if held_owner != owner:
             # This run outlived its TTL and another run took the claim over.
             # Deleting it now would unlock the pipeline under that run.
-            print(f"  [Claim] {name} is now held by another run — leaving it in place")
+            print(f"  [Claim] {name} is now held by another run \u2014 leaving it in place")
             return
         _s3().delete_object(Bucket=BUCKET, Key=_key(key))
     except Exception as e:

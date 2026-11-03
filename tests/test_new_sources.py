@@ -1,6 +1,6 @@
 """
 Tests for the three sources added from the verified research sweep:
-Absolventa (D2), get-in-IT (D1), hiring.cafe (G1). All offline — fixtures
+Absolventa (D2), get-in-IT (D1), hiring.cafe (G1). All offline - fixtures
 mirror the live payloads the scrapers were built against.
 
 The bug these exist to prevent recurring: on first run all three returned

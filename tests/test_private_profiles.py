@@ -101,3 +101,20 @@ def test_no_source_keeps_local_behavior_without_creating_client(monkeypatch):
 def test_private_text_is_not_in_loaded_object_repr():
     loaded = LoadedProfiles({"AI": "DO_NOT_LOG"}, "s3")
     assert "DO_NOT_LOG" not in repr(loaded)
+
+
+def test_private_prompt_context_preserves_text_and_is_not_repr_visible():
+    context = {"intro": "Private introduction: DO_NOT_LOG\n", "work_match": "Private experience: DO_NOT_LOG"}
+    raw = json.dumps({"schema_version": 1, "profiles": profiles(), "prompt_context": context}).encode()
+    result = load_profiles(environ={"JOBHUNTER_S3_BUCKET": "test"}, s3_client=S3(raw))
+    assert result.prompt_context == context
+    assert "DO_NOT_LOG" not in repr(result)
+
+
+@pytest.mark.parametrize("context", ["DO_NOT_LOG", {"intro": "DO_NOT_LOG"}, {"intro": "DO_NOT_LOG", "work_match": None}])
+def test_malformed_private_prompt_context_is_sanitized(context, caplog):
+    raw = json.dumps({"schema_version": 1, "profiles": profiles(), "prompt_context": context}).encode()
+    with caplog.at_level(logging.WARNING):
+        result = load_profiles(profiles(), environ={"JOBHUNTER_S3_BUCKET": "test"}, s3_client=S3(raw))
+    assert result.source == "embedded"
+    assert "DO_NOT_LOG" not in caplog.text

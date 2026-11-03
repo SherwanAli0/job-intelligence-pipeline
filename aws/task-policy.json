@@ -9,7 +9,7 @@
         "s3:PutObject",
         "s3:DeleteObject"
       ],
-      "Resource": "arn:aws:s3:::job-hunter-state-278371786270/*"
+      "Resource": "arn:aws:s3:::${JOBHUNTER_S3_BUCKET}/*"
     },
     {
       "Sid": "ListOwnBucketOnly",
@@ -17,7 +17,7 @@
       "Action": [
         "s3:ListBucket"
       ],
-      "Resource": "arn:aws:s3:::job-hunter-state-278371786270"
+      "Resource": "arn:aws:s3:::${JOBHUNTER_S3_BUCKET}"
     },
     {
       "Sid": "ReadOwnParametersOnly",
@@ -28,8 +28,8 @@
         "ssm:GetParametersByPath"
       ],
       "Resource": [
-        "arn:aws:ssm:eu-central-1:278371786270:parameter/job-hunter",
-        "arn:aws:ssm:eu-central-1:278371786270:parameter/job-hunter/*"
+        "arn:aws:ssm:eu-central-1:${AWS_ACCOUNT_ID}:parameter/job-hunter",
+        "arn:aws:ssm:eu-central-1:${AWS_ACCOUNT_ID}:parameter/job-hunter/*"
       ]
     },
     {

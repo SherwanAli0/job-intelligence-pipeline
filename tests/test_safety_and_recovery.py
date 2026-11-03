@@ -25,7 +25,7 @@ def _j(title="Working Student Data", desc="", **kw):
     return base
 
 
-# ── Step 5: a source switched off on purpose stops raising alarms ────────────
+# -- Step 5: a source switched off on purpose stops raising alarms ------------
 
 class TestRetiredSourcesAreQuiet:
     def _history(self, src, n=10, value=400):
@@ -53,7 +53,7 @@ class TestRetiredSourcesAreQuiet:
         assert {"HiringCafe", "SAP"} <= main._RETIRED_SOURCES
 
 
-# ── Recovery: a catch-up day re-reads employer boards, never resends ─────────
+# -- Recovery: a catch-up day re-reads employer boards, never resends ---------
 
 class TestCatchupRecovery:
     def test_is_catchup_follows_the_configured_date(self):
@@ -142,7 +142,7 @@ class TestCatchupRecovery:
         assert len(out["top"]) == main.MAX_RESULTS + 20
 
 
-# ── Step 7: state reads fail loudly ──────────────────────────────────────────
+# -- Step 7: state reads fail loudly ------------------------------------------
 
 class _Body:
     def __init__(self, data):
@@ -264,7 +264,7 @@ class TestRunClaim:
         assert s3.deleted == []
 
 
-# ── Step 7: a failed send fails the run ──────────────────────────────────────
+# -- Step 7: a failed send fails the run --------------------------------------
 
 class TestFailedSendIsVisible:
     def _graph(self, monkeypatch, final):
@@ -340,7 +340,7 @@ class TestFailedSendIsVisible:
         assert len(attempts) == 3
 
 
-# ── Step 7: the cost meter ───────────────────────────────────────────────────
+# -- Step 7: the cost meter ---------------------------------------------------
 
 @pytest.fixture
 def usage(monkeypatch):

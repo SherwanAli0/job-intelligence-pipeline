@@ -1,5 +1,5 @@
 """
-main.py — daily job hunt orchestrator.
+main.py - daily job hunt orchestrator.
 
 Run locally:  python main.py
 Run on CI:    triggered by GitHub Actions (.github/workflows/daily.yml)
@@ -25,20 +25,20 @@ from notifier import add_to_notion, send_email
 from scrapers import scrape_all
 from scorer import score_jobs, _classify_track, _requires_fluent_german
 
-# ── A1 diversity quotas — guaranteed minimum digest slots per track ───────────
+# -- A1 diversity quotas - guaranteed minimum digest slots per track -----------
 # The market skews AI-heavy (a recent run scored 93 AI vs 4 ML), so a pure
 # score sort buries the DS/ML/DA roles Sherwan actually asked for. We reserve
 # the top-N of each track first, then fill the rest by score.
 _TRACK_QUOTA = {"DS": 6, "ML": 6, "DA": 4, "AI": 8}
 
-# ── B6 ghost-job detection ────────────────────────────────────────────────────
+# -- B6 ghost-job detection ----------------------------------------------------
 # Postings older than this are likely stale/reposted "zombie" ads that rarely
-# convert. We don't drop them (age data is imperfect) — we penalise the score
+# convert. We don't drop them (age data is imperfect) - we penalise the score
 # and dim them in the digest so fresh roles rank above them.
 _GHOST_AGE_DAYS = 45
 _GHOST_PENALTY = 8
 
-# ── C9 skill-demand radar vocabulary ──────────────────────────────────────────
+# -- C9 skill-demand radar vocabulary ------------------------------------------
 # Skills we scan every JD for, to report what the market wants most vs the CV.
 _RADAR_SKILLS = (
     "python", "sql", "pytorch", "tensorflow", "scikit-learn", "xgboost",
@@ -59,14 +59,14 @@ _CV_SKILLS = {
 }
 
 
-# ── Cross-source dedup ────────────────────────────────────────────────────────
+# -- Cross-source dedup --------------------------------------------------------
 # Same job listed on LinkedIn + the company's Greenhouse board + a web search
 # creates three competing entries. Normalize (company, title) and keep ONE,
 # preferring the most direct source.
 
 # Higher number = preferred source. ATSs > aggregators > web search.
 _SOURCE_PRIORITY: dict[str, int] = {
-    # Tier 1 — direct company ATSs (cleanest, full descriptions)
+    # Tier 1 - direct company ATSs (cleanest, full descriptions)
     "Greenhouse":      100,
     "Lever":            95,
     "Ashby":            90,
@@ -76,7 +76,7 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "SmartRecruiters":  78,
     "Amazon":           76,
     "Recruitee":        74,
-    # Tier 2 — government / aggregator job boards
+    # Tier 2 - government / aggregator job boards
     # Stellenwerk and the research institutes outrank the aggregators: they are
     # the university's own board and the employers' own postings, so the text
     # is first-hand and the roles are aimed at exactly this candidate.
@@ -122,7 +122,7 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "HiringCafe":       42,
     "Arbeitnow":        55,
     "Remotive":         50,
-    # Tier 3 — HN, search
+    # Tier 3 - HN, search
     "HN-Hiring":        40,
     "Adzuna":           38,
     "BraveSearch":      20,
@@ -135,9 +135,9 @@ _TITLE_NOISE_RE = re.compile(
     r"|\b(m/w/d|m/f/d|w/m/d|d/m/w|f/m/x|m/f/x|all\s+genders?)\b",
     re.IGNORECASE,
 )
-# Legal-form suffixes only — these are clearly the same company with/without
+# Legal-form suffixes only - these are clearly the same company with/without
 # the corporate-form word ("X GmbH" = "X"). We do NOT strip generic words
-# like "group", "tech", "labs", "ai" — those identify genuinely different
+# like "group", "tech", "labs", "ai" - those identify genuinely different
 # companies (e.g. "Acme AI" and "Acme" may be unrelated, "Foo Group" is a
 # distinct entity from "Foo"). Over-aggressive stripping caused false merges.
 _COMPANY_SUFFIX_RE = re.compile(
@@ -158,7 +158,7 @@ def _normalize(s: str) -> str:
 def _normalize_company(s: str) -> str:
     """
     Conservative dedup key: lowercase, whitespace trim, strip ONLY legal forms.
-    No non-alphanumeric stripping — that was collapsing genuinely different
+    No non-alphanumeric stripping - that was collapsing genuinely different
     companies into one. When two rows aren't clearly the same company, we
     prefer to keep both rather than merge them.
     """
@@ -176,7 +176,7 @@ def _normalize_company(s: str) -> str:
 # "Intel Corporation". The loose key keeps the company's first word (two when
 # the first is generic, so Deutsche Bahn and Deutsche Börse stay apart) and
 # drops a trailing requisition number from the title.
-_REQ_ID_TAIL = re.compile(r"[\s,;|#–-]*\(?\b(?:req(?:uisition)?|job|ref|id|r)?[\s#:.-]*\d{3,}\)?\s*$",
+_REQ_ID_TAIL = re.compile('[\\s,;|#\u2013-]*\\(?\\b(?:req(?:uisition)?|job|ref|id|r)?[\\s#:.-]*\\d{3,}\\)?\\s*$',
                           re.IGNORECASE)
 _GENERIC_FIRST_WORD = frozenset({
     "deutsche", "deutscher", "deutsches", "die", "der", "das", "the", "de", "la",
@@ -238,7 +238,7 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
     Which copy survives matters, because the key carries no location and this
     runs BEFORE the geography filters. An employer that posts the same title
     in Munich and in Köln produced one survivor; when that was the Munich
-    copy, the focus-area filter then dropped it and the Köln job was gone —
+    copy, the focus-area filter then dropped it and the Köln job was gone -
     every day, for as long as the Munich copy stayed listed. So the copy that
     is inside the focus area wins first; source priority and description
     length only break ties between copies that are equally reachable.
@@ -279,7 +279,7 @@ _GERMAN_TITLE_KEYWORDS = {
     "berichterstattung", "lieferkette", "alle", "statistiken",
 }
 
-# German function words — used constantly in German prose, essentially never in
+# German function words - used constantly in German prose, essentially never in
 # English prose, so their density is a reliable language signal.
 _GERMAN_FUNCTION_WORDS = {
     "und", "oder", "der", "die", "das", "den", "dem", "des", "ein", "eine",
@@ -314,7 +314,7 @@ _GERMAN_TITLE_FRAGMENTS = (
     "ki-", "-ki", "ki ", " ki ", "künstlich", "entwickl", "daten",
     "gestütz", "automatisier", "digitalisi", "bereich", "geschlecht",
     "abschluss", "statistik",
-    # German-market employment terms — a title using these is a German posting
+    # German-market employment terms - a title using these is a German posting
     # aimed at the German system, whatever language the rest of it is in.
     #
     # "werkstudent" and "studentische" were REMOVED here in the Bonn pivot.
@@ -327,14 +327,14 @@ _GERMAN_TITLE_FRAGMENTS = (
     "ausbildung", "duales", "dualer", "berufserfahren",
 )
 
-# ── Location filter — Germany on-site OR remote that covers Germany ──────────
+# -- Location filter - Germany on-site OR remote that covers Germany ----------
 # Sherwan studies in Bonn (NRW) and pays German taxes. He needs jobs he can
-# actually do FROM Germany — F2F/hybrid in Germany, OR a remote role that
+# actually do FROM Germany - F2F/hybrid in Germany, OR a remote role that
 # explicitly allows Germany-based hires. A Poland F2F job is useless even
 # though Poland is in the EU; a "Spain HQ, fully remote in EU" job IS useful
 # because Germany is covered.
 
-# Shared with scorer.py's hard disqualifier — single source of truth in
+# Shared with scorer.py's hard disqualifier - single source of truth in
 # filters.py so the two stages can never drift apart again.
 from filters import (
     GERMANY_TERMS as _GERMANY_TERMS,
@@ -348,7 +348,7 @@ from filters import (
 )
 
 
-# Specific non-EU cities/countries — positive identification triggers drop.
+# Specific non-EU cities/countries - positive identification triggers drop.
 # Anything NOT in this list and NOT in _GERMANY_TERMS is treated as "unknown"
 # and KEPT, so the scorer can decide from the description.
 _NON_EU_LOCATIONS = (
@@ -445,7 +445,7 @@ def _is_attendable_from_germany(j: dict) -> bool:
             return True
         if any(s in desc for s in _REMOTE_COVERS_GERMANY_SIGNALS):
             return True
-        # Plain "Remote" with no coverage signal — could still be EU/global.
+        # Plain "Remote" with no coverage signal - could still be EU/global.
         # Recall over precision: KEEP and let the scorer judge.
         return True
 
@@ -453,18 +453,18 @@ def _is_attendable_from_germany(j: dict) -> bool:
     # (use loc + first 200 chars of desc to catch JDs like "based in Mumbai")
     loc_check = f" {loc} {desc[:200]} "
     if any(s in loc_check for s in _NON_EU_LOCATIONS):
-        # Non-EU positively identified — only keep if description says
+        # Non-EU positively identified - only keep if description says
         # explicit remote-from-EU coverage
         if any(s in desc for s in _REMOTE_COVERS_GERMANY_SIGNALS):
             return True
         return False
 
-    # Location is unknown to us — could be a small German town, EU city, etc.
+    # Location is unknown to us - could be a small German town, EU city, etc.
     # Default KEEP so the scorer can decide.
     return True
 
 
-# Softening phrases — if one appears near a years-of-experience mention, the
+# Softening phrases - if one appears near a years-of-experience mention, the
 # requirement is a wish, not a wall. German ads inflate requirements; a
 # softened "2-3 years" routinely interviews fresh grads with internships.
 # "Several years of experience" written in words rather than digits. German
@@ -496,7 +496,7 @@ _EXP_SOFTENERS = (
 
 # Titles that mark a role as designed for fresh graduates. Such postings
 # often still boilerplate "X years experience" in the body (e.g. Airbus VIE
-# programmes) — the title-level intent wins, so they skip the experience drop.
+# programmes) - the title-level intent wins, so they skip the experience drop.
 _GRADUATE_TITLE_RE = None  # compiled lazily below
 
 
@@ -523,12 +523,12 @@ def _no_experience_overload(j: dict) -> bool:
                             bare "2 years experience" without a hard word)
 
     Graduate immunity: titles containing graduate/trainee/VIE/intern/
-    Praktikum/Absolvent/entry-level/junior are designed for fresh grads —
+    Praktikum/Absolvent/entry-level/junior are designed for fresh grads -
     body-text year mentions are boilerplate there, so they always KEEP.
     (Werkstudent roles are still dropped by the scorer's own check.)
 
     Guards: calendar years (2024), team sizes ("team of 25"), "24/7", salary
-    figures never match — the number must sit next to year(s)/Jahre in an
+    figures never match - the number must sit next to year(s)/Jahre in an
     experience context, and range right-hand sides don't count.
     """
     import re
@@ -566,19 +566,19 @@ def _no_experience_overload(j: dict) -> bool:
         if not _softened(m.start(), m.end()):
             return False
 
-    # (pattern, hard_requirement, value_extractor) — value from group(1)
+    # (pattern, hard_requirement, value_extractor) - value from group(1)
     checks = [
-        # "N+ years" — the + sign is itself a hard minimum
+        # "N+ years" - the + sign is itself a hard minimum
         (r"(?<![-\d])(\d+)\+\s*years?\b", True, int),
-        # "N-M years" / "N to M years" — range; lower bound, treated as soft
+        # "N-M years" / "N to M years" - range; lower bound, treated as soft
         # unless a hard word appears nearby (handled via the hard patterns too)
-        (r"(?<![-\d])(\d+)\s*(?:[-–]|to)\s*\d+\s*years?\b", False, int),
-        # "minimum N years" / "at least N years" — hard by definition
+        ('(?<![-\\d])(\\d+)\\s*(?:[-\u2013]|to)\\s*\\d+\\s*years?\\b', False, int),
+        # "minimum N years" / "at least N years" - hard by definition
         (r"\b(?:minimum|at\s+least)\s+(?:of\s+)?(\d+)\+?\s*years?\b", True, int),
-        # bare "N years (of) experience" — soft unless preceded by hard words
+        # bare "N years (of) experience" - soft unless preceded by hard words
         (r"(?<![-\d])(?<!up to )(?<!maximum )(?<!max )"
          r"(\d+)\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,3}experience\b", False, int),
-        # "experience: N years" in a requirements table — hard
+        # "experience: N years" in a requirements table - hard
         (r"\bexperience\s*:?\s*(\d+)\+?\s*years?\b", True, int),
         # German: "N+ Jahre" hard; "N Jahre Berufserfahrung" bare soft;
         # "mindestens N Jahre" hard
@@ -604,7 +604,7 @@ def _no_experience_overload(j: dict) -> bool:
     return True
 
 
-# Senior-title detector — robust against ALL the ways recruiters format titles:
+# Senior-title detector - robust against ALL the ways recruiters format titles:
 #   "Senior AI Engineer", "Senior_AI_Engineer" (LinkedIn slug),
 #   "Senior-Engineer", "(Senior)", "AI Engineer, Senior",
 #   "Lead/Principal Data Scientist", "Engineer III/IV"
@@ -625,7 +625,7 @@ _RE_SENIOR_IN_TITLE = _re_senior.compile(
 
 
 # "(Senior)" as a PARENTHESIZED prefix is German-ad convention for "senior
-# OPTIONAL — mid/junior candidates also considered" (e.g. "(Senior) Applied
+# OPTIONAL - mid/junior candidates also considered" (e.g. "(Senior) Applied
 # Scientist"). Strip that token before the seniority test so those roles
 # survive; a bare "Senior Applied Scientist" still drops.
 _RE_OPTIONAL_SENIOR = _re_senior.compile(r"\(\s*senior\s*\)", _re_senior.IGNORECASE)
@@ -669,7 +669,7 @@ def _not_fulltime_senior(j: dict) -> bool:
 
     Allows the role through ONLY if a junior/entry/intern/graduate qualifier
     is also present in the title (e.g. "Junior Engineering Manager" is rare
-    but legitimate) — or if the ONLY seniority marker is a parenthesized
+    but legitimate) - or if the ONLY seniority marker is a parenthesized
     "(Senior)" prefix, which in German ads means the level is optional.
     """
     title = j.get("title", "")
@@ -687,7 +687,7 @@ def _not_fulltime_senior(j: dict) -> bool:
             return True
         return False
 
-    # Title looks fine — check whether the body advertises a senior role. Only
+    # Title looks fine - check whether the body advertises a senior role. Only
     # the opening is scanned; "senior stakeholders" deeper in a post is common
     # and harmless, so a wider scan would kill junior-suitable jobs.
     head = (j.get("description") or "")[:_BODY_SENIORITY_SCAN_CHARS]
@@ -710,7 +710,7 @@ _MASTERS_TRIGGER_PATTERNS = (
     r"\bmasterabschluss\b",
 )
 
-# Softening / preference phrases — if any appear in the surrounding window
+# Softening / preference phrases - if any appear in the surrounding window
 # (±80 chars), the degree mention is treated as nice-to-have, not required.
 _MASTERS_SOFTENING = (
     "preferred", "is a plus", "would be a plus", "is preferred",
@@ -744,7 +744,7 @@ _RE_BACHELOR_NOT_ENOUGH = re.compile(
     re.IGNORECASE,
 )
 
-# Exclusion contexts — these contain the trigger phrase but aren't degree
+# Exclusion contexts - these contain the trigger phrase but aren't degree
 # requirements at all. If detected in the surrounding window, skip the match.
 _MASTERS_EXCLUSION_CONTEXTS = (
     # Werkstudent ads describe ENROLLMENT ("enrolled in a Bachelor's or
@@ -772,7 +772,7 @@ def _no_masters_required(j: dict) -> bool:
       - The window contains an exclusion phrase ("scrum master", "master
         data", "masterclass", "master branch", …)
 
-    A Bachelor's requirement on its own is NOT a trigger here — we only
+    A Bachelor's requirement on its own is NOT a trigger here - we only
     react to Master/PhD mentions. A mention that sits next to a Bachelor
     alternative ("Bachelor's or Master's", "BSc/MSc", "or equivalent") is not
     a requirement either.
@@ -824,8 +824,8 @@ def _reads_as_english(text: str) -> bool:
     """Long enough to judge AND almost free of German function words.
 
     Deliberately stricter than 'not German': it demands positive evidence, so
-    a two-line stub description can never qualify. Bilingual ads — German
-    version first and English version second, or the reverse — are judged
+    a two-line stub description can never qualify. Bilingual ads - German
+    version first and English version second, or the reverse - are judged
     on each half as well, so an ad that carries a full English version is
     kept even though the whole text is half German.
     """
@@ -844,7 +844,7 @@ def _reads_as_english(text: str) -> bool:
 def _is_english_friendly(j: dict) -> bool:
     """Send only ads whose body positively reads as English.
 
-    HISTORY — this rule has now flipped FOUR times. Read this before touching
+    HISTORY - this rule has now flipped FOUR times. Read this before touching
     it, because each flip was a deliberate owner decision, not a bug:
       1. Originally German bodies were dropped for every role.
       2. 2026-08-15: student roles EXEMPTED. The ad-language test had killed
@@ -864,7 +864,7 @@ def _is_english_friendly(j: dict) -> bool:
     The test is positive evidence, not absence of German: at least 25 words
     and under half the German-body threshold in German function words
     (_reads_as_english, which also judges bilingual ads on their halves).
-    Empty and stub bodies fail — node_filter fetches the full ad for those
+    Empty and stub bodies fail - node_filter fetches the full ad for those
     first (_fill_missing_bodies), so an English ad that arrived as a snippet
     is not thrown away unread. There is no student exemption and no C1
     special case any more; the scorer's pre-screen still drops an English ad
@@ -880,14 +880,14 @@ def _is_english_friendly(j: dict) -> bool:
     return _reads_as_english((j.get("description") or "").lower())
 
 
-# ── Werkstudent mode: student roles only, commutable from Bonn or DE-remote ──
-# The owner starts an M.Sc. at the University of Bonn in October 2026. The
+# -- Werkstudent mode: student roles only, commutable from Bonn or DE-remote --
+# Student-role eligibility is a configured search policy. The
 # pipeline hunted EXCLUSIVELY for Werkstudent-class roles that are workable
 # alongside those studies; since 2026-10-14 internships, part-time and
 # entry-level full-time roles are in the pool too (see _is_eligible_form).
 #
 # "Commutable" is an EXPLICIT list of places within roughly one hour by train
-# from Bonn Hbf, not a blanket NRW match — NRW includes Bielefeld and Münster
+# from Bonn Hbf, not a blanket NRW match - NRW includes Bielefeld and Münster
 # at 2+ hours. Anchors verified by rail time: Köln ~19-26 min, Koblenz ~32-47,
 # Düsseldorf ~35-57; Aachen checked and EXCLUDED at 1h11+. The rest are the
 # stations on those same lines.
@@ -926,7 +926,7 @@ _NON_COMMUTABLE_DE_CITIES = (
 # places around bonn". So a genuinely remote role is in scope wherever the
 # employer sits, while anything requiring presence must be in the belt.
 #
-# German ads rarely say "fully remote" — they say Homeoffice, mobiles Arbeiten
+# German ads rarely say "fully remote" - they say Homeoffice, mobiles Arbeiten
 # or ortsunabhängig, and the old list caught almost none of that.
 _DE_REMOTE_SIGNALS = (
     "100% remote", "100 % remote", "fully remote", "vollständig remote",
@@ -945,7 +945,7 @@ _DE_REMOTE_SIGNALS = (
 
 # Partial-presence signals. These BEAT the remote signals above: "Teilweise
 # Home-Office" is the single most common phrase on German job ads and it means
-# hybrid, not remote — there are office days, so the office has to be
+# hybrid, not remote - there are office days, so the office has to be
 # reachable. Treating it as remote would let Munich and Berlin hybrid roles
 # back in through the side door.
 _HYBRID_SIGNALS = (
@@ -977,7 +977,7 @@ def _is_full_remote(loc: str, desc: str) -> bool:
 
 def _is_commutable_or_remote(j: dict) -> bool:
     """Keep only: on-site/hybrid within ~1h of Bonn, or genuinely DE-remote.
-    Unknown location is kept — absence of evidence is not Berlin."""
+    Unknown location is kept - absence of evidence is not Berlin."""
     loc = (j.get("location") or "").lower()
     desc = (j.get("description") or "").lower()
 
@@ -993,7 +993,7 @@ def _is_commutable_or_remote(j: dict) -> bool:
 
 
 
-# ── Focus area (2026-09-07, second decision of the day) ─────────────────────
+# -- Focus area (2026-09-07, second decision of the day) ---------------------
 # The morning's rule was Germany-wide with the belt only ordering the digest.
 # After the first English-only digest (55 jobs, mostly Berlin and Munich
 # on-site) the owner narrowed it: "from now on we focus on hybrid, remote and
@@ -1136,7 +1136,7 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     Uses the aggregators' paced fetcher (LinkedIn slow lane included).
     Mutates in place.
 
-    Returns the ids whose body is STILL unresolved — the fetch failed, or the
+    Returns the ids whose body is STILL unresolved - the fetch failed, or the
     ad was beyond the per-run cap. node_persist keeps those ids out of
     seen_jobs for a few runs (_body_retry_update), because a failed fetch is
     not a verdict on the job. Measured in production over 14 runs: 154 of 387
@@ -1158,7 +1158,7 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     over = need[cap:]
     need = need[:cap]
     if not need:
-        print("[Body fetch] nothing to fetch — every candidate already has a body")
+        print("[Body fetch] nothing to fetch \u2014 every candidate already has a body")
         return []
     before = {id(j): (j.get("description") or "") for j in need}
     # No title screen here: these rows already passed the employment-form
@@ -1181,7 +1181,7 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     return [j["id"] for j in unresolved if j.get("id")]
 
 
-# ── Retry memory for unresolved bodies ───────────────────────────────────────
+# -- Retry memory for unresolved bodies ---------------------------------------
 # node_persist marks every scraped id as seen. For an ad whose body could not
 # be fetched that turned one throttled LinkedIn response into a permanent
 # loss. These ids are therefore left OUT of seen_jobs for a bounded number of
@@ -1229,7 +1229,7 @@ def _retry_update(ids_in: list[str], path: Path, max_attempts: int,
     except Exception as e:
         # If the attempt count cannot be remembered, fall back to the old
         # behaviour (mark seen) rather than risk retrying forever.
-        print(f"  [{label}] could not save retry state ({e}) — marking seen")
+        print(f"  [{label}] could not save retry state ({e}) \u2014 marking seen")
         return set()
     if ids:
         print(f"[{label}] {len(keep)} {what} left unseen for a retry, "
@@ -1259,18 +1259,18 @@ def _score_retry_update(failed_ids: list[str]) -> set[str]:
                          "Score retry", "unscored jobs")
 
 
-# ── Tech-relevance gate (free) ───────────────────────────────────────────────
+# -- Tech-relevance gate (free) -----------------------------------------------
 # Measured 2026-09-04: of 252 jobs sent to Claude, 20 reached the digest and
 # 20 of 24 batches averaged under 30 points. The sector-sweep sources are
 # broad by design (GIZ, LVR, WDR, Lufthansa, service.bund.de) and their
 # student ads are mostly legal clerkships, nursing, social work and marketing
-# — every one of which passed the employment-form filter and then cost money
+# - every one of which passed the employment-form filter and then cost money
 # to be scored near zero. This gate asks the one question the scorer was
 # answering at ~$0.0006 a time: is there ANY tech content here at all?
 #
-# The vocabulary is built from his CV (cv/CV_*.md, config profiles) and the
+# The vocabulary is built from the candidate's private scoring profiles and the
 # skill radar: his stack, the four target tracks, and their German forms. It
-# is deliberately a positive gate only — off-target roles that mention a
+# is deliberately a positive gate only - off-target roles that mention a
 # tech term still go to the scorer, whose off-target cap handles them.
 #
 # Case-sensitive tokens are matched on the RAW text because "it" is one of the
@@ -1330,7 +1330,7 @@ _RE_STUDENT_ROLE = re.compile(
 )
 
 
-# ── Employment form: read from the TITLE (2026-10-06) ───────────────────────
+# -- Employment form: read from the TITLE (2026-10-06) -----------------------
 # _RE_STUDENT_ROLE used to be searched in the title AND the first 3,000
 # characters of the ad. Full-time ads mention these words all the time:
 # "experience through academic projects, internships" (Accenture, Junior
@@ -1400,7 +1400,7 @@ def _is_student_role(j: dict) -> bool:
 # posts them. Two deliberate differences from the student path:
 #   1. A TECH gate. "Teilzeit" appears on thousands of retail, care and
 #      admin ads in the belt; without a topical check the scorer would be
-#      paid to reject them all. Student roles keep their gate-free path —
+#      paid to reject them all. Student roles keep their gate-free path -
 #      that volume is small and the scorer's off-target cap handles it.
 #   2. Language: SAME exemption as student ads (decided 2026-09-03 after
 #      measuring that 49 of 50 reachable part-time IT ads were German-
@@ -1429,7 +1429,7 @@ def _is_part_time_tech(j: dict) -> bool:
     return bool(_RE_FORM_BODY_PART.search(desc))
 
 
-# ── Employment form (2026-10-14: full-time roles are in) ────────────────────
+# -- Employment form (2026-10-14: full-time roles are in) --------------------
 # Owner: "we will add the full time jobs as well to our pool in nrw or remote
 # germany or hybrid germany". The gate therefore accepts every regular form -
 # student work, internship, part-time AND full-time - and keeps out only the
@@ -1589,10 +1589,10 @@ def _fulltime_title_ok(j: dict) -> bool:
     return _looks_like_posting_url(j)
 
 
-# ── Digest memory by company+title, not just URL ─────────────────────────────
+# -- Digest memory by company+title, not just URL -----------------------------
 # seen_jobs.json remembers URLs (ids), but some sources mint a NEW url for the
-# same posting on every scrape — Adzuna's redirect links carry per-request
-# tracking tokens — so "RWE AG / AI & Data Engineer" was emailed on consecutive
+# same posting on every scrape - Adzuna's redirect links carry per-request
+# tracking tokens - so "RWE AG / AI & Data Engineer" was emailed on consecutive
 # days as a "new" job. Once a job has been in a digest, its normalized
 # (company, title) is remembered here and it never appears again, whatever URL
 # or source it arrives through next time.
@@ -1621,7 +1621,7 @@ def save_digested(d: dict[str, str]) -> None:
     storage.write_text(DIGESTED_FILE.name, json.dumps(dict(sorted(kept.items())), indent=2))
 
 
-# ── O2: shown-jobs log — the join data the tracker's promise depends on ──────
+# -- O2: shown-jobs log - the join data the tracker's promise depends on ------
 # track.py's docstring promises "after ~30 applications you KNOW which tracks/
 # channels actually convert", but nothing recorded WHAT was shown with which
 # features: digested_keys.json is only company::title→date. This log captures
@@ -1643,7 +1643,7 @@ def _shown_record(j: dict, band: str, shown_at: str) -> dict:
     url = (j.get("url") or "").strip()
     return {
         "id": j.get("id", ""),
-        # track.py keys applied jobs by md5(url) — record it so the join works
+        # track.py keys applied jobs by md5(url) - record it so the join works
         # even though pipeline ids hash url+title+company.
         "url_hash": _url_hash(j),
         "key": _digest_key(j),
@@ -1698,12 +1698,12 @@ def _record_shown(top: list[dict], near: list[dict]) -> None:
         print(f"  [Shown] could not record shown jobs: {e}")
 
 
-# ── Freshness cap for the digest ─────────────────────────────────────────────
+# -- Freshness cap for the digest ---------------------------------------------
 # The point of running twice a day is applying FAST. A posting the pipeline
 # discovers 6 days after it went up has hundreds of applicants already, so
 # jobs with a KNOWN posting age beyond this never reach the digest. Unknown
-# ages are kept — several boards omit dates, and absent evidence is not age.
-# Base value only — _is_fresh_enough consults config.max_posting_age_hours(),
+# ages are kept - several boards omit dates, and absent evidence is not age.
+# Base value only - _is_fresh_enough consults config.max_posting_age_hours(),
 # which widens to 7 days during the one-time 2026-08-16 catch-up window.
 _MAX_POSTING_AGE_HOURS = 48     # log label only; the live value is config.max_filter_age_hours()
 
@@ -1717,8 +1717,8 @@ _MAX_POSTING_AGE_HOURS = 48     # log label only; the live value is config.max_f
 # posting stays up until the role is filled. BWI's open Werkstudent roles carry
 # datePosted values three to six months old and are still live and accepting
 # applications; Fraunhofer and DLR publish no date at all. Applying the cap to
-# them deletes the best-matched roles in the region — the entire point of
-# adding these sources — while protecting against a problem they do not have.
+# them deletes the best-matched roles in the region - the entire point of
+# adding these sources - while protecting against a problem they do not have.
 #
 # Showing a still-open role once is safe: digested_keys.json guarantees he
 # never sees the same company+title twice, so there is no repeat risk here.
@@ -1834,9 +1834,9 @@ def save_seen(seen: dict[str, str]) -> None:
     storage.write_text(str(SEEN_FILE), json.dumps(dict(sorted(kept.items())), indent=2))
 
 
-# ── T1d: run-stats history + silent-scraper-death detection ──────────────────
+# -- T1d: run-stats history + silent-scraper-death detection ------------------
 # Every run appends one JSON line (per-source counts, filter drops, scores,
-# digest size, email flag) to run_stats.jsonl — committed by CI, so pipeline
+# digest size, email flag) to run_stats.jsonl - committed by CI, so pipeline
 # behaviour is trendable long after Actions logs expire. On each run, any
 # source that historically delivered jobs but has now returned 0 for several
 # consecutive runs raises a warning that lands IN the digest email.
@@ -1870,7 +1870,7 @@ def _load_run_history() -> list[dict]:
 def _detect_platform() -> str:
     """Which compute platform produced this run. Both runtimes set these vars
     themselves, so no configuration is needed. Recorded in run_stats.jsonl so
-    per-source counts can be compared across a platform migration — some
+    per-source counts can be compared across a platform migration - some
     sources (notably LinkedIn/Indeed via JobSpy) rate-limit datacenter IP
     ranges differently, and a degraded source looks identical to a quiet day
     unless you can group runs by where they ran."""
@@ -1908,7 +1908,7 @@ def _record_run_stats(stats: dict) -> None:
 
 # Sources switched off ON PURPOSE. Removing a scraper does not silence its
 # alarms: the median check keeps firing until enough zero runs dilute the
-# window, and the registry below never forgets a source at all — HiringCafe
+# window, and the registry below never forgets a source at all - HiringCafe
 # was disabled on 2026-09-04 and still raised a warning in every digest a
 # month later. A warning that is always there teaches the reader to skip the
 # warning line, which is the opposite of what it is for. Both checks skip
@@ -1921,7 +1921,7 @@ _RETIRED_SOURCES = frozenset({
 
 def _dead_source_warnings(history: list[dict], current: dict) -> list[str]:
     """Sources whose history says they deliver, but which have now been at
-    zero for _DEAD_RUNS consecutive runs — the silent-death signature."""
+    zero for _DEAD_RUNS consecutive runs - the silent-death signature."""
     if len(history) < _DEAD_RUNS:
         return []
     import statistics
@@ -1941,17 +1941,17 @@ def _dead_source_warnings(history: list[dict], current: dict) -> list[str]:
         if recent_zero and int(current.get(src, 0)) == 0:
             warnings.append(
                 f"Source '{src}' has returned 0 jobs for {_DEAD_RUNS} straight runs "
-                f"(historical median {int(med)}) — probably broken."
+                f"(historical median {int(med)}) \u2014 probably broken."
             )
     return warnings
 
 
-# ── Absent-source registry ───────────────────────────────────────────────────
+# -- Absent-source registry ---------------------------------------------------
 # The median alarm above has a blind spot that let THREE sources die silently
 # in one week: it judges against the last _HISTORY_WINDOW runs, so a source
-# dead for longer than the window — or dead since before a state migration,
+# dead for longer than the window - or dead since before a state migration,
 # as Arbeitsagentur was (the S3-era history begins 2026-08-10, the very day
-# it broke) — has a median of zero and is never even ELIGIBLE for its own
+# it broke) - has a median of zero and is never even ELIGIBLE for its own
 # alarm.
 #
 # The registry is the long-term memory the window lacks: every source that
@@ -1995,7 +1995,7 @@ def _absent_source_warnings_from(registry: dict, current: dict, now=None) -> lis
             out.append(
                 f"Source '{src}' has delivered nothing since "
                 f"{last.date().isoformat()} (typically ~{int(e['typical'])} "
-                f"jobs/run) — check whether its API or layout changed."
+                f"jobs/run) \u2014 check whether its API or layout changed."
             )
     return out
 
@@ -2072,7 +2072,7 @@ def _skill_radar(jobs: list[dict], top_n: int = 15) -> None:
     if not counts:
         return
     total = len(jobs)
-    print(f"\n── C9 skill-demand radar (across {total} scraped JDs) ──")
+    print(f"\n\u2500\u2500 C9 skill-demand radar (across {total} scraped JDs) \u2500\u2500")
     for skill, c in counts.most_common(top_n):
         pct = 100 * c / total
         have = skill in _CV_SKILLS
@@ -2366,7 +2366,7 @@ def node_persist(state: dict) -> dict:
         save_seen(seen)
         # Remember what was actually EMAILED by company+title, so the same
         # posting can never return under a fresh tracking URL or via another
-        # source. Near-misses count too — shown is shown.
+        # source. Near-misses count too - shown is shown.
         digested = load_digested()
         digested.update({_digest_key(j): today
                          for j in state.get("top", []) + state.get("near", [])})
@@ -2446,7 +2446,7 @@ def main(dry_run: bool = False) -> None:
     final = app.invoke({"dry_run": dry_run}, {"recursion_limit": 25})
 
     # A digest that could not be sent used to end the run with status "ok" and
-    # exit code 0 — identical, from the outside, to a quiet day with nothing
+    # exit code 0 - identical, from the outside, to a quiet day with nothing
     # to send. node_persist has already run by now and left seen_jobs
     # untouched, so raising here changes only what the run REPORTS.
     if not dry_run and isinstance(final, dict) and final.get("email_ok") is False:

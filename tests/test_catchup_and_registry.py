@@ -3,8 +3,8 @@ final batch of regional sources (igus, REWE, d.vinci, Uni Bonn, CSB).
 
 The registry exists because THREE sources died silently in one week, and the
 median-based alarm was structurally unable to see any of them: it judges
-against a rolling window, so a source dead for longer than the window — or
-dead since before a state migration, as Arbeitsagentur was — has a median of
+against a rolling window, so a source dead for longer than the window - or
+dead since before a state migration, as Arbeitsagentur was - has a median of
 zero and is never even eligible for its own alarm.
 """
 
@@ -15,7 +15,7 @@ import main
 import scrapers
 
 
-# ── Catch-up window ──────────────────────────────────────────────────────────
+# -- Catch-up window ----------------------------------------------------------
 
 class TestCatchupWindow:
     """The window has been opened three times: 2026-08-16 (the Werkstudent
@@ -48,7 +48,7 @@ class TestCatchupWindow:
         assert not main._is_fresh_enough(j)
 
 
-# ── Absent-source registry ───────────────────────────────────────────────────
+# -- Absent-source registry ---------------------------------------------------
 
 class TestAbsentSourceRegistry:
     NOW = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
@@ -91,12 +91,12 @@ class TestAbsentSourceRegistry:
         assert "_update_source_registry" in inspect.getsource(main.node_persist)
 
 
-# ── Final regional sources ───────────────────────────────────────────────────
+# -- Final regional sources ---------------------------------------------------
 
 class TestIgus:
     def test_data_envelope_is_unwrapped(self, monkeypatch):
         """The API returns {"data": [...]}; iterating the dict itself yields
-        zero jobs with no error — the silent-zero class again, caught live."""
+        zero jobs with no error - the silent-zero class again, caught live."""
         payload = {"data": [{
             "id": "abc-123", "title": "Werkstudent (m/w/d) AI & Workflow Automation",
             "slug": "werkstudent-ai", "location": "Köln",

@@ -1,5 +1,5 @@
-# ─────────────────────────────────────────────────────────────────────────────
-#  ROLLBACK ONLY — the pipeline now runs on AWS ECS Fargate.
+#
+#  ROLLBACK ONLY - the pipeline now runs on AWS ECS Fargate.
 #
 #  Migrated 2026-07-20 after source parity was verified: 8,948 postings from
 #  Fargate against a 8,901 GitHub baseline, no source regressed.
@@ -14,21 +14,21 @@
 #    aws scheduler update-schedule --name job-hunter-afternoon ... --state DISABLED
 #
 #  NOTE: state diverged at migration. This workflow reads seen_jobs.json from
-#  the repo; AWS reads s3://job-hunter-state-278371786270/state/. After a
+#  the repo; AWS reads s3://<private-state-bucket>/state/. After a
 #  rollback the first run may re-send jobs AWS has already shown you.
-# ─────────────────────────────────────────────────────────────────────────────
+#
 
 name: Daily Job Hunt
 
 on:
   schedule:
     # Two runs per day so we catch fresh postings before the applicant rush.
-    # GitHub cron is UTC and DST-naive — Berlin is UTC+1 (winter) / UTC+2 (summer).
+    # GitHub cron is UTC and DST-naive - Berlin is UTC+1 (winter) / UTC+2 (summer).
     - cron: "0 5 * * *"   # ~7 AM Berlin (winter) / ~7 AM (summer) → morning digest
     - cron: "0 13 * * *"  # ~2 PM Berlin (winter) / ~3 PM (summer) → afternoon refresh
   workflow_dispatch:        # lets you trigger it manually from GitHub
 
-# Never run two hunts at once — a manual run colliding with a cron run makes
+# Never run two hunts at once - a manual run colliding with a cron run makes
 # the loser's seen_jobs.json push fail (non-fast-forward). Queue instead.
 concurrency:
   group: daily-hunt
@@ -55,10 +55,27 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -c constraints.txt
 
+      - name: Restore private scoring profiles
+        env:
+          SCORING_PROFILES_JSON: ${{ secrets.SCORING_PROFILES_JSON }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = os.environ.get("SCORING_PROFILES_JSON", "")
+          if not raw:
+              raise SystemExit("Set the encrypted SCORING_PROFILES_JSON repository secret")
+          json.loads(raw)
+          path = Path(os.environ["RUNNER_TEMP"]) / "scoring-profiles.json"
+          path.write_text(raw, encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write("JOBHUNTER_PROFILE_FILE=" + str(path) + "\n")
+          PY
+
       # Personal data never lives in this public repo. The answer bank is kept
       # between runs via the Actions cache; the application tracker arrives via
       # a repo secret (track.py syncs it up with `gh secret set` locally).
-      - name: Restore answer bank (private, cached — never committed)
+      - name: Restore answer bank (private, cached - never committed)
         uses: actions/cache@v4
         with:
           path: answers.json
@@ -80,7 +97,7 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-          # Optional — scraper is a graceful no-op if these aren't set.
+          # Optional - scraper is a graceful no-op if these aren't set.
           # Sign up at developer.adzuna.com (free, 1000 calls/month) to enable
           # coverage of Mercedes-Benz, BMW, Allianz, Deutsche Bank, P&G,
           # Unilever, and other companies whose sites are Cloudflare-blocked.
@@ -93,7 +110,7 @@ jobs:
 
       - name: Commit updated seen_jobs.json
         run: |
-          git config user.email "sheroo16.ali@gmail.com"
+          git config user.email "169561155+SherwanAli0@users.noreply.github.com"
           git config user.name "SherwanAli0"
           git add seen_jobs.json run_stats.jsonl
           git diff --cached --quiet || {

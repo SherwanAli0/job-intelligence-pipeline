@@ -117,13 +117,7 @@ whose page failed to load were marked seen and never retried, a location written
 just "Düsseldorf" was dropped by two board integrations, and keyword and page caps
 cut student roles before they were read.
 
-**Privacy architecture.** The repo is public, so personal data lives outside it by
-design: contact/salary facts in SSM Parameter Store (with a gitignored local mirror),
-drafted answers in the private S3 state bucket, and the application tracker kept
-outside the repository. None of those gitignored paths (`personal/`, `answers.json`,
-`applied_jobs.json`) appears anywhere in this repository's git history (checked
-2026-11-03). The three CV profiles in [cv/](cv/) are tracked on purpose, because the
-scorer reads them, and they contain the owner's contact e-mail address.
+**Privacy architecture.** Scoring profiles and personal prompt context load from private S3; contact and salary facts use SSM Parameter Store; drafted answers and pipeline state use private storage. Local `personal/`, CV copies, answers and rendered AWS settings are ignored. Encrypted repository secrets support the manual calibration and rollback workflows. The current source contains no embedded CV, but previous commits and old container images retain historical public data; Git history has not been rewritten. See [private profile setup](aws/private-profiles.md).
 
 ## Design decisions
 
@@ -180,7 +174,7 @@ scorer reads them, and they contain the owner's contact e-mail address.
 | [liveness.py](liveness.py) | Drops postings an employer's own API reports as closed |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
-| [tests/](tests/) | 1,295 offline tests (`pytest --collect-only -q`, 2026-11-03), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,317 offline tests (`pytest --collect-only -q`, 2026-11-03), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -191,12 +185,12 @@ IAM definitions. The simplest way to run your own copy is the GitHub Actions wor
 workflow file still carries its cron lines; whether it is enabled is a GitHub repository
 setting, not something visible in the file.
 
-1. **Fork the repo** and edit [config.py](config.py): your CV profiles, search
-   queries, and target boards.
+1. **Fork the repo**, edit search queries and target boards in [config.py](config.py), and create your private profile JSON from [the fictional schema](scoring_profiles.example.json). Keep real facts in private storage, not in source.
 2. **Add repository secrets** (Settings → Secrets and variables → Actions):
 
    | Secret | Purpose |
    |---|---|
+   | `SCORING_PROFILES_JSON` | Complete private profile JSON for calibration and the rollback workflow |
    | `ANTHROPIC_API_KEY` | Scoring ([console.anthropic.com](https://console.anthropic.com)) |
    | `GMAIL_USER` / `GMAIL_APP_PASSWORD` / `GMAIL_TO` | Digest delivery (use an [app password](https://myaccount.google.com/security)) |
    | `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` | Optional: [developer.adzuna.com](https://developer.adzuna.com), free tier |
@@ -216,6 +210,7 @@ Local run (Python 3.11, the version CI and the Docker image use; the pins in
 pip install -r requirements.txt -c constraints.txt pytest
 pytest tests/ -q           # offline test suite, no API keys or network needed
 export ANTHROPIC_API_KEY=sk-ant-...
+export JOBHUNTER_PROFILE_FILE="$PWD/personal/scoring-profiles.json"  # your real private JSON
 python main.py --dry-run   # NOT offline and NOT free, see below
 ```
 
@@ -241,7 +236,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,295 collected and passing | 2026-11-03 | `pytest tests/ -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,317 collected and passing | 2026-11-03 | `pytest tests/ -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](seen_jobs.json) |
@@ -259,4 +254,4 @@ MIT, see [LICENSE.md](LICENSE.md).
 
 ## Private scoring profiles
 
-Scoring profiles can now load from private S3 or an explicitly selected private local file. The first migration stage retains embedded text as a fallback until a successful scheduled run verifies private loading. It does not yet remove historical or embedded personal facts. See [the staged rollout](aws/private-profiles.md) and the [placeholder schema](scoring_profiles.example.json). Do not commit real profile JSON.
+Candidate facts are loaded from private S3 or an explicitly selected private local file; they are no longer embedded in config.py. See [private profile setup and rollback](aws/private-profiles.md) and the [fictional example schema](scoring_profiles.example.json). Tests use the fictional example. Normal scoring requires real private profiles and stops startup if they are missing. CV files and rendered AWS configuration stay local and ignored. Existing Git history and old images retain historical public data; this cleanup changes current source only.

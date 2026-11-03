@@ -1,5 +1,5 @@
 """
-Tests for compare_sources.py — the migration guard that catches a job source
+Tests for compare_sources.py - the migration guard that catches a job source
 silently degrading on a new compute platform.
 
 The two failure modes that matter are opposite: crying wolf on a noisy small

@@ -1,5 +1,5 @@
 """
-metrics.py — publish run telemetry to CloudWatch.
+metrics.py - publish run telemetry to CloudWatch.
 
 Cost per run has been quoted from memory all along ("about EUR 3-5/month").
 The API reports exact token usage and the run knows its own duration, so the
@@ -47,7 +47,7 @@ def publish(*, duration_seconds: float, llm_cost_usd: float, scraped: int,
             {"MetricName": "DigestSize", "Value": float(digest), "Unit": "Count"},
             {"MetricName": "NearMisses", "Value": float(near), "Unit": "Count"},
             # 1/0 so an alarm can fire on a run that scraped fine but never
-            # delivered — the failure mode that used to be invisible.
+            # delivered - the failure mode that used to be invisible.
             {"MetricName": "EmailDelivered", "Value": 1.0 if email_ok else 0.0, "Unit": "Count"},
         ]
         for name, seconds in (phases or {}).items():

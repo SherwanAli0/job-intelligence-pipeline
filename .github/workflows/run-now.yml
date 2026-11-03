@@ -1,6 +1,6 @@
 name: Run job hunt now
 
-# Trigger a hunt on demand, from a browser button — no laptop, no AWS console,
+# Trigger a hunt on demand, from a browser button - no laptop, no AWS console,
 # no CLI. GitHub → Actions → "Run job hunt now" → Run workflow.
 #
 # It starts the same ECS Fargate task the schedule uses, so it runs on the same
@@ -32,12 +32,15 @@ jobs:
       - name: Assume the deploy role via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::278371786270:role/job-hunter-deploy
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: eu-central-1
 
       - name: Start the Fargate task
         id: start
+        env:
+          NETWORK_CONFIGURATION: ${{ vars.JOBHUNTER_NETWORK_CONFIGURATION }}
         run: |
+          : "${NETWORK_CONFIGURATION:?Set the private repository network variable}"
           OVERRIDES='{}'
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             OVERRIDES='{"containerOverrides":[{"name":"job-hunter","environment":[{"name":"DRY_RUN","value":"1"}]}]}'
@@ -47,7 +50,7 @@ jobs:
             --cluster job-hunter \
             --task-definition job-hunter \
             --launch-type FARGATE \
-            --network-configuration 'awsvpcConfiguration={subnets=["subnet-0d16bf613dcad401f","subnet-07ddd1e4c738c3e64"],securityGroups=["sg-03fa4900281aa7b73"],assignPublicIp=ENABLED}' \
+            --network-configuration "$NETWORK_CONFIGURATION" \
             --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text)
 
@@ -60,7 +63,7 @@ jobs:
             echo "Mode: ${{ inputs.dry_run == true && 'DRY RUN (no email)' || 'full run (digest will be emailed)' }}"
             echo ""
             echo "Takes roughly 15-45 minutes depending on the Claude batch queue."
-            echo "It runs in AWS — closing this page does not stop it."
+            echo "It runs in AWS - closing this page does not stop it."
             echo ""
             echo "[CloudWatch logs](https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#logsV2:log-groups/log-group/\$252Fecs\$252Fjob-hunter/log-events/run\$252Fjob-hunter\$252F$ID)"
           } >> "$GITHUB_STEP_SUMMARY"

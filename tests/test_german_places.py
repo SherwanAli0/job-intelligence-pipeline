@@ -356,7 +356,7 @@ class TestNrwTownsAreNrwOnlyWhenNothingContradicts:
             assert name not in filters.NRW_PLACES, name
 
 
-# ── v3: found by the second review (wf_7c774b8d-79b) ────────────────────────
+# -- v3: found by the second review (wf_7c774b8d-79b) ------------------------
 
 class TestMultiOfficeStringsAreJudgedPerOffice:
     """A foreign CITY alone never overrides a German place; a foreign country,

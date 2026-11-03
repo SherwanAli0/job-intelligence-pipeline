@@ -1,6 +1,6 @@
 """Sector sweep batch 2: UKB (WordPress REST), rhenag (embedded JSON),
 Deutsche Bahn (db.jobs JSON), plus the d.vinci custom-host support that DZNE
-needs. All offline — fixtures mirror the live payloads."""
+needs. All offline - fixtures mirror the live payloads."""
 
 import json
 

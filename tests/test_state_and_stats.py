@@ -13,7 +13,7 @@ import track
 import application_kit as ak
 
 
-# ── T1e: seen-jobs state ──────────────────────────────────────────────────────
+# -- T1e: seen-jobs state ------------------------------------------------------
 
 class TestSeenState:
     @pytest.fixture(autouse=True)
@@ -45,7 +45,7 @@ class TestSeenState:
         assert main.load_seen() == {}
 
 
-# ── T1d: dead-source alarm ────────────────────────────────────────────────────
+# -- T1d: dead-source alarm ----------------------------------------------------
 
 class TestDeadSourceAlarm:
     HIST = [{"sources": {"XING": 140, "Adzuna": 500}}] * 5 + \
@@ -72,7 +72,7 @@ class TestDeadSourceAlarm:
         assert "Pipeline health" not in h2
 
 
-# ── B2: email result contract ─────────────────────────────────────────────────
+# -- B2: email result contract -------------------------------------------------
 
 class TestEmailGuard:
     def test_missing_creds_returns_false(self, monkeypatch):
@@ -81,7 +81,7 @@ class TestEmailGuard:
         assert notifier.send_email([]) is False
 
 
-# ── B5: tracker ───────────────────────────────────────────────────────────────
+# -- B5: tracker ---------------------------------------------------------------
 
 class TestTracker:
     @pytest.fixture(autouse=True)
@@ -115,7 +115,7 @@ class TestTracker:
         assert "Acme" in track.followup_draft(fu[0])
 
 
-# ── B4: application kit plumbing ──────────────────────────────────────────────
+# -- B4: application kit plumbing ----------------------------------------------
 
 class TestApplicationKit:
     def test_greenhouse_url_recognized(self):
@@ -141,7 +141,7 @@ class TestApplicationKit:
 
 class TestShownJobsLoop:
     """O2: the conversion join the tracker's own docstring promises. Shown
-    records must carry BOTH the pipeline id and md5(url) — track.py keys
+    records must carry BOTH the pipeline id and md5(url) - track.py keys
     applications by url hash alone, so without it the join never matches."""
 
     def _shown(self, **over):

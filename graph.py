@@ -1,5 +1,5 @@
 """
-graph.py — the pipeline as an explicit LangGraph state machine.
+graph.py - the pipeline as an explicit LangGraph state machine.
 
 The run used to be one long function: scrape, dedup, filter, score, rank,
 notify, persist. That works, but the stages and their dependencies were
@@ -106,4 +106,4 @@ def describe() -> str:
     """Human-readable topology, printed at run start so the logs show the
     shape of the pipeline that actually executed."""
     return ("scrape → filter → [new jobs?] → score → rank → notify → persist"
-            "\n                     └── none ──────────────────────→ persist")
+            "\n                     └\u2500\u2500 none \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500→ persist")

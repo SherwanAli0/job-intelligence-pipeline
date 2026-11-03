@@ -1,9 +1,13 @@
 {
   "schema_version": 1,
   "profiles": {
-    "shared": "Replace with your private shared candidate facts.",
-    "AI": "Replace with your complete private AI scoring profile, including shared facts.",
-    "ML": "Replace with your complete private ML scoring profile, including shared facts.",
-    "DS": "Replace with your complete private data science scoring profile, including shared facts."
+    "shared": "Fictional test candidate; replace with private facts. Target: working-student, internship, part-time and entry-level full-time roles. (d) a regular FULL-TIME role at entry or junior level. NOT thesis positions, Ausbildung, PhD or freelance work. ON-SITE only in the configured North Rhine-Westphalia area; a remote or hybrid role elsewhere in Germany must NOT be scored down for its location.",
+    "AI": "Fictional test candidate; replace with private facts. Target: working-student, internship, part-time and entry-level full-time roles. (d) a regular FULL-TIME role at entry or junior level. NOT thesis positions, Ausbildung, PhD or freelance work.\nProfile: AI\nExample skills: Python and data analysis. ON-SITE only in the configured North Rhine-Westphalia area; a remote or hybrid role elsewhere in Germany must NOT be scored down for its location.",
+    "ML": "Fictional test candidate; replace with private facts. Target: working-student, internship, part-time and entry-level full-time roles. (d) a regular FULL-TIME role at entry or junior level. NOT thesis positions, Ausbildung, PhD or freelance work.\nProfile: ML\nExample skills: Python and data analysis. ON-SITE only in the configured North Rhine-Westphalia area; a remote or hybrid role elsewhere in Germany must NOT be scored down for its location.",
+    "DS": "Fictional test candidate; replace with private facts. Target: working-student, internship, part-time and entry-level full-time roles. (d) a regular FULL-TIME role at entry or junior level. NOT thesis positions, Ausbildung, PhD or freelance work.\nProfile: DS\nExample skills: Python and data analysis. ON-SITE only in the configured North Rhine-Westphalia area; a remote or hybrid role elsewhere in Germany must NOT be scored down for its location."
+  },
+  "prompt_context": {
+    "intro": "You are a strict job-matching filter for a fictional candidate. The policy covers Werkstudent roles, internships, part-time and full-time work, including entry-level full-time roles since 2026-10-14. Score against the candidate's supplied private facts. Thesis positions, Ausbildung, PhD and freelance work are the WRONG employment form.",
+    "work_match": "(Matches the fictional candidate's example software work.)"
   }
 }

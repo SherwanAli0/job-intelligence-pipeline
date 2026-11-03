@@ -1,5 +1,5 @@
 """
-notifier.py — delivers scored job results via Gmail (HTML digest) and/or Notion.
+notifier.py - delivers scored job results via Gmail (HTML digest) and/or Notion.
 """
 
 import os
@@ -8,17 +8,17 @@ from datetime import date, datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ── Gmail ──────────────────────────────────────────────────────────────────────
+# -- Gmail ----------------------------------------------------------------------
 
 SCORE_COLOR = {
     "excellent": "#16a34a",   # green  85+
-    "good":      "#2563eb",   # blue   70–84
-    "decent":    "#d97706",   # amber  55–69
-    "weak":      "#ea580c",   # orange 40–54
-    "longshot":  "#71717a",   # gray   1–39
+    "good":      "#2563eb",   # blue   70-84
+    "decent":    "#d97706",   # amber  55-69
+    "weak":      "#ea580c",   # orange 40-54
+    "longshot":  "#71717a",   # gray   1-39
 }
 
-# A job posted this recently gets the 🔥 fresh badge — first-mover advantage,
+# A job posted this recently gets the 🔥 fresh badge - first-mover advantage,
 # applications submitted within 24h convert ~4× better
 FRESH_HOURS = 12
 
@@ -51,7 +51,7 @@ def _hours_since(posted_at) -> float | None:
         if "T" in s:
             dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         elif " " in s and ":" in s:
-            # "YYYY-MM-DD HH:MM:SS" — try parsing the first 19 characters
+            # "YYYY-MM-DD HH:MM:SS" - try parsing the first 19 characters
             dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
         else:
             # Date-only "YYYY-MM-DD"
@@ -70,14 +70,14 @@ def _freshness_badge(posted_at: str) -> str:
     if hours is None:
         return ""
     if hours <= FRESH_HOURS:
-        # Truly fresh — 🔥 first-mover badge
+        # Truly fresh - 🔥 first-mover badge
         return (
             '<span style="background:#fef3c7;color:#b45309;padding:2px 8px;'
             'border-radius:10px;font-size:11px;font-weight:600;margin-left:6px;'
             f'">🔥 {int(hours)}h ago</span>'
         )
     if hours <= 48:
-        # Still recent — quiet timestamp
+        # Still recent - quiet timestamp
         return (
             '<span style="color:#9ca3af;font-size:11px;margin-left:6px;">'
             f'{int(hours)}h ago</span>'
@@ -109,13 +109,13 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
     # Sort jobs so that fresh ones bubble to the top within their score band
     def _sort_key(j):
         h = _hours_since(j.get("posted_at", ""))
-        # primary: work mode / belt (remote, near Bonn, rest of Germany —
+        # primary: work mode / belt (remote, near Bonn, rest of Germany -
         # 2026-09-07), then score (desc), then fresher first (None → far past)
         fresh_rank = h if h is not None else 1e9
         return (j.get("_where_rank", 3), -j.get("score", 0), fresh_rank)
     jobs = sorted(jobs, key=_sort_key)
 
-    # Near misses (35–44, flagged by main.py) render in their own dimmed
+    # Near misses (35-44, flagged by main.py) render in their own dimmed
     # section below the main table, so the score cutoff stops hiding jobs.
     main_jobs = [j for j in jobs if not j.get("near_miss")]
     near_jobs = [j for j in jobs if j.get("near_miss")]
@@ -129,7 +129,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
         if "🔥" in badge:
             fresh_count += 1
 
-        # ── Enrichment extras (all additive; render only when present) ────────
+        # -- Enrichment extras (all additive; render only when present) --------
         # Direct-apply link: apply at the company's own ATS, not the board relay.
         apply_url = (j.get("apply_url") or "").strip()
         apply_html = (
@@ -155,7 +155,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
         tailor_html = ""
         if mk or hint:
             kw = ", ".join(str(x) for x in mk[:8])
-            kw_line = (f'<b>Tailor — add/emphasise:</b> {kw}' if kw else "")
+            kw_line = (f'<b>Tailor \u2014 add/emphasise:</b> {kw}' if kw else "")
             hint_line = (f'<br>{hint}' if hint else "")
             tailor_html = (
                 f'<div style="margin-top:5px;padding:6px 9px;background:#fffbeb;'
@@ -163,7 +163,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
                 f'font-size:12px;">✍️ {kw_line}{hint_line}</div>'
             )
 
-        # B4: Application Kit — pre-drafted screening-question answers
+        # B4: Application Kit - pre-drafted screening-question answers
         kit = j.get("app_kit") or []
         kit_html = ""
         if kit:
@@ -179,7 +179,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             )
 
         # Work mode + belt label (2026-09-07: Germany-wide, English-only
-        # digest — the city and mode are what he decides on)
+        # digest - the city and mode are what he decides on)
         where = j.get("_where") or ""
         where_html = ""
         if where:
@@ -222,7 +222,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
           </td>
           <td style="padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:center;white-space:nowrap;">
             <span style="background:{color};color:#fff;padding:3px 10px;border-radius:12px;font-size:13px;font-weight:600;">
-              {j['score']} — {label}
+              {j['score']} \u2014 {label}
             </span><br>
             <span style="color:#9ca3af;font-size:11px;">{j['source']}</span>
           </td>
@@ -232,19 +232,19 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
         else:
             rows += row_html
 
-    # Near-miss section — only rendered when main.py flagged any
+    # Near-miss section - only rendered when main.py flagged any
     near_html = ""
     if near_rows:
         near_html = f"""
       <div style="margin-top:22px;padding:10px 14px;background:#f4f4f5;border-radius:6px 6px 0 0;">
-        <div style="font-size:13px;font-weight:700;color:#52525b;">🕵️ Near misses ({len(near_jobs)}) — scored 35–44, just under the cutoff</div>
-        <div style="font-size:11px;color:#a1a1aa;">The scorer wasn't convinced. Skim them anyway — miscalibrated good matches land here.</div>
+        <div style="font-size:13px;font-weight:700;color:#52525b;">🕵️ Near misses ({len(near_jobs)}) \u2014 scored 35\u201344, just under the cutoff</div>
+        <div style="font-size:11px;color:#a1a1aa;">The scorer wasn't convinced. Skim them anyway \u2014 miscalibrated good matches land here.</div>
       </div>
       <table style="width:100%;border-collapse:collapse;">
         <tbody>{near_rows}</tbody>
       </table>"""
 
-    # ── B5: follow-up reminders + application funnel (from track.py) ──────────
+    # -- B5: follow-up reminders + application funnel (from track.py) ----------
     tracker_html = ""
     try:
         import track
@@ -262,7 +262,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
                     f'<div style="margin-top:8px;padding:8px 10px;background:#fff;'
                     f'border:1px solid #fde68a;border-radius:6px;">'
                     f'<b style="font-size:12px;color:#92400e;">{j.get("title","")} @ {j.get("company","")}</b>'
-                    f' <span style="color:#a16207;font-size:11px;">— {j["days"]}d, no response{stale}</span>'
+                    f' <span style="color:#a16207;font-size:11px;">\u2014 {j["days"]}d, no response{stale}</span>'
                     f'<div style="color:#57534e;font-size:12px;margin-top:3px;font-style:italic;">&ldquo;{draft}&rdquo;</div>'
                     f'</div>'
                 )
@@ -292,7 +292,7 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
               box-shadow:0 1px 3px rgba(0,0,0,.1);">
 
     <div style="background:#1e3a5f;padding:24px 28px;">
-      <h1 style="color:#fff;margin:0;font-size:20px;">🎯 Job Digest — {today}</h1>
+      <h1 style="color:#fff;margin:0;font-size:20px;">🎯 Job Digest \u2014 {today}</h1>
       <p style="color:#93c5fd;margin:6px 0 0;font-size:14px;">
         {len(main_jobs)} new matches{f" · {len(near_jobs)} near misses" if near_jobs else ""} · remote first, then near Bonn, then NRW{fresh_summary}
       </p>
@@ -328,7 +328,7 @@ _SMTP_RETRY_WAITS = (5, 20, 0)
 
 
 def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
-    """Send the digest. Returns True only on confirmed delivery — main.py uses
+    """Send the digest. Returns True only on confirmed delivery - main.py uses
     this to decide whether jobs may be marked 'seen' (a failed send must not
     bury the day's matches). `warnings` are pipeline-health notes rendered as
     a banner (e.g. a scraper that has silently died)."""
@@ -348,7 +348,7 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     subject_prefix = f"🔥 {fresh_count} fresh · " if fresh_count else "🎯 "
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"{subject_prefix}{len(jobs)} job matches — {today}"
+    msg["Subject"] = f"{subject_prefix}{len(jobs)} job matches \u2014 {today}"
     msg["From"]    = gmail_user
     msg["To"]      = gmail_to
 
@@ -385,7 +385,7 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     return False
 
 
-# ── Notion ─────────────────────────────────────────────────────────────────────
+# -- Notion ---------------------------------------------------------------------
 
 def add_to_notion(jobs: list[dict]) -> None:
     notion_token = os.environ.get("NOTION_TOKEN")

@@ -1,5 +1,5 @@
 """
-compare_sources.py — did any job source silently degrade after a migration?
+compare_sources.py - did any job source silently degrade after a migration?
 
 A source that returns 12 postings instead of 300 produces a completely green
 run: no exception, no empty result, no alarm. The existing dead-source warning
@@ -32,7 +32,7 @@ STATS_FILE = Path("run_stats.jsonl")
 # median. Small sources are genuinely noisy: `indeed` swung 70 -> 46 (-34%)
 # between two healthy GitHub runs purely on scrape timing, and a median-based
 # test flags that as a regression. Comparing against the observed floor asks
-# the right question — "is this worse than any healthy run ever was?" — which
+# the right question - "is this worse than any healthy run ever was?" - which
 # is noise-tolerant while still catching a block (LinkedIn 396 -> 8 is far
 # below its floor of 360).
 _DROP_PCT = 40        # percent below the baseline floor
@@ -46,7 +46,7 @@ _IP_DROP_PCT = 25
 
 def load_runs() -> list[dict]:
     if not STATS_FILE.exists():
-        sys.exit(f"{STATS_FILE} not found — run the pipeline at least once first.")
+        sys.exit(f"{STATS_FILE} not found \u2014 run the pipeline at least once first.")
     runs = []
     for line in STATS_FILE.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -135,7 +135,7 @@ def main() -> int:
     runs = load_runs()
     target_runs = [r for r in runs if _platform(r) == args.target]
     if not target_runs:
-        print(f"No '{args.target}' run recorded yet — run the pipeline there first, "
+        print(f"No '{args.target}' run recorded yet \u2014 run the pipeline there first, "
               f"then re-run this comparison.")
         return 0
 

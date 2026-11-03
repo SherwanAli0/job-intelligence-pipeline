@@ -1,4 +1,4 @@
-"""Shared fixtures. All tests run fully offline — no API keys, no network."""
+"""Shared fixtures. All tests run fully offline - no API keys, no network."""
 import os
 import sys
 from pathlib import Path
@@ -8,6 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # scorer.py builds an Anthropic client at import time
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-dummy")
+
+# Tests use explicitly fictional profiles, never the owner's S3 object or CV.
+os.environ["JOBHUNTER_PROFILE_FILE"] = str(Path(__file__).resolve().parent.parent / "scoring_profiles.example.json")
+
 
 import pytest
 
