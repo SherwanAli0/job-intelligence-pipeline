@@ -22,7 +22,7 @@ name: Daily Job Hunt
 
 on:
   schedule:
-    # Two runs per day so we catch fresh postings before the LinkedIn pile-up.
+    # Two runs per day so we catch fresh postings before the applicant rush.
     # GitHub cron is UTC and DST-naive — Berlin is UTC+1 (winter) / UTC+2 (summer).
     - cron: "0 5 * * *"   # ~7 AM Berlin (winter) / ~7 AM (summer) → morning digest
     - cron: "0 13 * * *"  # ~2 PM Berlin (winter) / ~3 PM (summer) → afternoon refresh
