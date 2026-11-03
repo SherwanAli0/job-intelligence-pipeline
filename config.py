@@ -44,231 +44,18 @@ def max_filter_age_hours(today=None) -> int:
     return _CATCHUP_HOURS if is_catchup(today) else _FILTER_HOURS
 
 
-# ── CV profiles (used by Claude for scoring) ──────────────────────────────────
-# THREE track-specific profiles built from the same real facts but framed for
-# their track. The scorer routes each job to the matching profile (see
-# scorer.py), so a Data Scientist job is judged against the DS-framed CV, an ML
-# job against the ML-framed CV, etc. — this stops the pipeline treating every
-# role as "a stretch for an AI person" and is what lifts DS/ML scores.
-# Human-readable copies live in cv/CV_*.md for use when actually applying.
-
-# Facts shared verbatim across all three (single source of truth for scoring
-# guardrails: language, location, work authorization, availability).
-_CV_SHARED = """
-Name: Sherwan Ali
-Location: Bonn, Germany (moving for the M.Sc.). Full work authorization (valid German residence permit).
-Status: M.Sc. Artificial Intelligence student at the UNIVERSITY OF BONN (from October 2026);
-B.Sc. Computer Engineering (Üsküdar University, graduated July 2026, grade 1.8). Recently
-completed a Software and AI internship at iseremo GmbH (Apr–Jun 2026).
-ENROLLED at a German university → FULLY ELIGIBLE for Werkstudent (working student) roles,
-up to 20h/week during the semester, more during semester breaks.
-
-TARGET: roles in AI, ML, Data Science, Data Analytics or software — any of:
-(a) Werkstudent / working-student / studentische Hilfskraft (HiWi), up to 20h/week,
-(b) an INTERNSHIP: Praktikum, Pflichtpraktikum, Praxissemester, internship,
-(c) a PART-TIME (Teilzeit) regular role of roughly 20h/week or less,
-(d) a regular FULL-TIME (Vollzeit) role at entry or junior level (added 2026-10-14 by the owner).
-All four count equally. NOT thesis positions, Ausbildung / dual study, PhD positions or freelance work.
-LOCATION (decision 2026-09-07): REMOTE or HYBRID anywhere in Germany, ON-SITE only in
-North Rhine-Westphalia or the Bonn belt (Bonn, Köln, Düsseldorf, Dortmund, Essen, Aachen,
-Münster, Koblenz ...). On-site roles elsewhere are filtered out before scoring. He lives and
-studies in Bonn, so Bonn/Köln/Düsseldorf are the easiest, but a remote or hybrid role in
-Berlin, Munich or Hamburg must NOT be scored down for its location — English-language ads
-only, and he judges the commute himself. Outside Germany remains a hard no.
-
-LANGUAGE REQUIREMENT (critical for scoring):
-- English: C1. STRONGLY prefer English-first roles or English-speaking teams.
-- German: B1. Can work in German-light environments but NOT suited for roles requiring fluent
-  or advanced German.
-- PENALISE roles requiring C1/C2 German or "verhandlungssicheres Deutsch".
-- Turkish: C1. Arabic: native. Kurdish: native.
-
-LOCATION AND WORK AUTHORIZATION (critical for scoring):
-- Authorized to work in Germany only. NOT authorized for the US, UK, or other non-EU countries.
-- PENALISE or REJECT roles that are US-only, US-remote-only, require US/UK or other non-EU work
-  authorization, or are onsite outside Germany with no Germany-remote option.
-- Werkstudent status requires enrolment in Germany and he has German work authorization,
-  so only German employers (or roles genuinely remote within Germany) are a fit.
-
-Education:
-- B.Sc. Computer Engineering, Üsküdar University, Istanbul (graduated July 2026). Programme
-  delivered in English. Final grade 1.8 (German scale, official uni-assist evaluation;
-  original GPA 3.45/4.00).
-- Coursework: Machine Learning, Deep Learning, Computer Vision, Database Systems, Statistics,
-  Data Mining.
-
-Languages: English C1, German B1, Turkish C1, Arabic native, Kurdish native.
-Certifications: IBM AI Engineering Professional Certificate (Coursera, Sep 2025);
-Google Advanced Data Analytics Professional Certificate (Coursera, Mar 2026);
-Databases and SQL for Data Science with Python (Coursera/IBM, Apr 2026).
-
-INFRASTRUCTURE / MLOps (genuine hands-on, not coursework — this is newer and
-widens the role types that fit):
-- AWS: ECS Fargate, S3, SSM Parameter Store, EventBridge, CloudWatch, ECR, IAM.
-  Designed and migrated a production pipeline onto Fargate, including container
-  images, least-privilege IAM roles, scheduled tasks and cost metrics.
-- Docker, Git, GitHub Actions CI/CD, Linux, Fly.io.
-- TREAT AS A REAL STRENGTH for MLOps, ML Platform, AI Infrastructure, Data
-  Engineering and Platform Engineer roles at junior level — these were
-  previously scored as a stretch and should no longer be.
-
-Deployed work (evidence of shipping, not just building):
-- fixyourdataset.fly.dev — live data-leakage auditor from the thesis work.
-- github.com/SherwanAli0 — thesis audit, HalluScope, recommender replication,
-  and the job-hunting pipeline, all public with CI suites.
-"""
-
-# ── DATA SCIENTIST framing — leads with statistics, experimentation, analytics ──
-CV_PROFILE_DS = _CV_SHARED + """
-Target roles: Werkstudent Data Science, Werkstudent Data Analytics, Werkstudent Business
-Intelligence, Working Student Data, studentische Hilfskraft Datenanalyse - and the same
-roles as an internship, a part-time job or an entry-level full-time job (Junior Data
-Scientist, Junior Data Analyst).
-
-Profile: Data-focused Computer Engineering graduate with strong statistical and
-experimentation grounding. Comfortable across the full analysis loop — hypothesis, study
-design, cross-validation, metric evaluation, and reproducible reporting — with SQL, Python,
-and Google-certified data-analytics tooling (Tableau, regression, statistics).
-
-Key Projects (data-science framing):
-- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rebuilt an IEEE Access 2025
-  imbalanced-classification method and reproduced only 42/143 reported numbers (29%), then
-  recovered 143/143 within 3% error by identifying the undisclosed evaluation choices.
-  Designed ERF-CSRBoost — CSRBoost's balancing front end with an ensemble-of-random-forests
-  classifier — and evaluated it on 20 datasets (the paper's 15 plus 5 chosen, incl. credit-card
-  fraud and breast-cancer screening) under 100-fold cross-validation: wins on 17, average
-  precision +0.064, p = 0.00032 (Wilcoxon signed-rank). Losses reported openly (loses on
-  FLARE-F, ties a strong baseline, worse G-Mean at the 0.5 threshold). Shipped
-  fixyourdataset.fly.dev, a live data-leakage auditor that splits before balancing.
-- FUS Recommender System Replication (4-author team): replicated an IEEE Access 2026 paper on
-  MovieLens 100k under 10-fold cross-validation; owned the collaborative-filtering and FUS
-  implementations; reproduced the headline ranking and matched MAE to four decimals
-  (0.7025 vs 0.703). Recommender systems, offline evaluation, statistical validation.
-- HalluScope, LLM evaluation (5-author team): quantitative evaluation study — computed
-  per-sentence Shannon entropy over model outputs and matched published values to ~0.02 nats
-  across 9 model-dataset cells. Measurement, metrics, statistical comparison.
-- Job Hunter (solo): Python + SQL data pipeline that ingests, dedups, scores and ranks
-  50–100 job postings/day and reports analytics on the funnel.
-
-Technical Skills (data-science emphasis):
-- Analysis & Statistics: hypothesis testing, regression, cross-validation, experiment design,
-  A/B-style evaluation, imbalanced-data methods, metric design.
-- Languages & Data: Python, SQL, Pandas, NumPy, Seaborn, Tableau (Google Advanced Data
-  Analytics), Jupyter.
-- Machine Learning: scikit-learn, XGBoost, imbalanced-learn, classification, regression,
-  recommender systems, model evaluation.
-- Also: PyTorch/TensorFlow, LLMs, Docker, Git, GitHub Actions CI/CD.
-"""
-
-# ── MACHINE LEARNING framing — leads with modelling, training, ML engineering ──
-CV_PROFILE_ML = _CV_SHARED + """
-Target roles: Werkstudent Machine Learning, Werkstudent MLOps, Working Student ML/Deep
-Learning, studentische Hilfskraft Machine Learning, research assistant (ML, paid) - and the
-same roles as an internship, a part-time job or an entry-level full-time job (Junior ML
-Engineer, Junior MLOps Engineer).
-
-Profile: Machine Learning engineer/graduate with hands-on model training, evaluation and
-reproducibility depth. Runs open-source LLMs and classical ML pipelines end to end — data,
-training, logits/metrics, cross-validation, CI — in Python with PyTorch, scikit-learn and
-XGBoost, containerized with Docker and automated with GitHub Actions.
-
-Key Projects (ML framing):
-- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rebuilt an IEEE Access 2025
-  imbalanced-classification method and reproduced only 42/143 reported numbers (29%), then
-  recovered 143/143 within 3% error by identifying the undisclosed evaluation choices.
-  Designed ERF-CSRBoost — CSRBoost's balancing front end with an ensemble-of-random-forests
-  classifier — and evaluated it on 20 datasets (the paper's 15 plus 5 chosen, incl. credit-card
-  fraud and breast-cancer screening) under 100-fold cross-validation: wins on 17, average
-  precision +0.064, p = 0.00032 (Wilcoxon signed-rank). Losses reported openly (loses on
-  FLARE-F, ties a strong baseline, worse G-Mean at the 0.5 threshold). Shipped
-  fixyourdataset.fly.dev, a live data-leakage auditor that splits before balancing.
-- HalluScope, LLM Hallucination Detection (5-author team): owned the model-generation stage —
-  ran LLaMA-3-8B, Qwen2-7B and Gemma-2-9B over 297 prompts, extracted token logits, computed
-  per-sentence Shannon entropy; reproduced the central claim across all 9 model-dataset cells
-  within ~0.02 nats. 12-test CI suite. Transformers, open-source LLM inference, evaluation.
-- FUS Recommender System Replication (4-author team): implemented collaborative-filtering and
-  FUS models on MovieLens 100k under 10-fold CV; matched published MAE to four decimals.
-- Job Hunter (solo): production-style Python ML-scoring service — batches, retries, two-stage
-  model routing (Haiku→Sonnet), structured outputs, CI/CD.
-
-Technical Skills (ML emphasis):
-- ML/DL: PyTorch, TensorFlow, scikit-learn, XGBoost, imbalanced-learn; CNNs, transformers,
-  transfer learning, computer vision, hyperparameter tuning, cross-validation, model
-  evaluation, ensemble/boosting methods.
-- LLMs: open-source LLMs (LLaMA, Qwen, Gemma), Hugging Face Transformers, token-level features,
-  LLM evaluation, RAG.
-- Engineering: Python, FastAPI, Docker, Git, GitHub Actions (CI/CD), Linux, Jupyter.
-- Also: SQL, Pandas, NumPy, Anthropic/OpenAI APIs.
-"""
-
-# ── AI / LLM framing (latest current focus) — leads with iseremo LLM/agent work ──
-CV_PROFILE_AI = _CV_SHARED + """
-Target roles: Werkstudent AI/LLM, Working Student AI Engineering, Werkstudent Künstliche
-Intelligenz (English-friendly), studentische Hilfskraft AI/GenAI - and the same roles as
-an internship, a part-time job or an entry-level full-time job (Junior AI Engineer).
-
-Profile: AI/LLM-focused Computer Engineering graduate who recently built and shipped LLM
-features in production at iseremo GmbH — Anthropic and OpenAI APIs, FastAPI services, Docker,
-prompt and system-prompt versioning — and builds agentic tools of his own. Strong Python,
-PyTorch, and open-source-LLM (LLaMA/Qwen/Gemma) foundations.
-
-Work Experience:
-- Software and AI Intern, iseremo GmbH, Düsseldorf (Apr–Jun 2026): built and tested AI features
-  in Python and FastAPI — integrated the Anthropic and OpenAI APIs, containerized with Docker,
-  worked on prompt generation and system-prompt versioning; used the WordPress REST API and Git
-  to fix live bugs in an existing codebase; improved bilingual (DE/EN) SEO/GEO; ran tests, error
-  analyses and documentation with development tooling.
-- IT Support and Web Management Intern, Salam Institute for Peace and Justice (Dec 2024 – Aug
-  2025, remote): co-led a WordPress migration/redesign for a multi-country nonprofit with zero
-  downtime; built a vendor-evaluation framework over 15+ firms; translated business needs into
-  technical specs.
-
-Key Projects (AI framing):
-- HalluScope, LLM Hallucination Detection (5-author team): ran LLaMA-3-8B, Qwen2-7B, Gemma-2-9B
-  over 297 prompts, extracted token logits, computed per-sentence Shannon entropy; reproduced
-  the central claim across all 9 model-dataset cells within ~0.02 nats. 12-test CI suite.
-- Job Hunter (solo): production agentic pipeline ingesting 8,000+ postings per run from 28+
-  sources (7 ATS APIs, government and aggregator APIs, RSS), scoring with Claude structured
-  outputs and emailing a ranked digest. Runs as a scheduled AWS ECS Fargate task — chosen
-  after measuring a 40-minute runtime against Lambda's 15-minute ceiling — with S3 state, SSM
-  secrets, EventBridge scheduling, CloudWatch metrics and a 199-test CI suite. Batch API and
-  prompt caching keep it near $0.06 per run (measured, not estimated).
-- Reproducibility Audit & Extension of CSRBoost (thesis, solo): rebuilt an IEEE Access 2025
-  imbalanced-classification method and reproduced only 42/143 reported numbers (29%), then
-  recovered 143/143 within 3% error by identifying the undisclosed evaluation choices.
-  Designed ERF-CSRBoost — CSRBoost's balancing front end with an ensemble-of-random-forests
-  classifier — and evaluated it on 20 datasets (the paper's 15 plus 5 chosen, incl. credit-card
-  fraud and breast-cancer screening) under 100-fold cross-validation: wins on 17, average
-  precision +0.064, p = 0.00032 (Wilcoxon signed-rank). Losses reported openly (loses on
-  FLARE-F, ties a strong baseline, worse G-Mean at the 0.5 threshold). Shipped
-  fixyourdataset.fly.dev, a live data-leakage auditor that splits before balancing.
-- FUS Recommender System Replication (4-author team): MovieLens 100k, 10-fold CV, matched MAE
-  to four decimals.
-
-Technical Skills (AI emphasis):
-- LLM & GenAI: Anthropic API, OpenAI API, Hugging Face Transformers, open-source LLMs
-  (LLaMA, Qwen, Gemma), prompt engineering, system-prompt versioning, RAG, agent workflows,
-  structured outputs, LLM evaluation, hallucination detection.
-- ML: PyTorch, TensorFlow, scikit-learn, XGBoost, imbalanced-learn; transformers, CV.
-- Backend & Infra: Python, FastAPI, REST APIs, Docker, Git, GitHub Actions (CI/CD), Node.js,
-  React, TypeScript, Linux, Jupyter.
-- Data: SQL, Pandas, NumPy, Seaborn.
-"""
-
-# Backward-compatible default (the AI profile is the current primary focus).
-CV_PROFILE = CV_PROFILE_AI
-
-# Private-profile migration: keep the embedded strings only until the first
-# successful scheduled run verifies the private S3 source. See aws/private-profiles.md.
-from profile_loader import load_profiles as _load_private_profiles
-_loaded_profiles = _load_private_profiles({
-    "AI": CV_PROFILE_AI, "ML": CV_PROFILE_ML, "DS": CV_PROFILE_DS, "shared": _CV_SHARED,
-})
+# Private scoring facts are required at runtime; no candidate CV is embedded.
+# Select private S3 or JOBHUNTER_PROFILE_FILE. See aws/private-profiles.md.
+from profile_loader import ProfilesUnavailable, load_profiles as _load_private_profiles
+_loaded_profiles = _load_private_profiles()
 CV_PROFILE_AI = _loaded_profiles.values["AI"]
 CV_PROFILE_ML = _loaded_profiles.values["ML"]
 CV_PROFILE_DS = _loaded_profiles.values["DS"]
 _CV_SHARED = _loaded_profiles.values["shared"]
 CV_PROFILE = CV_PROFILE_AI
+SCORER_PROMPT_CONTEXT = _loaded_profiles.prompt_context
+if set(SCORER_PROMPT_CONTEXT) != {"intro", "work_match"}:
+    raise ProfilesUnavailable("Private scoring prompt context is required")
 
 # ── Search queries sent to job boards ─────────────────────────────────────────
 # BALANCED across four equal tracks: AI · ML · Data Scientist · Data Analyst.
@@ -277,7 +64,7 @@ CV_PROFILE = CV_PROFILE_AI
 # every day. The first 16 are interleaved 4×4 (AI, ML, DS, DA, repeat) so any
 # prefix stays balanced. Post-scrape filters drop the off-targets.
 SEARCH_QUERIES = [
-    # Student-first mode (owner starts M.Sc. AI at Uni Bonn 10/2026); full-time
+    # Student and entry-level search mode; full-time
     # entry-level queries were added at the end of this list on 2026-10-14.
     # Balanced across the four tracks, German and English phrasings.
     "Werkstudent Data Science",

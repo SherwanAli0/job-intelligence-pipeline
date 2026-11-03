@@ -153,13 +153,13 @@ def test_a_broken_liveness_module_never_stops_the_digest(monkeypatch):
 
 
 # ── fact gate ────────────────────────────────────────────────────────────────
-FACTS = "Available from October 2026, up to 20 hours per week. B.Sc. grade 1.8. Contact: me@example.com. Gross salary 51,234 EUR."
+FACTS = "Available from August 2030, up to 20 hours per week. B.Sc. grade 2.4. Contact: me@example.com. Gross salary 51,234 EUR."
 
 
 class TestFactGate:
     @pytest.mark.parametrize("answer", [
-        "I can start in October 2026 and work 20 hours per week.",
-        "My B.Sc. grade is 1.8.", "You can reach me at me@example.com.", "I expect 51.234 EUR gross.",
+        "I can start in August 2030 and work 20 hours per week.",
+        "My B.Sc. grade is 2.4.", "You can reach me at me@example.com.", "I expect 51.234 EUR gross.",
         "I enjoy data work.",                      # no number at all
     ])
     def test_grounded_answers_pass(self, answer):
@@ -189,7 +189,7 @@ class TestFactGate:
         class FakeMessages:
             def create(self, **kw):
                 payload = {"answers": [{"index": 0, "answer": "I have 5 years of Python experience."},
-                                       {"index": 1, "answer": "I can start in October 2026."}]}
+                                       {"index": 1, "answer": "I can start in August 2030."}]}
                 return types.SimpleNamespace(content=[types.SimpleNamespace(text=json.dumps(payload))])
         fake = types.ModuleType("anthropic")
         fake.Anthropic = lambda api_key=None: types.SimpleNamespace(messages=FakeMessages())
@@ -199,8 +199,8 @@ class TestFactGate:
         job["_form"] = "student"
         application_kit.enrich_with_kits([job])
         answers = list(banks.values())
-        assert answers == ["I can start in October 2026."], banks
-        assert [x["a"] for x in job["app_kit"]] == ["I can start in October 2026."]
+        assert answers == ["I can start in August 2030."], banks
+        assert [x["a"] for x in job["app_kit"]] == ["I can start in August 2030."]
 
 
 # ── posting archive ──────────────────────────────────────────────────────────

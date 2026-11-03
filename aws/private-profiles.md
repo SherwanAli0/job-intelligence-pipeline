@@ -1,22 +1,28 @@
-# Private scoring profiles: staged migration
+# Private scoring profiles
 
-The scoring profiles can be read from a private S3 object instead of being maintained in public source. The JSON schema is shown in `../scoring_profiles.example.json`; it contains the full AI, ML and DS strings and their shared facts. Do not replace complete profiles with only track-specific additions. Whitespace and Unicode are preserved, so identical profile hashes mean identical text reaches the existing scoring prompt.
+The application requires real scoring profiles in private storage. `config.py` contains no embedded CV facts and supplies no fallback. Source order is an explicitly selected `JOBHUNTER_PROFILE_FILE`, otherwise private S3 when `JOBHUNTER_S3_BUCKET` is set. Missing, invalid or unavailable profiles stop startup with a sanitized error.
 
-Source order:
+The default S3 key is `state/private/scoring-profiles-v1.json`. `JOBHUNTER_S3_PREFIX` replaces `state`; `JOBHUNTER_PROFILE_S3_KEY` overrides the complete key. Keep S3 Block Public Access enabled and server-side encryption on. The existing task role reads the object without additional credentials or permissions.
 
-1. `JOBHUNTER_PROFILE_FILE`, when explicitly set, selects a private local JSON file.
-2. Otherwise, `JOBHUNTER_S3_BUCKET` selects S3. The default object key is `state/private/scoring-profiles-v1.json`; `JOBHUNTER_S3_PREFIX` replaces `state`, or `JOBHUNTER_PROFILE_S3_KEY` overrides the complete key.
-3. During this first migration stage only, an unavailable source falls back to the existing embedded strings. A warning identifies fallback without printing personal text. Setting `JOBHUNTER_REQUIRE_PRIVATE_PROFILES=1` disables fallback.
+## Local use
 
-Keep private local files under ignored `personal/`, outside the Docker build and Git. The example file contains no real personal data. The S3 object uses the existing task role; do not put credentials or personal text in repository variables. Keep S3 Block Public Access enabled and use server-side encryption. Profile contents and SDK error payloads are never logged by the loader.
+Use `scoring_profiles.example.json` as the JSON schema. It contains fictional test text, not the owner's facts. Supply complete AI, ML and DS profiles and their shared facts under schema version 1, plus `prompt_context.intro` and `prompt_context.work_match` for the existing personal prompt context; the loader preserves every character and does not add shared text automatically.
 
-## Rollout
+Keep real JSON under ignored `personal/` and select it before running the application:
 
-1. Export the existing strings to the private S3 object without editing them. Verify read-back hashes for all four strings. Do not overwrite a different existing object silently.
-2. Deploy this loader. `config.py` exposes the same profile variables, so scoring prompts, routing, models and filters do not change. Startup logs say `Scoring profiles loaded from private s3 source`; warnings indicate that the migration fallback was used.
-3. Observe the next normal 10:00 Europe/Berlin run. Require a successful task and normal completion, with private-source loading and no fallback warning. Do not start a paid scrape just to test this migration.
-4. Only after that run, remove embedded strings and public `cv/` copies, remove real deployment identifiers from tracked templates in favor of private repository variables, and make the private source mandatory. Keep Git history intact. The first-stage commit still contains embedded facts and is not the final privacy cleanup.
+```powershell
+$env:JOBHUNTER_PROFILE_FILE = (Resolve-Path personal/scoring-profiles.json).Path
+python main.py --dry-run
+```
 
-Rollback: restore the previous task definition revision or register a revision using its exact SHA-tagged image. Do not delete the private object during rollback. Existing images and Git history still contain historical public facts; this migration cleans the current application source after the run gate, not old copies.
+A dry run still scrapes live sources and pays for scoring. The offline regression command is `python -m pytest tests/ -q`; its conftest explicitly selects the fictional example, without reading the owner's private profile.
 
-Tests are offline: `python -m pytest tests/test_private_profiles.py -q`, then the full existing test suite. They cover unchanged text, source selection, malformed or unavailable objects, strict mode, bounded reads and sanitized logs.
+## GitHub Actions
+
+Manual calibration and the disabled rollback workflow restore `SCORING_PROFILES_JSON` from an encrypted repository secret into the runner's temporary directory. It contains an identical copy of the S3 JSON and is never printed, uploaded as an artifact or committed. Fargate continues to use S3. After intentionally editing profiles, synchronize the encrypted secret if those workflows should use the new text. The health check does not score jobs; its workflow selects the fictional example only to satisfy the shared config import, so it needs no real private profile.
+
+## Migration gate and rollback
+
+This cleanup must follow a full validation run on the first-stage image, with successful completion, private S3 loading and no migration fallback. The owner requested running that validation immediately rather than waiting for the next scheduled run. Rendered scoring prompts were checked for byte-for-byte equality against the pre-cleanup implementation. No prompt content, model, routing, filter or schedule changes are part of this migration.
+
+Rollback uses the previous task definition revision or its exact SHA-tagged image. Keep the private S3 object. Local CV copies remain ignored on disk; only the current public copies are removed from Git. Old commits, old image revisions and copies previously downloaded still contain historical facts; Git history is preserved.

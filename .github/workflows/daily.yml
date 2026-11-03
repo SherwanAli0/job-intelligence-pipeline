@@ -14,7 +14,7 @@
 #    aws scheduler update-schedule --name job-hunter-afternoon ... --state DISABLED
 #
 #  NOTE: state diverged at migration. This workflow reads seen_jobs.json from
-#  the repo; AWS reads s3://job-hunter-state-278371786270/state/. After a
+#  the repo; AWS reads s3://<private-state-bucket>/state/. After a
 #  rollback the first run may re-send jobs AWS has already shown you.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,6 +55,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -c constraints.txt
 
+      - name: Restore private scoring profiles
+        env:
+          SCORING_PROFILES_JSON: ${{ secrets.SCORING_PROFILES_JSON }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = os.environ.get("SCORING_PROFILES_JSON", "")
+          if not raw:
+              raise SystemExit("Set the encrypted SCORING_PROFILES_JSON repository secret")
+          json.loads(raw)
+          path = Path(os.environ["RUNNER_TEMP"]) / "scoring-profiles.json"
+          path.write_text(raw, encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write("JOBHUNTER_PROFILE_FILE=" + str(path) + "\n")
+          PY
+
       # Personal data never lives in this public repo. The answer bank is kept
       # between runs via the Actions cache; the application tracker arrives via
       # a repo secret (track.py syncs it up with `gh secret set` locally).
@@ -93,7 +110,7 @@ jobs:
 
       - name: Commit updated seen_jobs.json
         run: |
-          git config user.email "sheroo16.ali@gmail.com"
+          git config user.email "169561155+SherwanAli0@users.noreply.github.com"
           git config user.name "SherwanAli0"
           git add seen_jobs.json run_stats.jsonl
           git diff --cached --quiet || {

@@ -19,6 +19,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -c constraints.txt
 
+      - name: Restore private scoring profiles
+        env:
+          SCORING_PROFILES_JSON: ${{ secrets.SCORING_PROFILES_JSON }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = os.environ.get("SCORING_PROFILES_JSON", "")
+          if not raw:
+              raise SystemExit("Set the encrypted SCORING_PROFILES_JSON repository secret")
+          json.loads(raw)
+          path = Path(os.environ["RUNNER_TEMP"]) / "scoring-profiles.json"
+          path.write_text(raw, encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write("JOBHUNTER_PROFILE_FILE=" + str(path) + "\n")
+          PY
+
       - name: Run calibration (pre-screen + LLM band accuracy)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

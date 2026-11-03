@@ -22,4 +22,6 @@ jobs:
         run: pip install requests
 
       - name: Sweep all company boards
+        env:
+          JOBHUNTER_PROFILE_FILE: scoring_profiles.example.json
         run: python health_check.py

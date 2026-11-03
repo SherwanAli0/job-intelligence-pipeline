@@ -13,7 +13,7 @@ import time
 
 import anthropic
 
-from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS
+from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS, SCORER_PROMPT_CONTEXT
 
 # The client is built on first use, not at import time. On Lambda the API key
 # arrives from Parameter Store during startup, which happens after imports —
@@ -677,7 +677,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
-    return f"""You are a strict job-matching filter for Sherwan Ali, a Computer Engineering graduate and incoming M.Sc. Artificial Intelligence student at the University of Bonn (enrolled from October 2026). He is hunting any of: Werkstudent / working-student roles (up to 20h/week), internships (Praktikum, Pflichtpraktikum, Praxissemester, internship), part-time (Teilzeit) regular employment, AND - since 2026-10-14, his decision - regular full-time (Vollzeit) roles. He has no professional experience yet, so the full-time roles that fit are entry-level and junior ones. Thesis positions, Ausbildung / dual study, PhD positions and freelance work are the WRONG employment form, no matter how good the topical fit. Your job is to score how worth-applying-to each role is. Be honest and conservative. False positives waste Sherwan's time; false negatives are recoverable because he can adjust filters.
+    return f"""{SCORER_PROMPT_CONTEXT["intro"]}
 
 CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch — score against it directly):
 {cv_profile}
@@ -842,7 +842,7 @@ ceiling advantage over another):
   AI track — +15 if JD mentions: Claude Code, Claude Agent SDK, MCP, custom
     skills, hooks, plan/execute/review loop, LangGraph, LangChain agents,
     agentic systems, agent workflows, tool calling, function calling.
-    (Matches Sherwan's iseremo work and his own agentic projects.)
+    {SCORER_PROMPT_CONTEXT["work_match"]}
   AI track — +10 if JD mentions: LLM evaluation frameworks, RAG, vector
     databases, prompt engineering, fine-tuning (LoRA/QLoRA), Anthropic API,
     OpenAI API, Hugging Face, hallucination detection/evaluation.

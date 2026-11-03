@@ -23,3 +23,7 @@ zz.tmp
 # Retry queues contain per-run application state.
 score_retry.json
 body_retry.json
+
+# Private CV copies and rendered deployment configuration stay local.
+cv/
+.aws-rendered/

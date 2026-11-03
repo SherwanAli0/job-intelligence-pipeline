@@ -6,8 +6,8 @@
   "networkMode": "awsvpc",
   "cpu": "512",
   "memory": "2048",
-  "executionRoleArn": "arn:aws:iam::278371786270:role/jobHunterExecutionRole",
-  "taskRoleArn": "arn:aws:iam::278371786270:role/jobHunterTaskRole",
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/jobHunterExecutionRole",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/jobHunterTaskRole",
   "runtimePlatform": {
     "cpuArchitecture": "X86_64",
     "operatingSystemFamily": "LINUX"
@@ -15,7 +15,7 @@
   "containerDefinitions": [
     {
       "name": "job-hunter",
-      "image": "278371786270.dkr.ecr.eu-central-1.amazonaws.com/job-hunter:latest",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.eu-central-1.amazonaws.com/job-hunter:latest",
       "essential": true,
       "entryPoint": [
         "python"
@@ -26,7 +26,7 @@
       "environment": [
         {
           "name": "JOBHUNTER_S3_BUCKET",
-          "value": "job-hunter-state-278371786270"
+          "value": "${JOBHUNTER_S3_BUCKET}"
         },
         {
           "name": "JOBHUNTER_SSM_PREFIX",

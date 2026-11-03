@@ -177,7 +177,7 @@ def test_closed_dropped_is_part_of_the_graph_state():
 
 
 # ── fact gate ────────────────────────────────────────────────────────────────
-FACTS = "B.Sc. grade 1.8. Up to 20 hours per week. Reach me: me@example.com.au, site https://x.org/ab. Salary 51,234."
+FACTS = "B.Sc. grade 2.4. Up to 20 hours per week. Reach me: me@example.com.au, site https://x.org/ab. Salary 51,234."
 
 
 class TestFactGateBoundaries:
@@ -196,7 +196,7 @@ class TestFactGateBoundaries:
         assert application_kit.ungrounded_claims("Write to me@example.com.au or see https://x.org/ab.", FACTS) == []
 
     def test_case_and_trailing_punctuation_do_not_matter(self):
-        assert application_kit.ungrounded_claims("Grade: 1.8. Salary: 51.234!", FACTS) == []
+        assert application_kit.ungrounded_claims("Grade: 2.4. Salary: 51.234!", FACTS) == []
         assert application_kit.ungrounded_claims("ME@EXAMPLE.COM.AU", FACTS) == []
 
     def test_no_catastrophic_backtracking_on_long_input(self):
@@ -219,7 +219,7 @@ class TestKitFlow:
 
     def test_the_bank_is_not_written_back_when_every_draft_was_rejected(self, monkeypatch):
         saved = []
-        monkeypatch.setattr(application_kit, "_load_facts", lambda: "Available from October 2026.")
+        monkeypatch.setattr(application_kit, "_load_facts", lambda: "Available from August 2030.")
         monkeypatch.setattr(application_kit, "_greenhouse_questions", lambda url: ["Years of experience?"])
         monkeypatch.setattr(application_kit, "load_bank", lambda: {})
         monkeypatch.setattr(application_kit, "save_bank", lambda b: saved.append(dict(b)))

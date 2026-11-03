@@ -881,7 +881,7 @@ def _is_english_friendly(j: dict) -> bool:
 
 
 # ── Werkstudent mode: student roles only, commutable from Bonn or DE-remote ──
-# The owner starts an M.Sc. at the University of Bonn in October 2026. The
+# Student-role eligibility is a configured search policy. The
 # pipeline hunted EXCLUSIVELY for Werkstudent-class roles that are workable
 # alongside those studies; since 2026-10-14 internships, part-time and
 # entry-level full-time roles are in the pool too (see _is_eligible_form).
@@ -1268,7 +1268,7 @@ def _score_retry_update(failed_ids: list[str]) -> set[str]:
 # to be scored near zero. This gate asks the one question the scorer was
 # answering at ~$0.0006 a time: is there ANY tech content here at all?
 #
-# The vocabulary is built from his CV (cv/CV_*.md, config profiles) and the
+# The vocabulary is built from the candidate's private scoring profiles and the
 # skill radar: his stack, the four target tracks, and their German forms. It
 # is deliberately a positive gate only — off-target roles that mention a
 # tech term still go to the scorer, whose off-target cap handles them.

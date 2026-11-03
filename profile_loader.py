@@ -24,6 +24,7 @@ class ProfilesUnavailable(RuntimeError):
 class LoadedProfiles:
     values: dict[str, str] = field(repr=False)
     source: str
+    prompt_context: dict[str, str] = field(default_factory=dict, repr=False)
 
     def fingerprints(self) -> dict[str, str]:
         return {name: hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -38,13 +39,18 @@ def _validate(values) -> dict[str, str]:
     return dict(values)  # Preserve whitespace and Unicode exactly as supplied.
 
 
-def _decode(raw: bytes) -> dict[str, str]:
+def _decode(raw: bytes) -> tuple[dict[str, str], dict[str, str]]:
     if len(raw) > MAX_BYTES:
         raise ProfilesUnavailable("Scoring profile object exceeds the size limit")
     data = json.loads(raw.decode("utf-8"))
     if not isinstance(data, dict) or type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise ProfilesUnavailable("Unsupported scoring profile schema")
-    return _validate(data.get("profiles"))
+    context = data.get("prompt_context", {})
+    if not isinstance(context, dict) or (context and set(context) != {"intro", "work_match"}):
+        raise ProfilesUnavailable("Invalid private prompt context")
+    if any(not isinstance(value, str) or not value.strip() for value in context.values()):
+        raise ProfilesUnavailable("Private prompt context must contain non-empty text")
+    return _validate(data.get("profiles")), dict(context)
 
 
 def _s3_client():
@@ -85,7 +91,8 @@ def load_profiles(fallback: Mapping[str, str] | None = None, *, environ=None,
                     raw = stream.read(MAX_BYTES + 1)
                 finally:
                     stream.close()
-            loaded = LoadedProfiles(_decode(raw), source)
+            values, context = _decode(raw)
+            loaded = LoadedProfiles(values, source, context)
             print("  [Profiles] Scoring profiles loaded from private %s source" % source)
             return loaded
         except Exception:

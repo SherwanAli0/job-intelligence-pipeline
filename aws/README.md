@@ -49,26 +49,35 @@ A manual push of `:latest` (below) no longer changes what runs once a revision p
 SHA tag, because the task definition, not the tag, decides the image. After a manual
 push you would also have to register a revision that uses the new image.
 
-```bash
+The `aws/*.json` files are templates: they contain placeholders, not the owner's deployment identifiers. Create ignored `personal/aws-deployment.json` from `aws/deployment.example.json`, then render private copies before using them with AWS CLI:
+
+```powershell
+python aws/render_templates.py --config personal/aws-deployment.json --output-dir .aws-rendered
+```
+
+The rendered JSON preserves the existing template policies and network choices. Do not commit rendered files. The live deploy still copies the existing task definition and changes its image; it does not apply these initial-setup templates or alter IAM/network settings.
+
+GitHub Actions uses private repository variables `AWS_DEPLOY_ROLE_ARN` and `JOBHUNTER_NETWORK_CONFIGURATION`. They select the existing deploy role and the same network JSON; they are not credentials. Scoring facts are separate: see [private profiles](private-profiles.md). Git history and old public workflow logs retain historical identifiers.
+
+For a manual image build, obtain the registry from your private deployment settings:
+
+```powershell
+$deployment = Get-Content personal/aws-deployment.json -Raw | ConvertFrom-Json
+$registry = "{0}.dkr.ecr.{1}.amazonaws.com" -f $deployment.AWS_ACCOUNT_ID, $deployment.AWS_REGION
 docker build -t job-hunter:local .
-aws ecr get-login-password --region eu-central-1 \
-  | docker login --username AWS --password-stdin 278371786270.dkr.ecr.eu-central-1.amazonaws.com
-docker tag job-hunter:local 278371786270.dkr.ecr.eu-central-1.amazonaws.com/job-hunter:latest
-docker push 278371786270.dkr.ecr.eu-central-1.amazonaws.com/job-hunter:latest
+aws ecr get-login-password --region $deployment.AWS_REGION | docker login --username AWS --password-stdin $registry
+docker tag job-hunter:local "${registry}/job-hunter:latest"
+docker push "${registry}/job-hunter:latest"
 ```
 
 ## Running one manually
 
-```bash
-aws ecs run-task --cluster job-hunter --task-definition job-hunter --launch-type FARGATE \
-  --network-configuration 'awsvpcConfiguration={subnets=["subnet-0d16bf613dcad401f","subnet-07ddd1e4c738c3e64"],securityGroups=["sg-03fa4900281aa7b73"],assignPublicIp=ENABLED}'
+```powershell
+.\run-now.ps1 -DeploymentConfig personal/aws-deployment.json
+.\run-now.ps1 -DryRun -Watch -DeploymentConfig personal/aws-deployment.json
 ```
 
-Add `--overrides '{"containerOverrides":[{"name":"job-hunter","environment":[{"name":"DRY_RUN","value":"1"}]}]}'`
-to run the pipeline without sending email or writing any state (including the screening
-answer bank). It is not a cheap check: it still scrapes live sources and pays for the
-Claude scoring call. It also skips the overlap claim, so it can run alongside a
-scheduled run.
+A dry run still scrapes live sources and pays for scoring. It sends no email and writes no state. The normal full run sends the digest and updates state. The manual GitHub workflow uses the same private network variable.
 
 ## Gotcha worth remembering
 
