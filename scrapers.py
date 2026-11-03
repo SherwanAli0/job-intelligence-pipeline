@@ -3677,8 +3677,8 @@ def scrape_linkedin_guest() -> list[dict]:
 # -- Stellenwerk - the university job boards of Bonn, Köln and Düsseldorf -----
 # The single best-matched source in the pipeline: stellenwerk.de/bonn-rhein-sieg
 # is the joint board of the University of Bonn and Hochschule Bonn-Rhein-Sieg,
-# i.e. the board the owner's own university runs for its own students. Werkstudent
-# and HiWi roles posted here are aimed at exactly his situation and many never
+# i.e. a board run by a university for its own students. Werkstudent
+# and HiWi roles posted here are aimed at exactly the target situation and many never
 # reach LinkedIn or Indeed.
 #
 # Access is sitemap + JSON-LD on the detail page. NOTE: the site also exposes a
@@ -4130,10 +4130,10 @@ def scrape_dvinci() -> list[dict]:
     return out
 
 
-# -- Universität Bonn - the owner's own university's HiWi page ----------------
+# -- Universität Bonn - university HiWi page ---------------------------------
 # A single server-rendered page listing SHK/WHF (studentische Hilfskraft)
 # openings as PDF links. Tiny volume, zero overlap with anything else, and it
-# is literally his employer-to-be. robots.txt allows it with Crawl-delay: 1,
+# is a direct university employer. robots.txt allows it with Crawl-delay: 1,
 # honoured by the single-request design (one page, no PDF fetches).
 _UNIBONN_URL = ("https://www.uni-bonn.de/de/universitaet/arbeiten-an-der-uni/"
                 "stellenangebote/stellenangebote-fuer-studierende-und-praktikant-innen")
@@ -4581,7 +4581,7 @@ def scrape_all() -> list[dict]:
         scrape_igus,               # igus Köln - JSON API, full ad text inline
         scrape_rewe,               # REWE Group Köln - JSON search API
         scrape_dvinci,             # Generali/RheinEnergie/DER Touristik/REWE digital
-        scrape_unibonn,            # Uni Bonn SHK/HiWi page - his own university
+        scrape_unibonn,            # Uni Bonn SHK/HiWi page
         scrape_csb,                # Zurich/Bayer/DEUTZ/HDI/NRW.BANK/Stadt Köln - SuccessFactors CSB
         scrape_beesite,            # GIZ/LVR/BaFin/BARMER - BeeSite JSON
         scrape_bund_rss,           # service.bund.de - federal Bonn agencies + Interamt imports

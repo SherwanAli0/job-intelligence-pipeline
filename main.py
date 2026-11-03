@@ -27,7 +27,7 @@ from scorer import score_jobs, _classify_track, _requires_fluent_german
 
 # -- A1 diversity quotas - guaranteed minimum digest slots per track -----------
 # The market skews AI-heavy (a recent run scored 93 AI vs 4 ML), so a pure
-# score sort buries the DS/ML/DA roles Sherwan actually asked for. We reserve
+# score sort buries the DS/ML/DA roles the candidate actually asked for. We reserve
 # the top-N of each track first, then fill the rest by score.
 _TRACK_QUOTA = {"DS": 6, "ML": 6, "DA": 4, "AI": 8}
 
@@ -328,8 +328,7 @@ _GERMAN_TITLE_FRAGMENTS = (
 )
 
 # -- Location filter - Germany on-site OR remote that covers Germany ----------
-# Sherwan studies in Bonn (NRW) and pays German taxes. He needs jobs he can
-# actually do FROM Germany - F2F/hybrid in Germany, OR a remote role that
+# Jobs must be actually doable FROM Germany - F2F/hybrid in Germany, OR a remote role that
 # explicitly allows Germany-based hires. A Poland F2F job is useless even
 # though Poland is in the EU; a "Spain HQ, fully remote in EU" job IS useful
 # because Germany is covered.
@@ -662,7 +661,7 @@ def _not_fulltime_senior(j: dict) -> bool:
     """
     Drop senior/lead/principal/manager/architect/director roles.
 
-    Sherwan is targeting roles with ≤ 2 years of experience. The experience
+    The candidate is targeting roles with ≤ 2 years of experience. The experience
     check (_no_experience_overload) already blocks "3+ years" requirements;
     this filter catches title-level seniority signals even when the JD
     doesn't state an explicit year count.
@@ -748,7 +747,7 @@ _RE_BACHELOR_NOT_ENOUGH = re.compile(
 # requirements at all. If detected in the surrounding window, skip the match.
 _MASTERS_EXCLUSION_CONTEXTS = (
     # Werkstudent ads describe ENROLLMENT ("enrolled in a Bachelor's or
-    # Master's programme"), which is the owner's exact situation from 10/2026,
+    # Master's programme"), which is the target situation,
     # not a completed-degree requirement.
     "enrolled", "immatrikuliert", "eingeschrieben", "studium", "studying",
     "student of", "study programme", "study program", "degree program",
@@ -856,8 +855,8 @@ def _is_english_friendly(j: dict) -> bool:
          2026-09-03 extended the exemption to part-time roles.
       5. 2026-09-07: ENGLISH-ONLY FOR EVERY ROLE TYPE, on the owner's explicit
          instruction after three weeks of digests full of German ads: "if the
-         description is not in english don't send it to me". He reads German
-         at B1 and will not work through German ads. Paired with the
+         description is not in english don't send it to me". The candidate
+         will not work through German ads. Paired with the
          Germany-wide search (_tag_where) so the English pool is as large as
          it can be. Do not flip this again without his instruction.
 
@@ -1321,7 +1320,7 @@ _RE_STUDENT_ROLE = re.compile(
     r"|student\s+(assistant|employee|job)|studentenjob|hiwi\b"
     # Internships added on request (2026-08-16). German ads say Praktikum
     # / Praktikant; Pflichtpraktikum and Praxissemester are the university-
-    # mandated variants an M.Sc. student is a natural fit for. "intern"
+    # mandated variants a Master's student is a natural fit for. "intern"
     # needs the \b guard or it matches "international", "internal" and
     # "Internet", which appear in a large share of tech postings.
     r"|praktikum|praktikant\w*|praxissemester"
@@ -1395,7 +1394,7 @@ def _is_student_role(j: dict) -> bool:
 
 
 # Part-time (Teilzeit) regular employment, added 2026-09-03 on request: "add
-# the part time jobs". A part-time IT role fits alongside an M.Sc. exactly as
+# the part time jobs". A part-time IT role fits alongside Master's studies exactly as
 # a Werkstudent contract does, and every sector has an IT department that
 # posts them. Two deliberate differences from the student path:
 #   1. A TECH gate. "Teilzeit" appears on thousands of retail, care and
