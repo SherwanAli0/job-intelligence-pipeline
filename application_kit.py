@@ -155,7 +155,7 @@ def enrich_with_kits(jobs: list[dict], persist: bool = True) -> None:
     but never writes the bank: a dry run must not change state.
     """
     # The fact sheet and the banked answers were written for Werkstudent roles
-    # ("hourly Werkstudent rate", "available alongside my M.Sc."). A full-time
+    # ("hourly Werkstudent rate", "available alongside my studies"). A full-time
     # role would get those answers, which are wrong for it. Until the owner
     # adds the line "FULLTIME_KIT: yes" to the fact sheet (after covering full-
     # time availability and pay in it), full-time jobs get no screening kit.

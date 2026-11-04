@@ -31,7 +31,7 @@ _RE_TITLE_HARD_SENIOR = re.compile(
     re.IGNORECASE,
 )
 # Employment forms that are never the target. Since the Werkstudent pivot
-# (owner enrolled at Uni Bonn from 10/2026), werkstudent/studentische/HiWi
+# (candidate enrolled in a Master's programme from 10/2026), werkstudent/studentische/HiWi
 # titles are the TARGET and must NOT appear here. Internships joined them
 # on 2026-08-16, so praktikum/praktikant/intern came out too. Thesis work,
 # Ausbildung and academia remain out of scope.

@@ -121,7 +121,7 @@ whose page failed to load were marked seen and never retried, a location written
 just "Düsseldorf" was dropped by two board integrations, and keyword and page caps
 cut student roles before they were read.
 
-**Privacy architecture.** Scoring profiles and personal prompt context load from private S3; contact and salary facts use SSM Parameter Store; drafted answers and pipeline state use private storage. Local `personal/`, CV copies, answers and rendered AWS settings are ignored. Encrypted repository secrets support the manual calibration and rollback workflows. The current source contains no embedded CV profiles, but some candidate-specific rule text and code comments remain in `scorer.py` and `main.py` and are not loaded from private storage; moving them would change prompt text and is a separate decision. Previous commits and old container images retain historical public data; Git history has not been rewritten. See [private profile setup](aws/private-profiles.md).
+**Privacy architecture.** Scoring profiles and personal prompt context load from private S3; contact and salary facts use SSM Parameter Store; drafted answers and pipeline state use private storage. Local `personal/`, CV copies, answers and rendered AWS settings are ignored. Encrypted repository secrets support the manual calibration and rollback workflows. The current source contains no embedded CV profiles and no candidate-specific facts: facts used inside scoring prompts and rule messages come from a private `candidate_facts` key and are substituted at render time, and code comments refer to "the candidate". Search-region lists remain in source as search policy. Previous commits and old container images retain historical public data; Git history has not been rewritten. See [private profile setup](aws/private-profiles.md).
 
 ## Design decisions
 
@@ -136,8 +136,8 @@ cut student roles before they were read.
 - **State is auditable.** Seen-job ids carry last-seen dates and prune after 60
   days; every run's behaviour is one JSON line of run stats.
 - **What it hunts is configuration, not architecture.** The target changed
-  completely once already: it looked for junior full-time roles until its owner
-  was admitted to an M.Sc. in Bonn, then only for Werkstudent (working-student), internship and
+  completely once already: it looked for junior full-time roles until its owner's
+  circumstances changed, then only for Werkstudent (working-student), internship and
   part-time (Teilzeit) IT roles, and since 2026-10-14 for entry-level full-time roles as well.
   English-language ads only: remote or hybrid anywhere
   in Germany, on-site only in North Rhine-Westphalia or the Bonn belt.
@@ -153,8 +153,8 @@ cut student roles before they were read.
   German student market advertises in German, so the language of the
   advertisement had stopped being evidence about the job, so for three weeks
   the filter applied only the explicit language *requirement* to student
-  roles. Then the owner, who reads German at B1, decided that digests full of
-  German ads were not worth his time and reversed it: since 2026-09-07 only
+  roles. Then the owner decided that digests full of
+  German ads were not worth the time and reversed it: since 2026-09-07 only
   ads whose body reads as English are sent, stub bodies are fetched in full
   before being judged, and the search runs Germany-wide for remote and
   hybrid roles (on-site only in NRW) with the digest ordered remote → near
@@ -258,4 +258,4 @@ MIT, see [LICENSE.md](LICENSE.md).
 
 ## Private scoring profiles
 
-Candidate facts are loaded from private S3 or an explicitly selected private local file; they are no longer embedded in config.py. See [private profile setup and rollback](aws/private-profiles.md) and the [fictional example schema](scoring_profiles.example.json). Tests use the fictional example. Normal scoring requires real private profiles and stops startup if they are missing. CV files and rendered AWS configuration stay local and ignored. Existing Git history and old images retain historical public data; this cleanup changes current source only.
+Candidate facts, including the `candidate_facts` values used inside scoring prompts, are loaded from private S3 or an explicitly selected private local file; they are not embedded in the source. See [private profile setup and rollback](aws/private-profiles.md) and the [fictional example schema](scoring_profiles.example.json). Tests use the fictional example. Normal scoring requires real private profiles and stops startup if they are missing. CV files and rendered AWS configuration stay local and ignored. Existing Git history and old images retain historical public data; this cleanup changes current source only. The private object must be updated before the code that requires it is deployed; the order is in the setup guide.

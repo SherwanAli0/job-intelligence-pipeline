@@ -1,5 +1,5 @@
 """
-scorer.py - uses Claude to score each job against Sherwan's CV profile.
+scorer.py - uses Claude to score each job against the candidate's CV profile.
 
 Pipeline:
   1. _hard_disqualify()  - regex pre-screen, sets score=0, skips Claude API call
@@ -13,7 +13,7 @@ import time
 
 import anthropic
 
-from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS, SCORER_PROMPT_CONTEXT
+from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS, SCORER_PROMPT_CONTEXT, CANDIDATE_FACTS
 
 # The client is built on first use, not at import time. On Lambda the API key
 # arrives from Parameter Store during startup, which happens after imports -
@@ -288,10 +288,10 @@ _RE_EXP_TEXT = re.compile(
 #
 # This regex used to also catch student-status phrasing ("currently enrolled
 # in a Master's programme", "Master's student", "must be enrolled at a
-# university") because those marked Werkstudent ads the owner was ineligible
-# for. Since the pivot he IS an enrolled M.Sc. student at Uni Bonn, so that
-# phrasing describes his exact situation and disqualifying on it would drop
-# every single target role. Only completed-degree demands remain.
+# university") because those marked Werkstudent ads the candidate was ineligible
+# for. Since the pivot the candidate IS an enrolled Master's student, so that
+# phrasing describes the target situation exactly and disqualifying on it would
+# drop every single target role. Only completed-degree demands remain.
 _RE_MASTERS_REQ = re.compile(
     r"(?:"
     r"master(?:'s)?\s+degree\s+(?:is\s+)?required"
@@ -463,7 +463,8 @@ _RE_UNPAID = re.compile(
 )
 
 # Fluent / business / native German required - catches English-language JDs
-# that bury the German requirement in the body.  Sherwan is B1 only.
+# that bury the German requirement in the body.  The candidate's German level
+# is below that bar (see candidate_facts in the private profile).
 # NOTE: phrasing varies wildly. JDs use "C1 German", "C1 fluency in German",
 # "fluency in German on C1", "C1-level German", "German skills (C1)" etc.
 # We match generously, then rely on the softening check to spare
@@ -580,7 +581,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
 
     # -- Check 2: Fluent German required (English JDs that bury the German req)
     if _requires_fluent_german(d_low):
-        return True, "Requires fluent/native German \u2014 candidate is B1", "german_required"
+        return True, f"Requires fluent/native German \u2014 candidate is {CANDIDATE_FACTS['german_level']}", "german_required"
 
     # -- Check 3: Non-Python primary language ----------------------------------
     if _RE_NONPY_TITLE.search(title) and "python" not in combined:
@@ -594,7 +595,7 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
         return True, "Wrong domain (embedded / hardware / biomedical / pharma)", "wrong_domain"
 
     # -- Check 5: Location - Germany on-site OR remote-that-covers-Germany -----
-    # Sherwan lives in Bochum (NRW). He needs jobs he can attend from Germany:
+    # The candidate needs jobs that can be done from Germany:
     #   - Germany on-site/hybrid → keep
     #   - Remote with Germany or EU-wide coverage → keep
     #   - Anything else (Poland F2F, Spain F2F, US-only remote, LATAM) → drop
@@ -669,14 +670,15 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     enrolled_context = bool(_RE_ENROLLED_CONTEXT.search(d_low))
     if not bachelor_mentioned and not enrolled_context:
         if _RE_MASTERS_REQ.search(d_low):
-            return True, "Master's degree required and no Bachelor's alternative \u2014 candidate has B.Sc.", "masters_required"
+            return True, f"Master's degree required and no Bachelor's alternative \u2014 candidate has {CANDIDATE_FACTS['completed_degree']}", "masters_required"
         ctx = _RE_MASTERS_CONTEXT.search(d_low)
         if ctx and not _RE_BACHELOR_OK.search(ctx.group(0)):
-            return True, "Master's required under qualifications header \u2014 candidate has B.Sc.", "masters_required"
+            return True, f"Master's required under qualifications header \u2014 candidate has {CANDIDATE_FACTS['completed_degree']}", "masters_required"
 
     return False, "", ""
 
 def _system_prompt(cv_profile: str = CV_PROFILE) -> str:
+    F = CANDIDATE_FACTS
     return f"""{SCORER_PROMPT_CONTEXT["intro"]}
 
 CANDIDATE PROFILE (this profile is already framed for the track of the jobs in this batch \u2014 score against it directly):
@@ -709,12 +711,11 @@ mediocre one; a batch full of strong jobs must not deflate a good one.
 \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 WORK AUTHORIZATION (highest priority, applied before any other cap)
 \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-The candidate is authorized to work in Germany only, not the US, UK, or
-other non-EU countries. Score 0 to 15 for any role that is US-only,
+The candidate is {F["work_scope"]}. Score 0 to 15 for any role that is US-only,
 US-remote-only, requires US/UK or other non-EU work authorization, or is
 onsite outside Germany with no Germany-remote option.
 
-LOCATION: the candidate studies in BONN. His rule (2026-09-07): remote or
+LOCATION: the candidate studies in {F["study_city"]}. His rule (2026-09-07): remote or
 hybrid roles ANYWHERE in Germany, on-site roles only in North Rhine-
 Westphalia (Bonn, Köln, Düsseldorf, Dortmund, Essen, Aachen, Münster ...)
 or the Bonn belt (Koblenz, Remagen, Andernach). On-site roles elsewhere are
@@ -747,11 +748,11 @@ CAP AT 15 if the role is the WRONG employment form:
   apply it when the ad EXPLICITLY states a form from the excluded list above.
 
 CAP AT 20 if ANY of these are true:
-- Role requires fluent/business/native German (C1+), even if the JD is written in English. Look for: "fluent German", "verhandlungssicheres Deutsch", "Mandatory: English and German", "business-fluent German", "German native". Sherwan is B1.
-- Role requires 5+ years professional experience. Sherwan has zero.
+- Role requires fluent/business/native German (C1+), even if the JD is written in English. Look for: "fluent German", "verhandlungssicheres Deutsch", "Mandatory: English and German", "business-fluent German", "German native". {F["candidate_name"]} is {F["german_level"]}.
+- Role requires 5+ years professional experience. {F["candidate_name"]} has {F["professional_experience"]}.
 - Role title contains: Senior, Lead, Principal, Staff, Head of, Director, VP, Vice President, Manager, Architect (without "junior"/"associate" qualifier).
-- Role requires a COMPLETED Master's or PhD. Sherwan has a completed B.Sc. and is an ENROLLED M.Sc. student from October 2026 \u2014 ads asking for "enrolled Bachelor's or Master's students" are his exact situation and must NOT trigger this cap.
-- Role is in a domain Sherwan has zero exposure to AND requires domain knowledge: energy markets / power trading, public sector / municipal, embedded systems / firmware / FPGA, hardware engineering, biomedical / clinical / pharma, manufacturing OT / SCADA / PLC, financial risk / actuarial.
+- Role requires a COMPLETED Master's or PhD. {F["candidate_name"]} {F["degree_status"]} \u2014 ads asking for "enrolled Bachelor's or Master's students" are his exact situation and must NOT trigger this cap.
+- Role is in a domain {F["candidate_name"]} has {F["domain_exposure"]} to AND requires domain knowledge: energy markets / power trading, public sector / municipal, embedded systems / firmware / FPGA, hardware engineering, biomedical / clinical / pharma, manufacturing OT / SCADA / PLC, financial risk / actuarial.
 
 CAP AT 35 if ANY of these are true:
 - Role requires 3-4 years professional experience.
@@ -850,8 +851,7 @@ ceiling advantage over another):
   ML track \u2014 +15 if JD mentions: production ML pipelines, model deployment/
     serving, MLOps tooling (MLflow, Weights & Biases, Kubeflow), CI/CD for
     ML, imbalanced classification, ensemble methods (XGBoost/boosting).
-    (Matches Sherwan's CSRBoost forensic-audit project \u2014 imbalanced-learn,
-    75k configurations, reproducibility engineering.)
+    {F["ml_match_note"]}
   ML track \u2014 +10 if JD mentions: PyTorch, TensorFlow, scikit-learn, computer
     vision, transformers, transfer learning, hyperparameter tuning,
     cross-validation, model reproducibility/benchmarking.
@@ -859,8 +859,7 @@ ceiling advantage over another):
   Data Science track \u2014 +15 if JD mentions: experimentation / A-B testing,
     statistical rigor, hypothesis testing, causal inference, recommender
     systems, research replication/reproducibility.
-    (Matches Sherwan's FUS recommender-system replication \u2014 10-fold CV,
-    matched paper metrics to 4 decimal places.)
+    {F["ds_match_note"]}
   Data Science track \u2014 +10 if JD mentions: NumPy/Pandas-heavy analysis,
     feature engineering, model evaluation methodology, Jupyter-based
     research workflows, published/reproducible results.
@@ -868,8 +867,7 @@ ceiling advantage over another):
   Data Analyst track \u2014 +15 if JD mentions: SQL-heavy analysis, dashboarding
     (Tableau, Power BI, Looker), stakeholder reporting, KPI definition,
     data storytelling for non-technical audiences.
-    (Matches Sherwan's Google Advanced Data Analytics cert \u2014 Tableau,
-    regression, statistics \u2014 and IBM SQL for Data Science cert.)
+    {F["da_match_note"]}
   Data Analyst track \u2014 +10 if JD mentions: business intelligence tooling,
     ETL/data pipeline basics, A/B test reporting, data quality/cleaning,
     cohort or funnel analysis.
@@ -882,7 +880,7 @@ UNIVERSAL BOOSTS (apply regardless of track):
 
 +5: Genuinely remote within Germany, or explicitly flexible hours / "flexible Arbeitszeiten passend zum Stundenplan" \u2014 fits around lectures or any other commitments
 
-+5: Visa sponsorship not required (Sherwan has full work auth)
++5: Visa sponsorship not required ({F["candidate_name"]} has {F["work_auth_short"]})
 
 +5: Company is an English-first tech/data/AI startup known for strong engineering culture (e.g. Aleph Alpha, deepset, parloa, Helsing, Black Forest Labs, n8n, Langfuse, Cohere, Mistral, Hugging Face, Stability for AI; Celonis, Personio, N26, DeepL, Contentful for broader tech/data) \u2014 this boost is NOT AI-exclusive, apply it to any track if the company fits the profile.
 
@@ -905,7 +903,7 @@ Each entry MUST have: {{"index": N, "score": 0-100, "reason": "ONE concrete sent
 
 For any job you score >= 55, ALSO include two tailoring fields (omit them for lower scores):
 - "missing_keywords": array of 4-8 EXACT terms/skills/tools the job description requires that are absent or weak in the candidate's CV profile above (e.g. ["Airflow", "dbt", "Tableau", "stakeholder management"]). These are what he should add/emphasise before applying so his CV passes the ATS keyword filter for THIS job. Use the job's own wording.
-- "cv_hint": ONE short concrete sentence telling him how to re-angle his CV for this specific role (e.g. "Lead with the FUS recommender replication and frame it as production-style A/B evaluation, and add a SQL/Tableau line to match their BI stack.").
+- "cv_hint": ONE short concrete sentence telling him how to re-angle his CV for this specific role (e.g. "{F["cv_hint_example"]}").
 
 Examples of good reasons:
 - "Tier 1 Werkstudent AI Agents match, LangGraph mentioned (+15), English-first (+8), Köln (+8) → 90"
@@ -916,7 +914,7 @@ Examples of good reasons:
 - "Capped at 20: explicitly requires fluent German for DACH customer-facing role"
 - "Off-target: Werkstudent marketing, no data component → 30"
 
-Be terse. The reason exists so Sherwan can audit your decisions, not so you can be polite.
+Be terse. The reason exists so {F["candidate_name"]} can audit your decisions, not so you can be polite.
 """
 
 USER_TEMPLATE = """Score these {n} jobs. Return a JSON array with one object per job in the same order:

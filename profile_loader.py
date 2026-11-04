@@ -14,6 +14,13 @@ from typing import Mapping
 LOGGER = logging.getLogger(__name__)
 PROFILE_NAMES = frozenset({"AI", "ML", "DS", "shared"})
 MAX_BYTES = 256 * 1024
+# Candidate-specific facts that appear inside scoring prompts and rule messages.
+# They live only in the private JSON, under the top-level "candidate_facts" key.
+FACT_NAMES = frozenset({
+    "candidate_name", "german_level", "professional_experience", "degree_status",
+    "completed_degree", "domain_exposure", "study_city", "work_scope", "work_auth_short",
+    "ml_match_note", "ds_match_note", "da_match_note", "cv_hint_example",
+})
 
 
 class ProfilesUnavailable(RuntimeError):
@@ -25,6 +32,7 @@ class LoadedProfiles:
     values: dict[str, str] = field(repr=False)
     source: str
     prompt_context: dict[str, str] = field(default_factory=dict, repr=False)
+    candidate_facts: dict[str, str] = field(default_factory=dict, repr=False)
 
     def fingerprints(self) -> dict[str, str]:
         return {name: hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -39,7 +47,7 @@ def _validate(values) -> dict[str, str]:
     return dict(values)  # Preserve whitespace and Unicode exactly as supplied.
 
 
-def _decode(raw: bytes) -> tuple[dict[str, str], dict[str, str]]:
+def _decode(raw: bytes) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     if len(raw) > MAX_BYTES:
         raise ProfilesUnavailable("Scoring profile object exceeds the size limit")
     data = json.loads(raw.decode("utf-8"))
@@ -50,7 +58,12 @@ def _decode(raw: bytes) -> tuple[dict[str, str], dict[str, str]]:
         raise ProfilesUnavailable("Invalid private prompt context")
     if any(not isinstance(value, str) or not value.strip() for value in context.values()):
         raise ProfilesUnavailable("Private prompt context must contain non-empty text")
-    return _validate(data.get("profiles")), dict(context)
+    facts = data.get("candidate_facts", {})
+    if not isinstance(facts, dict) or (facts and set(facts) != FACT_NAMES):
+        raise ProfilesUnavailable("Invalid private candidate facts")
+    if any(not isinstance(value, str) or not value.strip() for value in facts.values()):
+        raise ProfilesUnavailable("Private candidate facts must contain non-empty text")
+    return _validate(data.get("profiles")), dict(context), dict(facts)
 
 
 def _s3_client():
@@ -91,8 +104,8 @@ def load_profiles(fallback: Mapping[str, str] | None = None, *, environ=None,
                     raw = stream.read(MAX_BYTES + 1)
                 finally:
                     stream.close()
-            values, context = _decode(raw)
-            loaded = LoadedProfiles(values, source, context)
+            values, context, facts = _decode(raw)
+            loaded = LoadedProfiles(values, source, context, facts)
             print("  [Profiles] Scoring profiles loaded from private %s source" % source)
             return loaded
         except Exception:
