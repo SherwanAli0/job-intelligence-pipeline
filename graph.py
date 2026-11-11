@@ -36,6 +36,7 @@ class RunState(TypedDict, total=False):
     all_jobs: list[dict]
     new_jobs: list[dict]
     scored: list[dict]
+    evidence_jobs: int
     top: list[dict]
     near: list[dict]
     src_counts: dict[str, int]
@@ -79,7 +80,13 @@ def build_graph(nodes: dict):
     """
     g = StateGraph(RunState)
 
-    for name in ("scrape", "filter", "score", "rank", "notify", "persist"):
+    # "evidence" is optional: main.py supplies it only when the evidence layer
+    # is switched on, so the default topology is unchanged.
+    with_evidence = "evidence" in nodes
+    names = ["scrape", "filter", "score", "rank", "notify", "persist"]
+    if with_evidence:
+        names.insert(2, "evidence")
+    for name in names:
         g.add_node(name, _timed(name, nodes[name]))
 
     g.set_entry_point("scrape")
@@ -89,11 +96,15 @@ def build_graph(nodes: dict):
     # persist so last-seen dates are refreshed and the run is recorded. As a
     # plain function this was a sys.exit() in the middle of the body, which
     # skipped the stats write entirely.
+    first_scoring_stage = "evidence" if with_evidence else "score"
+
     def _has_new_jobs(state: RunState) -> str:
-        return "score" if state.get("new_jobs") else "persist"
+        return first_scoring_stage if state.get("new_jobs") else "persist"
 
     g.add_conditional_edges("filter", _has_new_jobs,
-                            {"score": "score", "persist": "persist"})
+                            {first_scoring_stage: first_scoring_stage, "persist": "persist"})
+    if with_evidence:
+        g.add_edge("evidence", "score")
     g.add_edge("score", "rank")
     g.add_edge("rank", "notify")
     g.add_edge("notify", "persist")

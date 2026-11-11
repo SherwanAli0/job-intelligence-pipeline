@@ -2,6 +2,7 @@
 notifier.py - delivers scored job results via Gmail (HTML digest) and/or Notion.
 """
 
+import html
 import os
 import smtplib
 from datetime import date, datetime, timezone
@@ -89,6 +90,32 @@ def _freshness_badge(posted_at: str) -> str:
             f'{days}d ago</span>'
         )
     return ""
+
+
+_EVIDENCE_COLORS = {"met": "#059669", "partial": "#d97706", "gap": "#b91c1c"}
+
+
+def _evidence_html(j: dict) -> str:
+    """Compact requirement table (met / partial / gap with source ids). Present
+    only when the evidence layer attached matches. Every value is escaped: the
+    requirement text comes from the job ad."""
+    matches = j.get("evidence") or []
+    if not matches:
+        return ""
+    rows = ""
+    for m in matches[:6]:
+        status = m.get("status") if m.get("status") in _EVIDENCE_COLORS else "gap"
+        src = ", ".join(html.escape(str(e.get("id", ""))) for e in (m.get("evidence") or [])[:2]) or "none"
+        rows += (
+            f'<tr><td style="padding:1px 6px 1px 0;color:#374151;">{html.escape(str(m.get("requirement", ""))[:120])}</td>'
+            f'<td style="padding:1px 6px;font-weight:700;color:{_EVIDENCE_COLORS[status]};">{status}</td>'
+            f'<td style="padding:1px 0;color:#6b7280;">{src}</td></tr>'
+        )
+    return (
+        '<div style="margin-top:5px;padding:6px 9px;background:#f0fdf4;border-radius:6px;'
+        'border:1px solid #bbf7d0;font-size:11px;"><b style="color:#166534;">Requirements vs evidence</b>'
+        f'<table style="border-collapse:collapse;margin-top:3px;font-size:11px;">{rows}</table></div>'
+    )
 
 
 def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
@@ -208,6 +235,9 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             '<span style="background:#f3f4f6;color:#9ca3af;padding:1px 6px;'
             'border-radius:8px;font-size:10px;margin-left:6px;">👻 stale</span>'
         ) if j.get("ghost") else ""
+
+        # Evidence table rides on tailor_html so the flag-off HTML is byte-identical.
+        tailor_html += _evidence_html(j)
 
         row_html = f"""
         <tr{' style="opacity:0.75;"' if (j.get('near_miss') or j.get('ghost')) else ''}>
