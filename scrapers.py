@@ -456,6 +456,15 @@ _JOBSPY_LINKEDIN_RESULTS = int(os.environ.get("JOBHUNTER_LINKEDIN_RESULTS", "50"
 _JOBSPY_INDEED_RESULTS = int(os.environ.get("JOBHUNTER_INDEED_RESULTS", "100"))
 
 
+# Ids already in seen_jobs, set by main.node_scrape before the scrape starts.
+# A posting seen on an earlier day is dropped by node_filter's first line
+# whatever its text says, so downloading its description again is pure cost.
+# Measured 2026-11-11: 10,442 of 11,092 scraped jobs were already seen, and
+# three LinkedIn queries took 229s, most of it paced description fetches.
+KNOWN_JOB_IDS: set = set()
+_JOBSPY_KNOWN_SKIPPED: list = [0]
+
+
 def jobspy_progress_line() -> str:
     """'indeed 62/62, linkedin 41/62' for the current or last JobSpy run."""
     return ", ".join(f"{site} {done}/{total}"
@@ -492,7 +501,9 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
             _jobspy_rows_to_jobs(df, fresh, seen_urls, lock)
             # Enrich THIS query's jobs before publishing them, so whatever a
             # timeout salvages already has descriptions and filters properly.
-            _enrich_jobspy_descriptions(fresh, quiet=True)
+            unseen = [j for j in fresh if j.get("id") not in KNOWN_JOB_IDS]
+            _JOBSPY_KNOWN_SKIPPED[0] += len(fresh) - len(unseen)
+            _enrich_jobspy_descriptions(unseen, quiet=True)
             with lock:
                 results.extend(fresh)
         except Exception:
@@ -513,6 +524,7 @@ def scrape_jobspy() -> list[dict]:
         results.clear()
         _JOBSPY_DESC_STATS[:] = [0, 0, 0]
         _JOBSPY_PROGRESS.clear()
+        _JOBSPY_KNOWN_SKIPPED[0] = 0
         active = _jobspy_active_queries()
         seen_urls: set[str] = set()
         lock = threading.Lock()
@@ -535,7 +547,8 @@ def scrape_jobspy() -> list[dict]:
         print(f"  [JobSpy] {len(results)} titles from LinkedIn+Indeed "
               f"(queries done: {jobspy_progress_line()})")
         f_, n_, s_ = _JOBSPY_DESC_STATS
-        print(f"  [JobSpy] descriptions: {f_}/{n_} fetched, {s_} skipped on title")
+        print(f"  [JobSpy] descriptions: {f_}/{n_} fetched, {s_} skipped on title, "
+              f"{_JOBSPY_KNOWN_SKIPPED[0]} skipped as already seen")
         print(f"  [JobSpy] {len(results)} jobs total")
         return results
     except Exception as e:
@@ -608,6 +621,37 @@ def scrape_arbeitnow() -> list[dict]:
     except Exception as e:
         print(f"  [Arbeitnow] failed: {e}")
     print(f"  [Arbeitnow] {len(results)} jobs")
+    return results
+
+
+# -- 2b. Jobicy API (free JSON, remote jobs; added 2026-11-11) -----------------
+# Public endpoint, no key. Terms on jobicy.com/jobs-rss-feed: link back to the
+# Jobicy page (the job URL is theirs) and poll at most hourly; this runs once
+# a day. geo=germany returns roles open to Germany, including "Europe"/"EMEA".
+_JOBICY_GEO_OK = re.compile(r"germany|deutschland|europe|emea|dach|\beu\b|anywhere|worldwide",
+                            re.IGNORECASE)
+
+
+def scrape_jobicy() -> list[dict]:
+    results: list[dict] = []
+    try:
+        r = requests.get("https://jobicy.com/api/v2/remote-jobs",
+                         params={"count": 50, "geo": "germany"},
+                         headers=HEADERS, timeout=15)
+        if r.status_code == 200:
+            for item in r.json().get("jobs", []):
+                title, url = item.get("jobTitle", ""), item.get("url", "")
+                geo = str(item.get("jobGeo", "") or "")
+                if not title or not url or not _JOBICY_GEO_OK.search(geo):
+                    continue
+                description = BeautifulSoup(
+                    item.get("jobDescription", "") or item.get("jobExcerpt", ""),
+                    "html.parser").get_text(separator=" ", strip=True)[:5000]
+                results.append(job(title, item.get("companyName", ""), f"Remote, {geo}",
+                                   url, "Jobicy", description, str(item.get("pubDate", "") or "")))
+    except Exception as e:
+        print(f"  [Jobicy] failed: {type(e).__name__}")
+    print(f"  [Jobicy] {len(results)} jobs")
     return results
 
 
@@ -1305,20 +1349,13 @@ WORKDAY_TENANTS = [
     ("debeka", "Karriere", "Debeka"),
     ("cgm", "cgm", "CompuGroup Medical"),
     ("covestro", "cov_external", "Covestro"),   # Leverkusen/Dormagen Werkstudent roles
-    ("bmwgroup", "BMW_Group_External", "BMW Group"),
-    ("siemens", "siemens_career", "Siemens"),
-    ("bosch", "bosch_external", "Bosch"),
-    ("deutschetelekom", "telekom_career", "Deutsche Telekom"),
-    ("allianz", "allianz", "Allianz"),
-    ("continental", "conti_career", "Continental"),
-    ("infineon", "infineon_careers", "Infineon"),
-    ("zalando", "zalando", "Zalando"),
-    ("delivery-hero", "delivery_hero", "Delivery Hero"),
-    ("bayer", "bayer_career", "Bayer"),
-    ("basf", "basf_career", "BASF"),
-    ("dhl", "dhl_group", "DHL Group"),
-    ("lufthansa", "lufthansa_career", "Lufthansa"),
-    ("merck", "merck_career", "Merck"),
+    # 2026-11-11: fourteen entries removed (BMW, Siemens, Bosch, Telekom,
+    # Allianz, Continental, Infineon, Zalando, Delivery Hero, Bayer, BASF, DHL,
+    # Lufthansa, Merck). Their tenant and site names were guesses: every one
+    # answered HTTP 422/401/404 on all three datacentres, so each run printed
+    # "0 (check tenant/site or Cloudflare-blocked)" fourteen times and got
+    # nothing. Those companies do not host these boards on Workday. Verified
+    # Workday tenants live in config.WORKDAY_CXS_TENANTS.
 ]
 
 WORKDAY_KEYWORDS = [
@@ -4620,6 +4657,7 @@ def scrape_all() -> list[dict]:
         scrape_jobspy,             # LinkedIn + Indeed
         scrape_arbeitnow,          # Free JSON API - English jobs, Germany-focused
         scrape_remotive,           # Free JSON API - remote jobs worldwide
+        scrape_jobicy,             # Free JSON API - remote jobs open to Germany/Europe
         # HN-Hiring DISABLED - produced dead links and unparseable rows.
         # The function is kept defined in case we want it back with cleaning.
         # scrape_hn_who_is_hiring,

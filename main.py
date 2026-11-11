@@ -2196,6 +2196,10 @@ def node_scrape(state: dict) -> dict:
     seen = load_seen()
     print(f"Previously seen jobs: {len(seen)}")
 
+    # Let JobSpy skip description downloads for postings seen on earlier days.
+    import scrapers as _scrapers
+    _scrapers.KNOWN_JOB_IDS = set(seen)
+
     all_jobs = scrape_all()
 
     from collections import Counter as _Counter

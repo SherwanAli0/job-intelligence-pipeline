@@ -278,3 +278,66 @@ def test_handler_installs_a_sigterm_handler():
     import handler
     src = inspect.getsource(handler)
     assert "signal.SIGTERM" in src and "SystemExit(143)" in src
+
+
+# -- Sources -------------------------------------------------------------------
+
+class TestSources:
+    def test_dead_workday_guesses_are_gone(self):
+        tenants = {t for t, _s, _n in scrapers.WORKDAY_TENANTS}
+        assert tenants == {"debeka", "cgm", "covestro"}
+
+    def test_verified_workday_tenants_are_configured(self):
+        from config import WORKDAY_CXS_TENANTS
+        tenants = {t[:3] for t in WORKDAY_CXS_TENANTS}
+        assert ("db", "wd3", "DBWebsite") in tenants
+        assert ("sartorius", "wd3", "SartoriusCareers") in tenants
+        assert len(tenants) == len(WORKDAY_CXS_TENANTS)
+
+    def test_jobicy_keeps_only_roles_open_to_germany(self, monkeypatch):
+        class R:
+            status_code = 200
+
+            def json(self):
+                return {"jobs": [
+                    {"jobTitle": "ML Engineer", "url": "https://jobicy.com/jobs/1", "jobGeo": "Europe",
+                     "companyName": "A", "jobDescription": "<p>Build models</p>", "pubDate": "2026-11-11"},
+                    {"jobTitle": "Data Analyst", "url": "https://jobicy.com/jobs/2", "jobGeo": "USA",
+                     "companyName": "B", "jobDescription": "x"},
+                    {"jobTitle": "", "url": "https://jobicy.com/jobs/3", "jobGeo": "Germany"}]}
+
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **k: R())
+        jobs = scrapers.scrape_jobicy()
+        assert [j["title"] for j in jobs] == ["ML Engineer"]
+        assert jobs[0]["location"] == "Remote, Europe" and jobs[0]["description"] == "Build models"
+
+    def test_jobicy_is_wired_into_scrape_all(self):
+        import inspect
+        assert "scrape_jobicy," in inspect.getsource(scrapers.scrape_all)
+
+
+def test_jobspy_skips_descriptions_for_already_seen_jobs(monkeypatch):
+    import sys
+    import types
+
+    import pandas as pd
+
+    def fake_scrape_jobs(**kw):
+        site = kw["site_name"][0]
+        return pd.DataFrame([{"job_url": f"https://{site}.example/{n}", "title": "Working Student Data",
+                              "company": "Acme", "location": "Bonn", "site": site, "description": ""}
+                             for n in ("old", "new")])
+
+    fetched = []
+    monkeypatch.setitem(sys.modules, "jobspy", types.SimpleNamespace(scrape_jobs=fake_scrape_jobs))
+    monkeypatch.setattr(scrapers, "_jobspy_active_queries", lambda: ["q"])
+    monkeypatch.setattr(scrapers.time, "sleep", lambda s: None)
+    monkeypatch.setattr(scrapers, "_fetch_full_description",
+                        lambda url: fetched.append(url) or "a full description " * 40)
+    known = {scrapers.make_id(f"https://{s}.example/old", "Working Student Data", "Acme")
+             for s in ("indeed", "linkedin")}
+    monkeypatch.setattr(scrapers, "KNOWN_JOB_IDS", known)
+    jobs = scrapers.scrape_jobspy()
+    assert len(jobs) == 4                                   # seen jobs are still returned
+    assert sorted(fetched) == ["https://indeed.example/new", "https://linkedin.example/new"]
+    assert scrapers._JOBSPY_KNOWN_SKIPPED[0] == 2
