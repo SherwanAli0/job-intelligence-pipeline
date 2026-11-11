@@ -213,9 +213,16 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             wcol = {"REMOTE": "#059669", "HYBRID": "#d97706"}.get(where, "#6b7280")
             wtxt = where + (" · near Bonn" if j.get("_belt")
                             else " · NRW" if j.get("_nrw") else "")
+            if j.get("_where_unknown"):
+                wtxt = "LOCATION NOT STATED"     # kept for the scorer since 2026-11-11
             where_html = (
                 f'<span style="background:{wcol};color:#fff;padding:1px 6px;'
                 f'border-radius:8px;font-size:10px;font-weight:700;margin-right:6px;">{wtxt}</span>'
+            )
+        if j.get("_german_ad"):                  # student roles only, since 2026-11-11
+            where_html += (
+                '<span style="background:#7c3aed;color:#fff;padding:1px 6px;'
+                'border-radius:8px;font-size:10px;font-weight:700;margin-right:6px;">GERMAN AD</span>'
             )
 
         # Employment form (2026-10-14: full-time roles are in the pool)
