@@ -1063,7 +1063,7 @@ _BA_RELEVANT_TITLE = re.compile(
     r"|statistik|datenbank|web|report"
     # 2026-11-11: "Werkstudent AI", "Hilfskraft NLP" and research-assistant
     # titles matched nothing above and were discarded before any filter ran.
-    r"|ai|llm|nlp|genai|deep\s+learning|computer\s+vision"
+    r"|\bai\b|\bllm|\bnlp\b|genai|deep\s+learning|computer\s+vision"
     r"|forsch|research|wissenschaftl|hilfskraft|hiwi"
     # "dev" catches DevOps, Developer and compounds like DevClient-Management
     # (a real BWI IT role in Bonn that the first version of this screen threw
