@@ -336,6 +336,7 @@ _GERMAN_TITLE_FRAGMENTS = (
 # Shared with scorer.py's hard disqualifier - single source of truth in
 # filters.py so the two stages can never drift apart again.
 from filters import (
+    is_german_location as _is_german_location,
     GERMANY_TERMS as _GERMANY_TERMS,
     NRW_PLACES as _NRW_PLACES,
     is_nrw_excluded as _is_nrw_excluded,
@@ -1148,6 +1149,15 @@ def _is_in_focus_area(j: dict) -> bool:
     if j.get("_nrw"):
         return True
     loc = (j.get("location") or "").lower()
+    # Internship lane (owner, 2026-11-11: "Yes, all Germany"): he would
+    # relocate for a fixed-term internship, so an on-site internship in a
+    # German city outside NRW is kept and marked for the digest. A foreign
+    # city is not covered by this and falls through to the rules below.
+    import config as _cfg
+    if (_cfg.internship_lane_on() and j.get("_form") == "internship"
+            and (_place_in(loc, _OUTSIDE_NRW_SIGNALS) or _is_german_location(loc))):
+        j["_relocate"] = True
+        return True
     if _place_in(loc, _OUTSIDE_NRW_SIGNALS):
         return False
     desc = (j.get("description") or "")[:4000].lower()
@@ -1779,6 +1789,7 @@ _LONG_LIVED_SOURCES = frozenset({
     "HDI", "NRWBANK", "StadtKoeln", "GIZ", "LVR", "BaFin", "BARMER", "BundDE",
     "WDR", "Lufthansa", "DZNE", "Uniper", "SWD", "1und1", "Vodafone",
     "UKB", "rhenag", "DeutscheBahn", "INVERTO", "Deloitte", "EY", "RWE", "E.ON",
+    "Watchlist",
 })
 
 
@@ -1843,6 +1854,11 @@ def _is_fresh_enough(j: dict) -> bool:
     age_days = _job_age_days(j)
     if age_days is None:
         return True
+    # Internship lane (2026-11-11): a programme posting stays open for weeks,
+    # and a 48h cap meant one failed source day lost it for good.
+    import config as _cfg
+    if _cfg.internship_lane_on() and _RE_INTERNSHIP_TITLE.search(j.get("title") or ""):
+        return age_days <= _cfg.INTERNSHIP_MAX_AGE_DAYS
     from config import max_filter_age_hours
     return age_days * 24 <= max_filter_age_hours()
 
@@ -2046,6 +2062,16 @@ def _absent_source_warnings_from(registry: dict, current: dict, now=None) -> lis
     return out
 
 
+def _quiet_today(registry: dict, current: dict) -> list[str]:
+    """Registered sources that normally deliver but returned nothing in THIS
+    run. One empty day is not an alarm (the two checks above wait for three),
+    but the digest names them so a quiet source is visible the same day."""
+    return sorted(src for src, e in registry.items()
+                  if src not in _RETIRED_SOURCES
+                  and int(e.get("typical", 0)) >= _REGISTRY_MIN_TYPICAL
+                  and int(current.get(src, 0)) <= 0)
+
+
 def _update_source_registry(current: dict) -> None:
     """Record which sources delivered this run. Called for real runs only:
     a dry run must not write state, and health bookkeeping is state."""
@@ -2212,6 +2238,25 @@ def node_scrape(state: dict) -> dict:
         if "'" in w and w.split("'")[1] in _flagged:
             continue                    # median check already reported it
         health_warnings.append(w)
+    # The internship watchlist is checked by employer, every run. A page that
+    # could not be read is reported the same day, with the address to check by
+    # hand, instead of after three silent runs.
+    run_notes: list[str] = []
+    wl = dict(getattr(_scrapers, "WATCHLIST_STATUS", {}) or {})
+    wl_ok = [f"{name} {st['kept']} of {st['listed']}" for name, st in wl.items() if st.get("ok")]
+    for name, st in wl.items():
+        if not st.get("ok"):
+            health_warnings.append(
+                f"Internship watchlist: {name} could not be read today "
+                f"({st.get('error', 'no rows')}). Check by hand: {st.get('url', '')}")
+    if wl_ok:
+        run_notes.append("Internship watchlist read today (student roles of all listed): "
+                         + ", ".join(wl_ok) + ".")
+    quiet = _quiet_today(_load_source_registry(), src_counts)
+    run_notes.append(f"Sources that delivered today: {len(src_counts)}."
+                     + (f" Usually active but empty today: {', '.join(quiet)}." if quiet else ""))
+    for n in run_notes:
+        print(f"NOTE: {n}")
     for w in health_warnings:
         print(f"WARNING: {w}")
 
@@ -2221,7 +2266,8 @@ def node_scrape(state: dict) -> dict:
     print(f"Cross-source dedup: merged {before} jobs, {after} after dedup")
 
     return {"seen": seen, "all_jobs": all_jobs, "src_counts": src_counts,
-            "health_warnings": health_warnings, "scraped": before, "deduped": after}
+            "health_warnings": health_warnings, "run_notes": run_notes,
+            "scraped": before, "deduped": after}
 
 
 # Every job a filter dropped and every job the scorer judged, for this run.
@@ -2466,7 +2512,8 @@ def node_notify(state: dict) -> dict:
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")
         return {"email_ok": True}
     if top or near:
-        ok = send_email(top + near, warnings=state.get("health_warnings"))
+        ok = send_email(top + near, warnings=state.get("health_warnings"),
+                        notes=state.get("run_notes"))
         if top:
             add_to_notion(top)
         return {"email_ok": ok}
