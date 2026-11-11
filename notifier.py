@@ -118,7 +118,8 @@ def _evidence_html(j: dict) -> str:
     )
 
 
-def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
+def _build_html(jobs: list[dict], warnings: list[str] | None = None,
+                notes: list[str] | None = None) -> str:
     today = date.today().strftime("%d %b %Y")
 
     # T1d: pipeline-health warnings (e.g. a job source silently dead for
@@ -131,6 +132,15 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             f'<div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;'
             f'border-radius:8px;padding:10px 14px;margin:16px 28px 0;font-size:13px;">'
             f'<b>Pipeline health</b>{items}</div>'
+        )
+    # Plain facts about this run (which sources were checked), in grey. Not
+    # warnings: they are the proof that a quiet day was a checked day.
+    if notes:
+        items = "".join(f"<div>{n}</div>" for n in notes[:4])
+        warn_html += (
+            f'<div style="background:#f9fafb;border:1px solid #e5e7eb;color:#4b5563;'
+            f'border-radius:8px;padding:8px 14px;margin:10px 28px 0;font-size:12px;">'
+            f'{items}</div>'
         )
 
     # Sort jobs so that fresh ones bubble to the top within their score band
@@ -213,6 +223,8 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
             wcol = {"REMOTE": "#059669", "HYBRID": "#d97706"}.get(where, "#6b7280")
             wtxt = where + (" · near Bonn" if j.get("_belt")
                             else " · NRW" if j.get("_nrw") else "")
+            if j.get("_relocate"):               # internships only, since 2026-11-11
+                wtxt = "ON-SITE · RELOCATION"
             if j.get("_where_unknown"):
                 wtxt = "LOCATION NOT STATED"     # kept for the scorer since 2026-11-11
             where_html = (
@@ -364,7 +376,8 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None) -> str:
 _SMTP_RETRY_WAITS = (5, 20, 0)
 
 
-def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
+def send_email(jobs: list[dict], warnings: list[str] | None = None,
+               notes: list[str] | None = None) -> bool:
     """Send the digest. Returns True only on confirmed delivery - main.py uses
     this to decide whether jobs may be marked 'seen' (a failed send must not
     bury the day's matches). `warnings` are pipeline-health notes rendered as
@@ -389,7 +402,7 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None) -> bool:
     msg["From"]    = gmail_user
     msg["To"]      = gmail_to
 
-    html = _build_html(jobs, warnings)
+    html = _build_html(jobs, warnings, notes)
     msg.attach(MIMEText(html, "html"))
 
     # Three attempts with a short backoff: a dropped connection or a

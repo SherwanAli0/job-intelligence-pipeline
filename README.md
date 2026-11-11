@@ -267,6 +267,30 @@ bottleneck; the losses were inside the pipeline. What changed:
 Not measured yet: how many more relevant jobs these changes deliver. The audit file is what
 makes that measurable from the next runs on.
 
+## Internship lane and watchlist (11 November 2026)
+
+Large employers open their summer internship intake in November. Four things stood between
+those postings and the digest, and each has its own change:
+
+- **Location.** On-site roles outside North Rhine-Westphalia were dropped before scoring. An
+  on-site internship anywhere in Germany is now kept and marked `ON-SITE · RELOCATION`. Other
+  forms keep the NRW rule, and an internship abroad is not covered.
+- **Freshness.** Internships are kept up to 14 days after posting instead of 48 hours, and
+  internship queries ask the job boards for the last 7 days instead of 24 hours, so one failed
+  run no longer loses that day's postings.
+- **Programme wording.** Eight queries were added for the titles programmes use ("Summer
+  Internship 2027", "AI Research Intern", "Student Researcher", "Praktikant ...").
+- **Watchlist.** `scrape_internship_watchlist` reads the career pages of Google, Apple, SAP and
+  Forschungszentrum Jülich directly on every run. The digest states how many roles each page
+  listed, and a page that cannot be read is named the same day with its address. Microsoft,
+  Meta, DeepMind, Max Planck, DFKI and the Helmholtz portal were tried and left out, because
+  their public pages carry no job rows without a browser.
+
+The digest also names sources that usually deliver but were empty in that run.
+`JOBHUNTER_INTERNSHIP_LANE=off` restores the previous location and freshness rules. This shows
+that the listed sources were read on a given day; it does not show that every internship in
+Germany was found.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For

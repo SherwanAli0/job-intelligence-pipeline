@@ -41,6 +41,7 @@ class RunState(TypedDict, total=False):
     near: list[dict]
     src_counts: dict[str, int]
     health_warnings: list[str]
+    run_notes: list[str]
     drop_by_filter_track: Any
     body_unresolved: list[str]
     dq_counts: Any

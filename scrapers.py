@@ -471,6 +471,22 @@ def jobspy_progress_line() -> str:
                      for site, (done, total) in sorted(_JOBSPY_PROGRESS.items()))
 
 
+_RE_INTERNSHIP_QUERY = re.compile(r"\bintern(?:ship|s)?\b|praktik|student researcher",
+                                  re.IGNORECASE)
+
+
+def _query_hours_old(query: str) -> int:
+    """Search window for one JobSpy query. Internship queries look back a week
+    (2026-11-11): with a 24h window a single failed run lost that day's
+    internship postings for good. Postings already seen cost no description
+    fetch, so the wider window adds almost no time."""
+    import config as _cfg
+    base = _max_age_hours()
+    if _cfg.internship_lane_on() and _RE_INTERNSHIP_QUERY.search(query):
+        return max(base, _cfg.INTERNSHIP_SOURCE_HOURS)
+    return base
+
+
 def _jobspy_lane(site: str, queries: list[str], results: list[dict],
                  seen_urls: set, lock, results_wanted: int, pause: float) -> None:
     """Run every query against ONE site, appending to the shared buffer.
@@ -489,8 +505,9 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
                 search_term=query,
                 location=LOCATION,
                 results_wanted=results_wanted,
-                # 24h normally; 168h during a catch-up window
-                hours_old=_max_age_hours(),
+                # 24h normally; 168h during a catch-up window and always for
+                # internship queries (see _query_hours_old)
+                hours_old=_query_hours_old(query),
                 country_indeed="Germany",
                 # Descriptions come from phase two (title-screened, parallel),
                 # not inline: inline fetching cost one request per posting and
@@ -4649,6 +4666,192 @@ def scrape_db_jobs() -> list[dict]:
 
 # -- Main entry point -----------------------------------------------------------
 
+# -- Internship watchlist ------------------------------------------------------
+# Employers whose internship programmes matter and that no other source reads
+# directly (added 2026-11-11). Until now Google, Apple and SAP reached the
+# pipeline only if a LinkedIn or Indeed search happened to return them, and
+# Forschungszentrum Jülich not at all. Each entry is the employer's own career
+# page, read once per run. WATCHLIST_STATUS records, per employer, whether the
+# page could be read and how many rows it listed, so main.py can say so in the
+# digest: a page that fails is named the same day.
+#
+# Tried and left out because the public page carries no job rows without a
+# browser: Microsoft, Meta, DeepMind, Max Planck (mpg.de/jobboard), DFKI (403)
+# and the Helmholtz portal. Their postings still arrive through LinkedIn.
+WATCHLIST_STATUS: dict[str, dict] = {}
+_WL_STUDENT = re.compile(
+    r"\bintern(?:ship|s)?\b|praktik|praxissemester|student|hilfskr|\bhiwi\b|trainee",
+    re.IGNORECASE)
+_WL_CAP = 30            # ad pages fetched per employer and run
+_WL_GOOGLE = ("https://www.google.com/about/careers/applications/jobs/results/"
+              "?location=Germany&employment_type=INTERN")
+_WL_APPLE = "https://jobs.apple.com/de-de/search?location=germany-DEU&team=internships-STDNT-INTRN"
+_WL_SAP = "https://careers.sap.com/search/?q={q}&locationsearch=germany&startrow={start}"
+_WL_FZJ = "https://www.fz-juelich.de/de/karriere/stellenangebote"
+_WL_DE_MONTHS = {"jan": 1, "feb": 2, "mär": 3, "mrz": 3, "apr": 4, "mai": 5, "jun": 6,
+                 "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dez": 12}
+
+
+def _wl_get(url: str) -> str:
+    r = requests.get(url, headers=HEADERS, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}")
+    return r.text
+
+
+def _wl_slug(title: str) -> str:
+    return re.sub(r" +", "-", re.sub(r"[^a-z0-9 ]", "", title.lower()).strip())
+
+
+def _wl_google_rows(text: str) -> list[dict]:
+    slugs = list(dict.fromkeys(re.findall(r"jobs/results/(\d{10,}-[a-z0-9-]+)", text)))
+    titles = [_html.unescape(t).strip() for t in re.findall(r"<h3[^>]*>([^<]+)</h3>", text)]
+    rows = []
+    for slug in slugs:
+        tail = slug.split("-", 1)[1]
+        title = next((t for t in titles if _wl_slug(t) == tail), tail.replace("-", " ").title())
+        rows.append({"title": title, "location": "Germany", "posted": "",
+                     "url": "https://www.google.com/about/careers/applications/jobs/results/" + slug})
+    return rows
+
+
+def _wl_apple_date(s: str) -> str:
+    m = re.match(r"\s*(\d{1,2})\.\s*([A-Za-zä]{3})\w*\.?\s*(\d{4})", s or "")
+    mon = _WL_DE_MONTHS.get(m.group(2).lower()) if m else None
+    return f"{m.group(3)}-{mon:02d}-{int(m.group(1)):02d}" if mon else ""
+
+
+def _wl_apple_rows(text: str) -> list[dict]:
+    rows, seen = [], set()
+    for m in re.finditer(r'<h3><a[^>]+href="(/de-de/details/[^"?]+)[^"]*"[^>]*>([^<]+)</a></h3>', text):
+        path, title = m.group(1), _html.unescape(m.group(2)).strip()
+        if path in seen:
+            continue
+        seen.add(path)
+        block = text[m.end():m.end() + 900]
+        d = re.search(r'class="job-posted-date"[^>]*>([^<]+)<', block)
+        c = re.search(r'id="search-store-name-container-\d+"[^>]*>([^<]+)<', block)
+        rows.append({"title": title, "url": "https://jobs.apple.com" + path,
+                     "location": (_html.unescape(c.group(1)).strip() + ", Germany") if c else "Germany",
+                     "posted": _wl_apple_date(d.group(1)) if d else ""})
+    return rows
+
+
+def _wl_apple_body(url: str) -> str:
+    """Apple's ad page is rendered in the browser; the ad text sits in an
+    escaped JSON blob between "jobSummary" and "internalDetails"."""
+    try:
+        t = _wl_get(url)
+    except Exception:
+        return ""
+    i = t.find("jobSummary")
+    j = t.find("internalDetails", i)
+    if i < 0 or j < 0:
+        return ""
+    chunk = t[i + len("jobSummary"):j]
+    chunk = re.sub(r'\\+"\w+\\+":', "\n", chunk)      # \"description\": -> newline
+    chunk = re.sub(r"\\+n", "\n", chunk)
+    chunk = re.sub(r"\\+u[0-9a-fA-F]{4}", " ", chunk)
+    chunk = chunk.replace("\\", "").replace('"', " ")
+    return re.sub(r"[ \t]+", " ", chunk).strip(" :,\n")[:6000]
+
+
+def _wl_sap_rows(text: str) -> list[dict]:
+    rows = []
+    for block in text.split('<tr class="data-row">')[1:]:
+        a = re.search(r'<a href="(/job/[^"]+)" class="jobTitle-link">([^<]+)</a>', block)
+        if not a:
+            continue
+        loc = re.search(r'<span class="jobLocation">\s*([^<]+?)\s*</span>', block)
+        rows.append({"title": _html.unescape(a.group(2)).strip(),
+                     "url": "https://careers.sap.com" + a.group(1),
+                     "location": _html.unescape(loc.group(1)).strip() if loc else "Germany",
+                     "posted": ""})
+    return rows
+
+
+def _wl_fzj_rows(text: str) -> list[dict]:
+    rows, seen = [], set()
+    for m in re.finditer(r'"description":"(https:[^"]*recruiting\.fz-juelich\.de[^"]*)"', text):
+        t = re.search(r'"title":"((?:[^"\\]|\\.)*)"', text[m.end():m.end() + 800])
+        if not t:
+            continue
+        try:
+            url = json.loads('"' + m.group(1) + '"')
+            if url in seen:             # the page embeds every row twice
+                continue
+            seen.add(url)
+            rows.append({"title": json.loads('"' + t.group(1) + '"').strip(),
+                         "url": url, "location": "Jülich", "posted": ""})
+        except Exception:
+            continue
+    return rows
+
+
+def _wl_google() -> list[dict]:
+    return _wl_google_rows(_wl_get(_WL_GOOGLE))
+
+
+def _wl_apple() -> list[dict]:
+    rows: list[dict] = []
+    for page in (1, 2, 3):
+        got = _wl_apple_rows(_wl_get(_WL_APPLE + (f"&page={page}" if page > 1 else "")))
+        new = [r for r in got if r["url"] not in {x["url"] for x in rows}]
+        rows.extend(new)
+        if len(new) < 20:
+            break
+    return rows
+
+
+def _wl_sap() -> list[dict]:
+    rows: dict[str, dict] = {}
+    for q in ("intern", "praktikum"):
+        for start in (0, 25, 50, 75):
+            got = _wl_sap_rows(_wl_get(_WL_SAP.format(q=q, start=start)))
+            for r in got:
+                rows.setdefault(r["url"], r)
+            if len(got) < 25:
+                break
+    return list(rows.values())
+
+
+def _wl_fzj() -> list[dict]:
+    return _wl_fzj_rows(_wl_get(_WL_FZJ))
+
+
+_WATCHLIST = (
+    ("Google", _WL_GOOGLE, _wl_google, None),
+    ("Apple", _WL_APPLE, _wl_apple, _wl_apple_body),
+    ("SAP", "https://careers.sap.com/search/?q=intern&locationsearch=germany", _wl_sap, None),
+    ("Forschungszentrum Jülich", _WL_FZJ, _wl_fzj, None),
+)
+
+
+def scrape_internship_watchlist() -> list[dict]:
+    out: list[dict] = []
+    WATCHLIST_STATUS.clear()
+    for name, url, fetch, fetch_body in _WATCHLIST:
+        try:
+            rows = fetch()
+            if not rows:
+                # An employer page with no rows at all is a layout change, not
+                # a quiet day: every one of these lists jobs all year.
+                raise RuntimeError("page read but no job rows found")
+            picked = [r for r in rows if _WL_STUDENT.search(r["title"])][:_WL_CAP]
+            for r in picked:
+                known = make_id(r["url"], r["title"], name) in KNOWN_JOB_IDS
+                body = "" if known else (fetch_body or _page_text)(r["url"])
+                out.append(job(title=r["title"], company=name, location=r["location"],
+                               url=r["url"], source="Watchlist",
+                               description=body or r["title"], posted_at=r["posted"]))
+            WATCHLIST_STATUS[name] = {"ok": True, "listed": len(rows), "kept": len(picked), "url": url}
+            print(f"  [Watchlist] {name}: {len(picked)} student roles of {len(rows)} listed")
+        except Exception as e:
+            WATCHLIST_STATUS[name] = {"ok": False, "error": str(e)[:80] or type(e).__name__, "url": url}
+            print(f"  [Watchlist] {name} failed: {e}")
+    return out
+
+
 def scrape_all() -> list[dict]:
     print("Scraping all sources...")
     all_jobs: list[dict] = []
@@ -4664,6 +4867,7 @@ def scrape_all() -> list[dict]:
         scrape_arbeitsagentur,     # Official German employment agency API
         scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
         scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
+        scrape_internship_watchlist,  # Google, Apple, SAP, FZ Jülich career pages
         scrape_bwi,                # BWI GmbH - Bundeswehr IT, Bonn/Meckenheim
         scrape_igus,               # igus Köln - JSON API, full ad text inline
         scrape_rewe,               # REWE Group Köln - JSON search API

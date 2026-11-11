@@ -38,6 +38,18 @@ def max_posting_age_hours(today=None) -> int:
 # the emailed-key memory, so a wider window cannot resend anything.
 _FILTER_HOURS = 48
 
+# Internship lane (owner, 2026-11-11: "Yes, all Germany"). An internship
+# programme stays open for weeks and he would relocate for one, so internships
+# get a longer freshness cap, a longer search window at the job boards, and no
+# NRW rule. JOBHUNTER_INTERNSHIP_LANE=off restores the previous behaviour.
+INTERNSHIP_MAX_AGE_DAYS = 14
+INTERNSHIP_SOURCE_HOURS = 168
+
+
+def internship_lane_on() -> bool:
+    import os
+    return os.environ.get("JOBHUNTER_INTERNSHIP_LANE", "on").strip().lower() != "off"
+
 
 def max_filter_age_hours(today=None) -> int:
     """Freshness cap applied by main._is_fresh_enough. `today` is injectable."""
@@ -120,6 +132,16 @@ SEARCH_QUERIES = [
     "Internship Artificial Intelligence",
     "Data Science Intern",
     "Machine Learning Intern",
+    # Programme wording (2026-11-11). Large employers open their summer intake
+    # in November and title it by programme, not by "Praktikum <field>".
+    "Summer Internship 2027",
+    "Summer Intern Machine Learning",
+    "Research Intern Machine Learning",
+    "AI Research Intern",
+    "Software Engineering Intern",
+    "Praktikant Data Science",
+    "Praktikant Künstliche Intelligenz",
+    "Student Researcher",
     # Part-time regular roles (added 2026-09-03)
     "Teilzeit Data",
     "Teilzeit Informatik",
