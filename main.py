@@ -399,6 +399,14 @@ def _onsite_outside_germany(j: dict) -> bool:
     return not any(t in window for t in _GERMANY_TERMS)
 
 
+def _phrase_in(text: str, phrase: str) -> bool:
+    """`phrase` occurs in `text` bounded by non-letters on both sides."""
+    phrase = phrase.strip()
+    if not phrase:
+        return False
+    return re.search(r"(?<![a-zäöüß])" + re.escape(phrase) + r"(?![a-zäöüß])", text) is not None
+
+
 def _is_attendable_from_germany(j: dict) -> bool:
     """
     Recall-friendly location filter:
@@ -431,7 +439,8 @@ def _is_attendable_from_germany(j: dict) -> bool:
     combined = f"{loc} {desc}"
 
     # Hard veto: explicit lock to non-EU region
-    if any(s in combined for s in _REMOTE_LOCKED_OUT_SIGNALS):
+    # Whole-phrase match: as a substring "us only" also fired on "bonus only".
+    if any(_phrase_in(combined, s) for s in _REMOTE_LOCKED_OUT_SIGNALS):
         return False
 
     # Germany or DACH signal in location → keep
@@ -451,7 +460,8 @@ def _is_attendable_from_germany(j: dict) -> bool:
     # Positively-identified non-EU city/country → drop
     # (use loc + first 200 chars of desc to catch JDs like "based in Mumbai")
     loc_check = f" {loc} {desc[:200]} "
-    if any(s in loc_check for s in _NON_EU_LOCATIONS):
+    # Whole-word match: as substrings "lima" hit "climate" and "oman" hit "woman".
+    if any(_phrase_in(loc_check, s) for s in _NON_EU_LOCATIONS):
         # Non-EU positively identified - only keep if description says
         # explicit remote-from-EU coverage
         if any(s in desc for s in _REMOTE_COVERS_GERMANY_SIGNALS):
@@ -859,6 +869,14 @@ def _is_english_friendly(j: dict) -> bool:
          will not work through German ads. Paired with the
          Germany-wide search (_tag_where) so the English pool is as large as
          it can be. Do not flip this again without his instruction.
+      6. 2026-11-11: German ads RE-ADMITTED FOR STUDENT, INTERNSHIP AND
+         PART-TIME roles, on the owner's instruction ("fix all") after a run
+         where this test dropped 134 of 178 jobs (75%) and one job was
+         emailed. Full-time roles stay English-only. An ad that demands
+         fluent German is still dropped here (_requires_fluent_german), and
+         the scorer's german_required pre-screen backs that up. The digest
+         marks these ads "German ad". JOBHUNTER_GERMAN_ADS=off restores
+         rule 5 without a code change.
 
     The test is positive evidence, not absence of German: at least 25 words
     and under half the German-body threshold in German function words
@@ -876,7 +894,16 @@ def _is_english_friendly(j: dict) -> bool:
     """
     if j.get("_stub"):
         return False
-    return _reads_as_english((j.get("description") or "").lower())
+    body = (j.get("description") or "").lower()
+    if _reads_as_english(body):
+        return True
+    if (os.environ.get("JOBHUNTER_GERMAN_ADS", "student").strip().lower() != "off"
+            and j.get("_form") in ("student", "internship", "part-time")
+            and len(re.findall(r"[a-zäöüß]+", body)) >= 25
+            and not _requires_fluent_german(body)):
+        j["_german_ad"] = True
+        return True
+    return False
 
 
 # -- Werkstudent mode: student roles only, commutable from Bonn or DE-remote --
@@ -1103,6 +1130,10 @@ def _tag_where(j: dict) -> dict:
     return j
 
 
+_BARE_COUNTRY_LOCATIONS = {"", "germany", "deutschland", "de", "ger", "germany de",
+                           "deutschland de", "bundesweit", "nationwide", "nan", "none"}
+
+
 def _is_in_focus_area(j: dict) -> bool:
     """Owner's rule (2026-09-07, restated 2026-10-06): remote or hybrid
     anywhere in Germany, on-site only in NRW or the Bonn belt.
@@ -1120,7 +1151,23 @@ def _is_in_focus_area(j: dict) -> bool:
     if _place_in(loc, _OUTSIDE_NRW_SIGNALS):
         return False
     desc = (j.get("description") or "")[:4000].lower()
-    return _place_in(desc, _COMMUTABLE_FROM_BONN) or _place_in(desc, _NRW_SIGNALS)
+    if _place_in(desc, _COMMUTABLE_FROM_BONN) or _place_in(desc, _NRW_SIGNALS):
+        return True
+    # 2026-11-11 (owner: "fix all"): a location that names NO place at all
+    # ("", "Germany", "Deutschland") is no longer read as "on-site far away".
+    # The run of that day lost 197 of 375 jobs here, and a missing workplace
+    # line is far more often an omission than an on-site role in Bavaria. The
+    # ad still has to pass the scorer's location pre-screen, and the digest
+    # shows the job as ON-SITE with its bare location. A NAMED place outside
+    # NRW is still dropped above. JOBHUNTER_UNKNOWN_LOCATION=drop restores
+    # the 2026-10-06 behaviour.
+    if os.environ.get("JOBHUNTER_UNKNOWN_LOCATION", "keep").strip().lower() == "drop":
+        return False
+    bare = re.sub(r"[^a-zäöüß]+", " ", loc).strip()
+    if bare in _BARE_COUNTRY_LOCATIONS:
+        j["_where_unknown"] = True
+        return True
+    return False
 
 
 _BODY_FETCH_CAP = 300            # HTTP requests per run; no Claude tokens
@@ -2059,26 +2106,51 @@ def _apply_ghost_penalty(scored: list[dict]) -> int:
     return n
 
 
+def _skill_pattern(skill: str):
+    """Whole-token match. Plain substring counted "rag" inside "Vertrag",
+    "git" inside "digital", "rust" inside "trust" and "scala" inside
+    "scalable", which put rag at 43% of all ads."""
+    return re.compile(r"(?<![a-z0-9äöüß])" + re.escape(skill.strip()) + r"(?![a-z0-9äöüß])")
+
+
+def _profile_skill_text() -> str:
+    """The loaded candidate profile as lowercase text, for 'is it on the CV'.
+    The radar used a hardcoded list that drifted from the real profile and
+    reported AWS as a gap although the profile lists it."""
+    try:
+        import config as _cfg
+        parts = [_cfg.CV_PROFILE_AI, _cfg.CV_PROFILE_ML, _cfg.CV_PROFILE_DS, _cfg._CV_SHARED,
+                 _cfg.CANDIDATE_FACTS]
+        return " ".join(x if isinstance(x, str) else json.dumps(x, ensure_ascii=False)
+                        for x in parts).lower()
+    except Exception:
+        return ""
+
+
 def _skill_radar(jobs: list[dict], top_n: int = 15) -> None:
     """C9: report the most-requested skills across all JDs, flagging CV gaps."""
     from collections import Counter
     counts = Counter()
+    patterns = {skill.strip(): _skill_pattern(skill) for skill in _RADAR_SKILLS}
     for j in jobs:
         blob = ((j.get("title") or "") + " " + (j.get("description") or "")).lower()
-        for skill in _RADAR_SKILLS:
-            if skill in blob:
-                counts[skill.strip()] += 1
+        for skill, pat in patterns.items():
+            if pat.search(blob):
+                counts[skill] += 1
+    profile_text = _profile_skill_text()
+    on_cv = {s for s in patterns if s in _CV_SKILLS
+             or (profile_text and patterns[s].search(profile_text))}
     if not counts:
         return
     total = len(jobs)
     print(f"\n\u2500\u2500 C9 skill-demand radar (across {total} scraped JDs) \u2500\u2500")
     for skill, c in counts.most_common(top_n):
         pct = 100 * c / total
-        have = skill in _CV_SKILLS
+        have = skill in on_cv
         tag = "  ✓ on CV" if have else "  ← GAP (not on CV)"
         bar = "█" * min(int(pct / 2), 40)
         print(f"  {skill:18s} {pct:4.0f}%  {bar}{tag}")
-    gaps = [s for s, _ in counts.most_common(top_n) if s not in _CV_SKILLS]
+    gaps = [s for s, _ in counts.most_common(top_n) if s not in on_cv]
     if gaps:
         print(f"  Top demand gaps to consider learning: {', '.join(gaps[:6])}")
 
@@ -2148,7 +2220,43 @@ def node_scrape(state: dict) -> dict:
             "health_warnings": health_warnings, "scraped": before, "deduped": after}
 
 
+# Every job a filter dropped and every job the scorer judged, for this run.
+# Written to audit_<date>.jsonl by node_persist. Until 2026-11-11 a run kept
+# three example titles per filter and no score below the send threshold, so
+# "18 of 19 scored under 35" could not be explained after the fact.
+_RUN_AUDIT: list[dict] = []
+
+
+def _audit_row(j: dict, stage: str, **extra) -> dict:
+    row = {"stage": stage, "id": j.get("id", ""), "title": (j.get("title") or "")[:160],
+           "company": (j.get("company") or "")[:80], "location": (j.get("location") or "")[:80],
+           "source": j.get("source", ""), "form": j.get("_form", ""),
+           "where": j.get("_where", ""), "url": j.get("url", "")}
+    row.update(extra)
+    return row
+
+
+def _write_audit() -> None:
+    """Append this run's audit rows to audit_<date>.jsonl. Never raises."""
+    if not _RUN_AUDIT:
+        return
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    name = f"audit_{now.date().isoformat()}.jsonl"
+    try:
+        existing = storage.read_text(name) or ""
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        stamp = now.isoformat(timespec="seconds")
+        lines = [json.dumps({**r, "run": stamp}, ensure_ascii=False) for r in _RUN_AUDIT]
+        storage.write_text(name, existing + "\n".join(lines) + "\n")
+        print(f"  [Audit] {len(lines)} dropped/scored jobs recorded in {name}")
+    except Exception as e:
+        print(f"  [Audit] could not write the audit file: {type(e).__name__}")
+
+
 def node_filter(state: dict) -> dict:
+    _RUN_AUDIT.clear()
     seen, all_jobs = state["seen"], state["all_jobs"]
     new_jobs = [j for j in all_jobs if j["id"] not in seen]
     print(f"New (unseen) jobs: {len(new_jobs)}")
@@ -2164,6 +2272,7 @@ def node_filter(state: dict) -> dict:
             else:
                 dropped.append(j)
                 drop_by_filter_track[label][_classify_track(j)] += 1
+                _RUN_AUDIT.append(_audit_row(j, "filter", filter=label.split(" (")[0]))
         if dropped:
             print(f"[{label}] dropped {len(dropped)} jobs, e.g.:")
             for ex in dropped[:3]:
@@ -2249,6 +2358,17 @@ def node_score(state: dict) -> dict:
     print("\n-- Pre-screen disqualification histogram --")
     for category, count in dq_counts.most_common():
         print(f"  {category:22s} {count:4d}  {'#' * min(count, 40)}")
+
+    # Every judged job with its score and reason: to the log, and to the audit.
+    print("\n-- All scored jobs (score, pre-screen category, title) --")
+    for j in sorted(scored, key=lambda x: -x.get("score", 0)):
+        cat = j.get("disqualified_category") or ""
+        print(f"  [{j.get('score', 0):3d}] {cat:16s} {(j.get('title') or '')[:70]} @ "
+              f"{(j.get('company') or '')[:30]} | {str(j.get('reason', ''))[:140]}")
+        _RUN_AUDIT.append(_audit_row(j, "score", score=j.get("score", 0), category=cat,
+                                     track=j.get("_track", ""),
+                                     german_ad=bool(j.get("_german_ad")),
+                                     reason=str(j.get("reason", ""))[:400]))
 
     return {"scored": scored, "dq_counts": dq_counts}
 
@@ -2388,6 +2508,7 @@ def node_persist(state: dict) -> dict:
         # O2: log what was shown, with features, for the conversion join
         _record_shown(state.get("top", []), state.get("near", []))
         _archive_postings(state.get("top", []), state.get("near", []))
+        _write_audit()
         # Source-health long-term memory (see _update_source_registry).
         _update_source_registry(state.get("src_counts", {}))
         print("\nDone. seen_jobs.json + digested_keys.json updated.")

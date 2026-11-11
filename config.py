@@ -96,8 +96,19 @@ SEARCH_QUERIES = [
     "Werkstudent Tableau",
     "Working Student GenAI",
     "Werkstudent MLOps",
+    # Research-assistant forms (added 2026-11-11): universities and institutes
+    # advertise these as HiWi / Hilfskraft, never as Werkstudent.
+    "HiWi Data Science",
+    "HiWi Machine Learning",
+    "studentische Hilfskraft KI",
+    "wissenschaftliche Hilfskraft Informatik",
+    "Student Research Assistant Machine Learning",
+    "Student Research Assistant AI",
     # Internships (added 2026-08-16) - both languages, all four tracks
     "Praktikum Data Science",
+    "Praktikum Data Analyst",
+    "Internship Data Engineering",
+    "Internship Software Engineering AI",
     "Praktikum Machine Learning",
     "Praktikum Künstliche Intelligenz",
     "Praktikum Datenanalyse",
@@ -140,6 +151,12 @@ SEARCH_QUERIES = [
     "Remote Machine Learning Engineer Germany",
     "Remote Data Analyst Germany English",
     "Business Intelligence Analyst Germany English",
+    # Trainee and junior specialisations (added 2026-11-11)
+    "Trainee Data Science",
+    "Trainee AI",
+    "Junior MLOps Engineer",
+    "Junior NLP Engineer",
+    "Junior Software Engineer AI",
 ]
 
 LOCATION = "Germany"

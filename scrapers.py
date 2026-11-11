@@ -301,7 +301,7 @@ def _jobspy_active_queries() -> list[str]:
             groups["part"].append(q)
         elif re.search(r"praktik|praxissemester|intern", ql):
             groups["intern"].append(q)
-        elif re.search(r"werkstudent|working student|studentische|hiwi|student", ql):
+        elif re.search(r"werkstudent|working student|studentische|hiwi|hilfskraft|student", ql):
             groups["student"].append(q)
         else:
             groups["full"].append(q)                 # junior / entry level / remote ...
@@ -368,6 +368,10 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
             # than a status code. One paced retry recovers most of them.
             time.sleep(1.0)
             text = _fetch_full_description(url)
+        # The employer's own page, when the aggregator page gave nothing.
+        direct = j.get("apply_url") or ""
+        if not text and direct.startswith("http") and direct != url:
+            text = _fetch_full_description(direct)
         if len(text) > len(j.get("description") or ""):
             j["description"] = text[:5000]
         return [j] if text else []
@@ -396,7 +400,8 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
           + (f", {truncated} over the {_JOBSPY_DESC_CAP} cap" if truncated else "") + ")")
 
 
-def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None) -> None:
+def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
+                         lock=None) -> None:
     """Convert a JobSpy dataframe into job() dicts, appending to results.
 
     `seen_urls` carries the URLs earlier queries already produced. The queries
@@ -409,9 +414,15 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None) 
         if not url:
             continue
         if seen_urls is not None:
-            if url in seen_urls:
+            if lock is not None:
+                with lock:
+                    dup = url in seen_urls
+                    seen_urls.add(url)
+            else:
+                dup = url in seen_urls
+                seen_urls.add(url)
+            if dup:
                 continue
-            seen_urls.add(url)
         posted = row.get("date_posted", "") or ""
         # job_url_direct = the "apply on company site" link JobSpy resolves -
         # applying at the ATS source (vs the LinkedIn/Indeed relay) lands in the
@@ -431,82 +442,100 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None) 
         ))
 
 
+# Per-site progress of the current JobSpy run: site -> [queries done, total].
+# Printed when the run finishes AND when a timeout salvages it, so a cut-off
+# run says how much of the query list each site actually covered.
+_JOBSPY_PROGRESS: dict = {}
+
+# LinkedIn depth per query. Measured 2026-11-11: one LinkedIn query at
+# results_wanted=100 takes ~45s (ten paced pages) against <1s on Indeed, so
+# 62 queries needed more than the whole 54-minute scrape and the run was cut
+# off with an unknown part of the list never asked. 50 results halves the
+# pages; every query now gets asked instead of the first ones getting depth.
+_JOBSPY_LINKEDIN_RESULTS = int(os.environ.get("JOBHUNTER_LINKEDIN_RESULTS", "50"))
+_JOBSPY_INDEED_RESULTS = int(os.environ.get("JOBHUNTER_INDEED_RESULTS", "100"))
+
+
+def jobspy_progress_line() -> str:
+    """'indeed 62/62, linkedin 41/62' for the current or last JobSpy run."""
+    return ", ".join(f"{site} {done}/{total}"
+                     for site, (done, total) in sorted(_JOBSPY_PROGRESS.items()))
+
+
+def _jobspy_lane(site: str, queries: list[str], results: list[dict],
+                 seen_urls: set, lock, results_wanted: int, pause: float) -> None:
+    """Run every query against ONE site, appending to the shared buffer.
+
+    Each site gets its own lane (thread) because their speeds differ by two
+    orders of magnitude. In the old combined call a query took as long as its
+    slowest site, so Indeed - which answers in under a second - waited on
+    LinkedIn for every query and was cut off with it at the timeout."""
+    from jobspy import scrape_jobs  # type: ignore
+
+    _JOBSPY_PROGRESS[site] = [0, len(queries)]
+    for query in queries:
+        try:
+            df = scrape_jobs(
+                site_name=[site],
+                search_term=query,
+                location=LOCATION,
+                results_wanted=results_wanted,
+                # 24h normally; 168h during a catch-up window
+                hours_old=_max_age_hours(),
+                country_indeed="Germany",
+                # Descriptions come from phase two (title-screened, parallel),
+                # not inline: inline fetching cost one request per posting and
+                # timed the whole source out.
+                linkedin_fetch_description=False,
+            )
+            fresh: list[dict] = []
+            _jobspy_rows_to_jobs(df, fresh, seen_urls, lock)
+            # Enrich THIS query's jobs before publishing them, so whatever a
+            # timeout salvages already has descriptions and filters properly.
+            _enrich_jobspy_descriptions(fresh, quiet=True)
+            with lock:
+                results.extend(fresh)
+        except Exception:
+            pass
+        finally:
+            _JOBSPY_PROGRESS[site][0] += 1
+        time.sleep(pause)
+
+
 def scrape_jobspy() -> list[dict]:
     try:
-        from jobspy import scrape_jobs  # type: ignore
+        import threading
+        import jobspy  # type: ignore  # noqa: F401 - fail fast if missing
 
         # Accumulate into the module-level buffer so a timeout can salvage
-        # whatever finished. Six runs of history show this source returning
-        # ~380 jobs or exactly 0 and nothing in between, because a slow run
-        # discarded everything it had already collected.
+        # whatever finished.
         results: list[dict] = _JOBSPY_PARTIAL
         results.clear()
         _JOBSPY_DESC_STATS[:] = [0, 0, 0]
+        _JOBSPY_PROGRESS.clear()
         active = _jobspy_active_queries()
         seen_urls: set[str] = set()
+        lock = threading.Lock()
 
-        # LinkedIn + Indeed - the reliable pair (glassdoor = Cloudflare blocked)
-        for query in active:
-            try:
-                df = scrape_jobs(
-                    site_name=["linkedin", "indeed"],
-                    search_term=query,
-                    location=LOCATION,
-                    # Two-phase fetching. JobSpy returns TITLES ONLY here,
-                    # which is fast (measured: 10 postings in ~1s, versus
-                    # 420-600s when it fetched every description inline -
-                    # slow enough that it timed out and returned ZERO jobs on
-                    # half of all runs).
-                    #
-                    # Descriptions are fetched afterwards, in parallel, and
-                    # only for postings whose title could plausibly survive
-                    # (see _enrich_jobspy_descriptions). Roughly 6x fewer
-                    # requests, spread across a thread pool, so the result cap
-                    # can be raised instead of lowered.
-                    results_wanted=100,
-                    # 24h window: the owner runs twice daily precisely to apply
-                    # fast, and postings older than a day were crowding out
-                    # fresh ones (a digest arrived with 13/14 jobs >24h old).
-                    # 24h normally; 168h during the one-time catch-up window
-                    hours_old=_max_age_hours(),
-                    country_indeed="Germany",
-                    # WITHOUT this, LinkedIn rows carry only a short snippet -
-                    # the requirements section is never downloaded at all. That
-                    # is why "Around 4+ years" and German C1 demands sailed
-                    # through every filter: the text simply was not there, and
-                    # the scorer was judging LinkedIn jobs half-blind too.
-                    # It costs one extra request per posting, which is why
-                    # JobSpy runs in the background with a timeout and
-                    # late-result recovery.
-                    # Descriptions come from phase two, not inline.
-                    linkedin_fetch_description=False,
-                )
-                before = len(results)
-                _jobspy_rows_to_jobs(df, results, seen_urls)
-                # Enrich THIS query's jobs immediately rather than batching all
-                # enrichment to the end. LinkedIn's response time is highly
-                # variable (measured 1s to 87s for the same query shape), so a
-                # timeout can land anywhere. Enriching as we go means whatever
-                # the timeout salvages already has descriptions and can be
-                # filtered properly; enriching at the end would leave partial
-                # results as unusable bare titles.
-                _enrich_jobspy_descriptions(results[before:], quiet=True)
-                time.sleep(3)
-            except Exception:
-                continue
+        # LinkedIn + Indeed - the reliable pair (glassdoor = Cloudflare
+        # blocked; Google Jobs removed, 0 results for months, upstream #302).
+        lanes = [
+            threading.Thread(target=_jobspy_lane, daemon=True, name="jobspy-indeed",
+                             args=("indeed", active, results, seen_urls, lock,
+                                   _JOBSPY_INDEED_RESULTS, 1.0)),
+            threading.Thread(target=_jobspy_lane, daemon=True, name="jobspy-linkedin",
+                             args=("linkedin", active, results, seen_urls, lock,
+                                   _JOBSPY_LINKEDIN_RESULTS, 3.0)),
+        ]
+        for t in lanes:
+            t.start()
+        for t in lanes:
+            t.join()
 
-        li_in_count = len(results)
-        print(f"  [JobSpy] {li_in_count} titles from LinkedIn+Indeed")
-
+        print(f"  [JobSpy] {len(results)} titles from LinkedIn+Indeed "
+              f"(queries done: {jobspy_progress_line()})")
         f_, n_, s_ = _JOBSPY_DESC_STATS
         print(f"  [JobSpy] descriptions: {f_}/{n_} fetched, {s_} skipped on title")
-
-        # Google Jobs REMOVED. JobSpy's Google backend has returned exactly 0
-        # jobs on every run for months (upstream issue #302, open since 2025),
-        # while costing 10 requests plus 10x3s of sleeping per run. Measured in
-        # production: "[JobSpy] 0 jobs from Google Jobs", every time. Keeping a
-        # source that has never once produced a result is not resilience, it is
-        # a tax on every run. Re-add if upstream ever fixes it.
         print(f"  [JobSpy] {len(results)} jobs total")
         return results
     except Exception as e:
@@ -1032,6 +1061,10 @@ _BA_RELEVANT_TITLE = re.compile(
     r"|artificial|intelligen|informatik|software|entwickl|programmier"
     r"|python|\bit\b|\bbi\b|business\s+intelligence|digital|tech|cloud"
     r"|statistik|datenbank|web|report"
+    # 2026-11-11: "Werkstudent AI", "Hilfskraft NLP" and research-assistant
+    # titles matched nothing above and were discarded before any filter ran.
+    r"|ai|llm|nlp|genai|deep\s+learning|computer\s+vision"
+    r"|forsch|research|wissenschaftl|hilfskraft|hiwi"
     # "dev" catches DevOps, Developer and compounds like DevClient-Management
     # (a real BWI IT role in Bonn that the first version of this screen threw
     # away because "IT" only appears inside another word).
@@ -1711,8 +1744,24 @@ def _fetch_full_description(url: str) -> str:
             return text[:6000]
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code in (429, 500, 502, 503, 504):
+            # One paced retry: a throttled or briefly failing page is not a
+            # verdict on the ad (43 of 101 body fetches failed on 2026-11-11).
+            time.sleep(2.0)
+            r = requests.get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return ""
+        # Second path: schema.org JobPosting. Script-rendered career pages
+        # ship an empty <main> but still carry the whole ad as JSON-LD.
+        try:
+            ld = _parse_jsonld_jobposting(r.text)
+            if ld and ld.get("description"):
+                ld_text = BeautifulSoup(str(ld["description"]), "html.parser").get_text(
+                    separator=" ", strip=True)
+                if len(ld_text) > 200:
+                    return ld_text[:5000]
+        except Exception:
+            pass
         soup = BeautifulSoup(r.text, "html.parser")
 
         # Remove noise
@@ -4662,7 +4711,9 @@ def scrape_all() -> list[dict]:
             partial = _salvage_background(name)
             if partial:
                 print(f"  [{name}] still running \u2014 salvaging {len(partial)} jobs "
-                      f"collected so far instead of skipping the source")
+                      f"collected so far instead of skipping the source"
+                      + (f" (queries done: {jobspy_progress_line()})"
+                         if name == "scrape_jobspy" else ""))
                 all_jobs.extend(partial)
             else:
                 print(f"  [{name}] still running after the grace period \u2014 skipped this run")
