@@ -255,8 +255,9 @@ compact "Requirements vs evidence" table per job (status and source ids).
   coverage (share of the requirement's idf weight found in the chunk) of at least 0.60 is
   `met`, at least 0.34 is `partial`, below is `gap`.
 
-**Enable it.** Off by default, so production behaviour is unchanged. Set `JOBHUNTER_EVIDENCE=1`
-on the task. Optionally point `JOBHUNTER_EVIDENCE_FILES` at private UTF-8 text files (CV,
+**Enable it.** The code default is off, so a local or offline run is unchanged unless
+`JOBHUNTER_EVIDENCE=1` is set. The production task definition
+([aws/task-definition.json](aws/task-definition.json)) sets it, so every scheduled run uses it. Optionally point `JOBHUNTER_EVIDENCE_FILES` at private UTF-8 text files (CV,
 project notes; separated by `;` on Windows, `:` elsewhere, 256 KB each) available inside the
 container. When on, main.py adds an `evidence` node between `filter` and `score` in the graph.
 A failure in this node is logged by exception type only and scoring continues without it.
