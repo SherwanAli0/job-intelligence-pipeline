@@ -39,6 +39,10 @@
         {
           "name": "JOBHUNTER_METRICS",
           "value": "1"
+        },
+        {
+          "name": "JOBHUNTER_EVIDENCE",
+          "value": "1"
         }
       ],
       "logConfiguration": {
