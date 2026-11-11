@@ -57,10 +57,13 @@ class TestEnglishOnly:
     def test_stub_body_drops(self):
         assert not main._is_english_friendly(_j("Working Student Data", "Apply now."))
 
-    def test_no_student_exemption_left_in_source(self):
+    def test_student_exemption_is_form_gated(self):
+        """2026-11-11: German ads are re-admitted for student, internship and
+        part-time roles only (tests/test_recall_fixes.py). The helper `_j`
+        here sets no `_form`, so every German ad above still drops."""
         src = inspect.getsource(main._is_english_friendly)
         assert "_is_eligible_form" not in src
-        assert "_requires_fluent_german" not in src
+        assert '("student", "internship", "part-time")' in src
 
 
 class TestStubBodiesAreFetchedBeforeJudging:
@@ -175,8 +178,10 @@ class TestFocusArea:
     def test_unknown_location_onsite_needs_nrw_in_the_ad(self):
         """2026-10-06: "NRW on site". An on-site role with no usable location
         is kept only when the ad itself names a place in NRW or the belt."""
-        assert not self._f("")
-        assert not self._f("Deutschland")
+        # 2026-11-11: a location naming no place at all is kept for the
+        # scorer (tests/test_recall_fixes.py); a named place still drops.
+        assert self._f("")
+        assert self._f("Deutschland")
         assert not self._f("Oberpfaffenhofen, Germany")
         assert self._f("Germany", " The role is based in our Cologne office.")
         assert self._f("", " You will work on site in Düsseldorf.")
