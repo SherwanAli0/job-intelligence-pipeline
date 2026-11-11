@@ -96,8 +96,19 @@ SEARCH_QUERIES = [
     "Werkstudent Tableau",
     "Working Student GenAI",
     "Werkstudent MLOps",
+    # Research-assistant forms (added 2026-11-11): universities and institutes
+    # advertise these as HiWi / Hilfskraft, never as Werkstudent.
+    "HiWi Data Science",
+    "HiWi Machine Learning",
+    "studentische Hilfskraft KI",
+    "wissenschaftliche Hilfskraft Informatik",
+    "Student Research Assistant Machine Learning",
+    "Student Research Assistant AI",
     # Internships (added 2026-08-16) - both languages, all four tracks
     "Praktikum Data Science",
+    "Praktikum Data Analyst",
+    "Internship Data Engineering",
+    "Internship Software Engineering AI",
     "Praktikum Machine Learning",
     "Praktikum Künstliche Intelligenz",
     "Praktikum Datenanalyse",
@@ -140,6 +151,12 @@ SEARCH_QUERIES = [
     "Remote Machine Learning Engineer Germany",
     "Remote Data Analyst Germany English",
     "Business Intelligence Analyst Germany English",
+    # Trainee and junior specialisations (added 2026-11-11)
+    "Trainee Data Science",
+    "Trainee AI",
+    "Junior MLOps Engineer",
+    "Junior NLP Engineer",
+    "Junior Software Engineer AI",
 ]
 
 LOCATION = "Germany"
@@ -505,6 +522,30 @@ WORKDAY_CXS_TENANTS = [
     ("stryker",     "wd1",  "StrykerCareers", "working student"),        # 78 hits (facet: 400) - Freiburg medtech internships in English
     ("harman",      "wd3",  "HARMAN",         "working student", True),  # 24 -> 9 DE hits - Garching/Karlsbad
     ("ag",          "wd3",  "Airbus",         "working student", True),  # 327 -> 114 DE hits - Hamburg/Manching/Stade
+    # Added 2026-11-11, each verified live that day (HTTP 200 on the CXS jobs
+    # endpoint; the number is the hit count for the search text "Germany").
+    ("db",                   "wd3", "DBWebsite"),                   # 526 - Deutsche Bank, Frankfurt/Berlin
+    ("freseniusmedicalcare", "wd3", "fme"),                         # 149 - Bad Homburg
+    ("thermofisher",         "wd5", "ThermoFisherCareers"),         # 112
+    ("sartorius",            "wd3", "SartoriusCareers"),            # 101 - Goettingen
+    ("pwc",                  "wd3", "Global_Experienced_Careers"),  # 60
+    ("pwc",                  "wd3", "Global_Campus_Careers"),       # 6 - student and graduate roles
+    ("danaher",              "wd1", "DanaherJobs"),                 # 56
+    ("cisco",                "wd5", "Cisco_Careers"),               # 38
+    ("analogdevices",        "wd1", "External"),                    # 27 - Munich
+    ("ing",                  "wd3", "ICSGBLCOR"),                   # 26 - Frankfurt
+    ("unilever",             "wd3", "Unilever_Experienced_Professionals"),  # 23
+    ("trimble",              "wd1", "TrimbleCareers"),              # 23
+    ("gevernova",            "wd5", "Vernova_ExternalSite"),        # 21
+    ("paypal",               "wd1", "jobs"),                        # 21 - Berlin
+    ("crowdstrike",          "wd5", "crowdstrikecareers"),          # 16
+    ("visa",                 "wd5", "Visa"),                        # 12
+    ("micron",               "wd1", "External"),                    # 11 - Munich
+    ("shell",                "wd3", "ShellCareers"),                # 10 - Hamburg
+    ("roche",                "wd3", "roche-ext"),                   # 9 - Mannheim/Penzberg
+    ("msd",                  "wd5", "SearchJobs"),                  # 7
+    ("hp",                   "wd5", "ExternalCareerSite"),          # 7 - Boeblingen
+    ("mastercard",           "wd1", "CorporateCareers"),            # 5
 ]
 
 # -- Companies on SmartRecruiters (enterprise ATS) -----------------------------
@@ -561,13 +602,13 @@ COMPANY_PAGES = [
     # changed), and its query was full-time "data scientist" roles anyway.
     # The source name is in main._RETIRED_SOURCES so its alarm stays quiet.
     {"name": "BMW Group",          "url": "https://www.bmwgroup.jobs/de/en/jobfinder.html?search=data+science",                               "type": "generic"},
-    {"name": "Bosch",              "url": "https://careers.bosch.com/en/jobs/?q=data+scientist&location=Germany",                              "type": "generic"},
+    {"name": "Bosch",              "url": "https://jobs.bosch.com/en/?country=de&q=data+scientist",                              "type": "generic"},
     {"name": "Continental",        "url": "https://jobs.continental.com/en/search/?q=data+scientist&location=Germany",                         "type": "generic"},
     {"name": "Infineon",           "url": "https://www.infineon.com/cms/en/careers/job-opportunities/?search=data+scientist",                  "type": "generic"},
     {"name": "Deutsche Telekom",   "url": "https://careers.telekom.com/jobs?q=data+scientist&location=Germany",                                "type": "generic"},
     {"name": "E.ON",               "url": "https://careers.eon.com/jobs?q=data+scientist&location=Germany",                                    "type": "generic"},
     {"name": "TUI",                "url": "https://careers.tuigroup.com/jobs?q=data+scientist&location=Germany",                               "type": "generic"},
-    {"name": "CHECK24",            "url": "https://careers.check24.de/?s=data",                                                                "type": "generic"},
+    {"name": "CHECK24",            "url": "https://jobs.check24.de/search?search=data",                                                                "type": "generic"},
     {"name": "Volkswagen",         "url": "https://www.volkswagenag.com/en/group/careers/job-portal.html",                                     "type": "generic"},
     {"name": "Allianz",            "url": "https://careers.allianz.com/search?q=data+scientist&country=DE",                                    "type": "generic"},
     {"name": "Munich Re",          "url": "https://careers.munichre.com/search?q=data+science&country=DE",                                     "type": "generic"},
