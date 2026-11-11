@@ -2253,6 +2253,21 @@ def node_score(state: dict) -> dict:
     return {"scored": scored, "dq_counts": dq_counts}
 
 
+def node_evidence(state: dict) -> dict:
+    """Optional stage (JOBHUNTER_EVIDENCE=1): attach per-requirement evidence
+    matches to each new job before scoring. Never fails the run, and prints
+    counts only: the corpus is private candidate text."""
+    import evidence
+    try:
+        corpus = evidence.load_corpus()
+        n = evidence.attach_evidence(state["new_jobs"], corpus)
+        print(f"\n[Evidence] corpus chunks: {len(corpus)} | jobs with matches: {n}/{len(state['new_jobs'])}")
+        return {"evidence_jobs": n}
+    except Exception as e:
+        print(f"\n[Evidence] skipped, scoring continues without it ({type(e).__name__})")
+        return {"evidence_jobs": 0}
+
+
 def node_rank(state: dict) -> dict:
     scored = state["scored"]
 
@@ -2436,10 +2451,14 @@ def main(dry_run: bool = False) -> None:
     print(describe())
     print("=" * 60)
 
-    app = build_graph({
+    nodes = {
         "scrape": node_scrape, "filter": node_filter, "score": node_score,
         "rank": node_rank, "notify": node_notify, "persist": node_persist,
-    })
+    }
+    import evidence
+    if evidence.enabled():
+        nodes["evidence"] = node_evidence
+    app = build_graph(nodes)
     # Recursion limit guards a malformed graph; this pipeline is a straight
     # line with one branch, so the default would suffice.
     final = app.invoke({"dry_run": dry_run}, {"recursion_limit": 25})
