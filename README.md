@@ -233,6 +233,40 @@ A local run without `--dry-run` sends a real digest through Gmail and rewrites
 The `seen_jobs.json` and `run_stats.jsonl` committed in this repo are a snapshot from the
 July 2026 move to AWS; production state now lives in S3.
 
+## Recall audit (11 November 2026)
+
+One production run was traced end to end: 12,972 ads scraped, 11,092 after cross-source
+dedup, 650 new, 25 after the filter chain, 19 scored, 1 emailed. The sources were not the
+bottleneck; the losses were inside the pipeline. What changed:
+
+- **Audit trail.** Every job a filter drops and every job the scorer judges is written to
+  `audit_<date>.jsonl` in the state store (filter name, or score, pre-screen category and
+  reason), and all scores are printed in the run log. Before this, scores under the send
+  threshold were recorded nowhere.
+- **JobSpy.** LinkedIn and Indeed now run in separate lanes. A LinkedIn query took about 45
+  seconds against under one second on Indeed, and in the combined call Indeed waited on
+  LinkedIn and was cut off with it at the 30-minute limit. LinkedIn depth is 50 results per
+  query (`JOBHUNTER_LINKEDIN_RESULTS`), descriptions are no longer downloaded for postings
+  already seen on an earlier day, and the log reports how many queries each site finished.
+- **Language rule.** German-language ads are admitted again for student, internship and
+  part-time roles and marked "GERMAN AD" in the digest; an ad that demands fluent German is
+  still dropped, and full-time roles stay English-only. `JOBHUNTER_GERMAN_ADS=off` restores
+  the English-only rule.
+- **Location rule.** A location that names no place ("", "Germany") is passed to the scorer
+  and marked "LOCATION NOT STATED" instead of being treated as on-site outside NRW. A named
+  place outside NRW is still dropped. `JOBHUNTER_UNKNOWN_LOCATION=drop` restores the old rule.
+- **Queries and sources.** HiWi, wissenschaftliche Hilfskraft, research-assistant, trainee
+  and further junior queries were added. The Arbeitsagentur title screen accepts AI, LLM, NLP
+  and research titles. Fourteen guessed Workday tenants that never existed were removed and 22
+  verified ones added; the Jobicy feed was added; two dead company-page URLs were corrected.
+- **Fixes.** Whole-word matching for non-EU place names and the "US only" lock ("lima" matched
+  "climate", "us only" matched "bonus only"); the skill radar matches whole tokens and reads
+  the loaded profile; a stopped task releases its run claim on SIGTERM; ad-body fetching
+  retries throttled pages, reads schema.org JobPosting data and falls back to the employer URL.
+
+Not measured yet: how many more relevant jobs these changes deliver. The audit file is what
+makes that measurable from the next runs on.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
