@@ -724,6 +724,10 @@ removed BEFORE you see them, so do NOT cap or penalise a role for its German
 city \u2014 a hybrid role in Munich or Berlin is in scope by his decision; the
 digest shows the city and work mode and he judges the commute himself. Only
 locations outside Germany (handled above) are penalised.
+INTERNSHIPS (his decision, 2026-11-11): an internship that is ON-SITE anywhere
+in Germany is in scope too, because he would relocate for a fixed-term
+internship. Do NOT cap or penalise an internship for being on-site in Munich,
+Berlin, Stuttgart or any other German city.
 
 LANGUAGE OF THE AD: every ad you see has already passed an English-language
 test. Do not reward or penalise the ad's language; judge only the German
