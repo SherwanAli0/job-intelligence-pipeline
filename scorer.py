@@ -14,6 +14,7 @@ import time
 import anthropic
 
 from config import CV_PROFILE, CV_PROFILE_AI, CV_PROFILE_ML, CV_PROFILE_DS, SCORER_PROMPT_CONTEXT, CANDIDATE_FACTS
+import evidence
 
 # The client is built on first use, not at import time. On Lambda the API key
 # arrives from Parameter Store during startup, which happens after imports -
@@ -927,13 +928,26 @@ JOBS:
 def _format_job_block(jobs: list[dict]) -> str:
     lines = []
     for i, j in enumerate(jobs):
-        lines.append(
+        block = (
             f"[{i}] Title: {j['title']}\n"
             f"    Company: {j['company']}\n"
             f"    Location: {j['location']}\n"
             f"    Description snippet: {j['description'][:1500] or 'N/A'}"
         )
+        # Evidence layer (off by default): only jobs carrying retrieved
+        # evidence get extra lines, so the flag-off prompt is unchanged.
+        extra = evidence.evidence_prompt_lines(j)
+        if extra:
+            block += "\n" + extra
+        lines.append(block)
     return "\n\n".join(lines)
+
+
+def _build_prompt(batch: list[dict]) -> str:
+    prompt = USER_TEMPLATE.format(n=len(batch), jobs_block=_format_job_block(batch))
+    if evidence.batch_has_evidence(batch):
+        prompt += evidence.EVIDENCE_INSTRUCTION
+    return prompt
 
 
 def _apply_scores(batch: list[dict], raw: str) -> None:
@@ -980,8 +994,7 @@ def _finalize_scores(batch: list[dict]) -> list[dict]:
 
 def _score_batch(batch: list[dict], model: str = HAIKU_MODEL,
                  cv_profile: str = CV_PROFILE) -> list[dict]:
-    jobs_block = _format_job_block(batch)
-    prompt = USER_TEMPLATE.format(n=len(batch), jobs_block=jobs_block)
+    prompt = _build_prompt(batch)
 
     # Two attempts: one transient API error / malformed response must not cost
     # a batch of jobs.
@@ -1019,7 +1032,7 @@ def _score_groups_via_batch_api(groups: list[tuple[list[dict], str, str]]) -> bo
     try:
         requests = []
         for gi, (grp, model, profile) in enumerate(groups):
-            prompt = USER_TEMPLATE.format(n=len(grp), jobs_block=_format_job_block(grp))
+            prompt = _build_prompt(grp)
             requests.append({
                 "custom_id": f"g{gi}",
                 "params": {

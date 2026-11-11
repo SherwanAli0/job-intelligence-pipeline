@@ -233,6 +233,64 @@ A local run without `--dry-run` sends a real digest through Gmail and rewrites
 The `seen_jobs.json` and `run_stats.jsonl` committed in this repo are a snapshot from the
 July 2026 move to AWS; production state now lives in S3.
 
+## Evidence retrieval (RAG)
+
+An optional layer that checks every job against what the candidate can actually show. For
+each job that reaches scoring it extracts the requirements from the ad, retrieves the
+matching chunks of the candidate's private evidence, and labels each requirement
+`met`, `partial` or `gap`. The scorer prompt receives those matches, is told to credit only
+that evidence and to cite the evidence ids in its reason, and the HTML digest shows a
+compact "Requirements vs evidence" table per job (status and source ids).
+
+- **Corpus** ([evidence.py](evidence.py)): the private candidate facts (one chunk each, ids such
+  as `fact:german_level`), the private track profiles, and optional CV or project text files.
+  Free text is split into small chunks with stable ids like `cv:03`.
+- **Requirements**: deterministic, no LLM call. Lines in a requirements or qualifications
+  section (it ends at "Responsibilities", "We offer" and similar headers), else bullet lines,
+  else skills from a vocabulary. Language levels such as "German C1" are always extracted,
+  and checked by level: a candidate with B1 is a gap for C1, however similar the words.
+- **Retrieval**: pure-Python BM25 by default, so the Fargate image does not grow. Optional
+  embeddings (`JOBHUNTER_EVIDENCE_BACKEND=embeddings`, needs `sentence-transformers`, imported
+  lazily, falls back to BM25 when absent). Status uses the best chunk's confidence: BM25
+  coverage (share of the requirement's idf weight found in the chunk) of at least 0.60 is
+  `met`, at least 0.34 is `partial`, below is `gap`.
+
+**Enable it.** Off by default, so production behaviour is unchanged. Set `JOBHUNTER_EVIDENCE=1`
+on the task. Optionally point `JOBHUNTER_EVIDENCE_FILES` at private UTF-8 text files (CV,
+project notes; separated by `;` on Windows, `:` elsewhere, 256 KB each) available inside the
+container. When on, main.py adds an `evidence` node between `filter` and `score` in the graph.
+A failure in this node is logged by exception type only and scoring continues without it.
+
+**Privacy.** The corpus comes from the private profile loaded at runtime and never from the
+repository. The module prints counts only, never corpus text; matches live on the in-memory job
+dicts and are not written to `seen_jobs.json`, the postings archive, run stats or Notion. The
+digest shows requirement text from the ad and evidence ids, not the evidence text. Requirement
+text comes from the ad and is HTML-escaped before it reaches the digest.
+
+**Measured retrieval** (`python eval_retrieval.py`, BM25, run 2026-11-11, thresholds frozen).
+Two sets of fictional labelled requirement and corpus pairs:
+[golden/evidence_eval_tuning.jsonl](golden/evidence_eval_tuning.jsonl) (33 pairs, three
+candidates) is what the stop list, stemmer, aliases and thresholds were adjusted on, so its
+numbers are in-sample. [golden/evidence_eval_heldout.jsonl](golden/evidence_eval_heldout.jsonl)
+(23 pairs, two candidates written afterwards, 11 German-language requirement lines) was run once after
+the code was fixed and nothing was tuned to it.
+
+| metric | held-out (23 pairs: 16 with evidence, 7 true gaps) | tuning, in-sample (33 pairs: 24 with evidence, 9 gaps) |
+|---|---|---|
+| recall@1 | 0.812 | 1.000 |
+| recall@3 | 0.812 | 1.000 |
+| MRR | 0.812 | 1.000 |
+| gap precision | 0.583 (7 of 12 predicted gaps) | 0.889 (8 of 9) |
+| gap recall | 1.000 (7 of 7) | 0.889 (8 of 9) |
+
+The held-out figures are the honest ones. Its misses are lexical: German compounds and
+hyphenated words ("SQL-Kenntnisse", "Statistik-Vorlesungen", "Git-Versionierung") do not match
+the plain words in the requirement, and "Workflow orchestration" does not match an Airflow
+line. Each is retrieved too low or called a gap although the evidence exists, which is why
+precision is low while true gaps are all found. The next step would be compound splitting or
+the embedding backend. Embedding numbers are not measured: `sentence-transformers` was not
+installed. Corpora of 7 to 10 chunks make ranking easy, so expect real profiles to be harder.
+
 ## Measured figures
 
 Figures that can be traced to something in this repository. Anything not listed here has
