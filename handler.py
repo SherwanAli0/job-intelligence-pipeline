@@ -88,6 +88,22 @@ if __name__ == "__main__":
     # while the operator believed nothing would be sent. A dry-run switch that
     # quietly does not apply is worse than having none.
     _dry = "--dry-run" in sys.argv or bool(os.environ.get("DRY_RUN"))
+
+    # A stopped task must give its claim back. `aws ecs stop-task` sends
+    # SIGTERM, and Python's default action ends the process without running
+    # the `finally` in _run: on 2026-11-11 a manual stop left run-full.claim
+    # behind and the next run skipped itself ("another run holds the claim")
+    # until the claim was deleted by hand; unfixed it blocks for the 4h TTL.
+    # Raising SystemExit from the handler unwinds through that `finally`.
+    def _on_sigterm(signum, frame):
+        print("SIGTERM received - releasing the run claim and stopping")
+        raise SystemExit(143)
+
+    try:
+        import signal
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except Exception:
+        pass
     outcome = _run(dry_run=_dry)
     # "skipped" means the overlap guard correctly declined to start a second
     # concurrent hunt (a manual click while the scheduled run was mid-flight).
