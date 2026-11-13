@@ -3497,14 +3497,7 @@ def _xing_page(url: str) -> list[dict]:
             return []
         org = d.get("hiringOrganization") or {}
         company = (org.get("name") if isinstance(org, dict) else str(org or "")) or "XING"
-        locs = d.get("jobLocation") or []
-        locs = [locs] if isinstance(locs, dict) else locs
-        addr = ((locs[0] if locs else {}) or {}).get("address") or {}
-        country = addr.get("addressCountry") or ""
-        if isinstance(country, dict):
-            country = country.get("name") or ""
-        location = _xing_location({"city": addr.get("addressLocality") or "",
-                                   "country": {"countryCode": str(country)[:2]}})
+        location = _ld_place(d)
         desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text(" ", strip=True)
         return [job(title=title, company=company, location=location, url=url, source="XING",
                     description=desc, posted_at=str(d.get("datePosted") or ""))]
@@ -3575,6 +3568,69 @@ def _jsonld_location(d: dict) -> str:
         if c:
             cities.append(str(c))
     return ", ".join(cities[:3]) or "Germany"
+
+
+# -- E.ON - jobs.eon.com sitemap + JSON-LD (2026-11-13) -----------------------
+# E.ON's old CSB board (careers.eon.com) answers its search with a Cloudflare
+# challenge and returned 0 jobs from 5 Nov 2026 on. The board moved to
+# jobs.eon.com, whose robots.txt allows everything except /api/, /admin/ and
+# newsletter pages and points to a sitemap of every posting (404 that day, 41
+# of them student or trainee roles). Each ad page carries a JSON-LD JobPosting.
+# Pages are about 420 KB, so slugs are filtered before any page is requested.
+_EON_SITEMAP = "https://jobs.eon.com/sitemap.xml"
+_EON_SLUG = re.compile(
+    r"werkstudent|working[-_]student|studentisch|praktik|internship|\bintern\b|hilfskraft|trainee",
+    re.IGNORECASE)
+_EON_CAP = 45
+
+
+def _ld_place(d: dict) -> str:
+    """'City, Country' from a JSON-LD JobPosting's first jobLocation."""
+    locs = d.get("jobLocation") or []
+    locs = [locs] if isinstance(locs, dict) else locs
+    addr = ((locs[0] if locs else {}) or {}).get("address") or {}
+    if not isinstance(addr, dict):
+        return "Germany"
+    country = addr.get("addressCountry") or ""
+    if isinstance(country, dict):
+        country = country.get("name") or ""
+    return _xing_location({"city": addr.get("addressLocality") or "",
+                           "country": {"countryCode": str(country)[:2]}})
+
+
+def _eon_page(url: str) -> list[dict]:
+    try:
+        r = _guarded_get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            return []
+        d = _parse_jsonld_jobposting(_utf8_text(r))
+        if not d or not (d.get("title") or "").strip():
+            return []
+        org = d.get("hiringOrganization") or {}
+        company = (org.get("name") if isinstance(org, dict) else str(org or "")) or "E.ON"
+        desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text("\n", strip=True)
+        return [job(title=d["title"].strip(), company=company, location=_ld_place(d), url=url,
+                    source="E.ON", description=desc, posted_at=str(d.get("datePosted") or ""))]
+    except Exception:
+        return []
+
+
+def scrape_eon() -> list[dict]:
+    try:
+        r = _guarded_get(_EON_SITEMAP, headers=HEADERS, timeout=30)
+        if r.status_code != 200:
+            print(f"  [E.ON] sitemap HTTP {r.status_code}")
+            return []
+        urls = [_html.unescape(u.strip()) for u in re.findall(r"<loc>([^<]+)</loc>", _utf8_text(r))]
+        urls = [u for u in urls if "/job/" in u
+                and _EON_SLUG.search(urllib.parse.unquote(u).replace("-", " "))]
+        picked = urls[:_EON_CAP]
+        rows = _parallel_collect(picked, _eon_page, "E.ON", workers=4)
+        print(f"  [E.ON] {len(rows)} student/trainee roles from {len(picked)} of {len(urls)} in the sitemap")
+        return rows
+    except Exception as e:
+        print(f"  [E.ON] failed: {e}")
+        return []
 
 
 # -- Absolventa (D2) - German graduate/trainee board via sitemap + JSON-LD ----
@@ -5088,6 +5144,7 @@ def scrape_all() -> list[dict]:
         scrape_dvinci,             # Generali/RheinEnergie/DER Touristik/REWE digital
         scrape_unibonn,            # Uni Bonn SHK/HiWi page
         scrape_csb,                # Zurich/Bayer/DEUTZ/HDI/NRW.BANK/Stadt Köln - SuccessFactors CSB
+        scrape_eon,                # E.ON - jobs.eon.com sitemap + JSON-LD (2026-11-13)
         scrape_beesite,            # GIZ/LVR/BaFin/BARMER - BeeSite JSON
         scrape_bund_rss,           # service.bund.de - federal Bonn agencies + Interamt imports
         scrape_ukb,                # Universitätsklinikum Bonn - WordPress REST

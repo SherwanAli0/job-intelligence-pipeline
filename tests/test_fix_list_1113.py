@@ -303,3 +303,35 @@ class TestLinkedInGuest:
         scrapers._run_scraper_guarded(scrape_linkedin_guest)
         release.set()
         assert [j["id"] for j in scrapers._recover_late_scrapers(grace_seconds=5)] == ["a", "b"]
+
+
+# ---------------------------------------------------------------- item 4
+class TestEon:
+    SITEMAP = ("<urlset><url><loc>https://jobs.eon.com/de/job/Werkstudent_in-Energieanlagen-Essen/1064</loc></url>"
+               "<url><loc>https://jobs.eon.com/de/job/Projektleiter-Netzbau-Essen/2000</loc></url>"
+               "<url><loc>https://jobs.eon.com/de/job/Praktikum-Robotik-Data-Analytics-Kabelsketal/10793</loc></url>"
+               "</urlset>")
+    PAGE = ('<script type="application/ld+json">{"@type": "JobPosting", "title": "Werkstudent:in Energieanlagen",'
+            ' "hiringOrganization": {"name": "E.ON Business Solutions"}, "datePosted": "2026-11-12",'
+            ' "description": "<p>Ad text</p>", "jobLocation": [{"address": {"addressLocality": "Essen",'
+            ' "addressCountry": "DE"}}]}</script>')
+
+    def test_student_slugs_are_fetched_and_parsed(self, monkeypatch):
+        fetched = []
+
+        def fake_get(url, headers=None, timeout=None):
+            fetched.append(url)
+            if url.endswith("sitemap.xml"):
+                return _Resp({}, 200, self.SITEMAP, {"content-type": "application/xml"})
+            return _Resp({}, 200, self.PAGE, {"content-type": "text/html"})
+        monkeypatch.setattr(scrapers.requests, "get", fake_get)
+        rows = scrapers.scrape_eon()
+        assert len(fetched) == 3                    # sitemap + the two student pages
+        assert all("Projektleiter" not in u for u in fetched)
+        assert rows[0]["location"] == "Essen, Germany" and rows[0]["source"] == "E.ON"
+        assert rows[0]["company"] == "E.ON Business Solutions"
+
+    def test_eon_runs_in_scrape_all(self):
+        import inspect
+        assert "scrape_eon" in inspect.getsource(scrapers.scrape_all)
+        assert "E.ON" in __import__("main")._LONG_LIVED_SOURCES
