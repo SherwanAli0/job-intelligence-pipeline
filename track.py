@@ -72,7 +72,8 @@ def save_applied(data: dict) -> None:
     APPLIED_FILE.write_text(text, encoding="utf-8")
     try:
         import storage
-        storage.write_text(APPLIED_FILE.name, text)     # the key load_applied reads
+        if storage.using_s3():          # locally APPLIED_FILE itself is the state
+            storage.write_text(APPLIED_FILE.name, text)     # the key load_applied reads
     except Exception as e:
         print(f"(note: could not write the tracker through storage: {type(e).__name__})")
     import os

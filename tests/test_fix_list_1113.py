@@ -492,6 +492,7 @@ class TestScoreVersusOutcome:
         import storage
         written = {}
         monkeypatch.setattr(storage, "write_text", lambda name, text: written.update({name: text}))
+        monkeypatch.setattr(storage, "using_s3", lambda: True)
         monkeypatch.setattr(track, "APPLIED_FILE", tmp_path / "applied_jobs.json")
         monkeypatch.setattr(track, "_sync_secret", lambda d: (_ for _ in ()).throw(AssertionError("no gh")))
         monkeypatch.delenv("JOBHUNTER_TRACK_SECRET_SYNC", raising=False)
