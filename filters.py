@@ -371,12 +371,15 @@ _US_CODES = ("al ak az ar ca co ct fl ga hi ia id il in ks ky la ma md me mi mn 
 _US_CODE_RE = re.compile(r",\s*(?:" + "|".join(_US_CODES) + r")(?:\s+\d{5}(?:-\d{4})?)?\s*(?:,\s*(?:usa|us))?\s*$")
 _CA_AU_CODE_RE = re.compile(r",\s*(?:on|qc|bc|ab|mb|nb|ns|nl|pe|sk|nsw|vic|qld|tas|act)\s*$")
 # Workday writes many locations as "US - Gaithersburg - MD", "IN - Bangalore"
-# or "USA - Tarzana, CA": a leading country code, then a dash. Added 2026-11-13
-# after "US - Tarzana - CA" was read as unplaceable (the Workday facet bug).
+# or "USA - Tarzana, CA": a leading country code, then a spaced dash. Added
+# 2026-11-13 after "US - Tarzana - CA" was read as unplaceable (the Workday
+# facet bug). The dash must be spaced ("IT-Campus Köln", "In-house, Berlin"
+# are German), and a German place after the code wins ("BE - Berlin" names
+# the state, "IN - Ingolstadt" the town); see _leading_code_foreign.
 _LEADING_CC_RE = re.compile(
     r"^(?:usa?|uk|gb|in|cn|jp|sg|ca|mx|br|au|nz|ie|fr|es|it|nl|be|pl|ch|at|se|dk|no|fi|pt"
     r"|cz|hu|ro|gr|tr|il|ae|sa|qa|eg|ma|za|ng|ke|kr|tw|hk|my|ph|th|vn|id|ar|cl|co|cr|pe"
-    r"|lb|sk|si|hr|bg|rs|ua|lu)\s*[-\u2013\u2014]\s*\S")
+    r"|lb|sk|si|hr|bg|rs|ua|lu)\s+[-\u2013\u2014]\s+(?=\S)")
 _FOREIGN_CC_RE = re.compile(r",\s*(?:at|ch|nl|fr|es|it|pl|pt|ie|gb|uk|dk|se|fi|cz|hu|ro|lu|us|ca|au|nz)\s*$")
 # German state codes as Indeed and some boards write them: "Hamminkeln, NW",
 # "Herzogenaurach, BY", "Paderborn, NW, DE", "Köln, NW, DE, 50933".
@@ -450,7 +453,12 @@ def _strong_foreign(loc: str) -> bool:
         _word_re(FOREIGN_COUNTRIES).search(loc)
         or _word_re(FOREIGN_REGIONS).search(loc)
         or _US_CODE_RE.search(loc) or _CA_AU_CODE_RE.search(loc) or _FOREIGN_CC_RE.search(loc)
-        or _LEADING_CC_RE.search(loc))
+        or _leading_code_foreign(loc))
+
+
+def _leading_code_foreign(loc: str) -> bool:
+    m = _LEADING_CC_RE.search(loc)
+    return bool(m) and not _has_german_signal(loc[m.end():])
 
 
 def _has_german_signal(loc: str) -> bool:

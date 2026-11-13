@@ -179,7 +179,7 @@ cut student roles before they were read.
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](robots.py) / [robots_audit.py](robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,504 offline tests (`pytest --collect-only -q`, 2026-11-13), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,511 offline tests (`pytest --collect-only -q`, 2026-11-13), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -302,12 +302,13 @@ are in this release:
   above the send threshold. A reply now counts as German only if it carries a `locationCountry`
   facet, and a place the filters know is foreign is never relabelled. Workday's
   "US - City - ST" form is recognised as foreign.
-- **robots.txt for every non-API source.** All requests in `scrapers.py` go through a guard
-  that checks the host's robots.txt (RFC 9309, including rules aimed at script clients by
-  name). Documented public job APIs are governed by their own terms and exempt; LinkedIn and
+- **robots.txt for every non-API source.** Every request `scrapers.py` makes itself goes
+  through a guard that checks the host's robots.txt (RFC 9309, including rules aimed at script
+  clients by name); python-jobspy and the DuckDuckGo search library make their own requests. Documented public job APIs are governed by their own terms and exempt; LinkedIn and
   Indeed are owner-accepted exceptions listed in `robots.OWNER_EXCEPTIONS`. The audit found:
-  - the CSB feed path `/services/rss/job/` is disallowed on all 13 CSB employer sites; the
-    allowed sitemap replaces it,
+  - robots.txt disallowed the CSB feed path `/services/rss/job/` on all 13 CSB employer sites
+    in the audit (several of those files answered 404 later the same day); the allowed sitemap
+    replaces the feed either way,
   - XING disallows its GraphQL search; the source now reads XING's job sitemaps and each
     page's JSON-LD,
   - service.bund.de disallows its job search; that source switches itself off,
@@ -318,8 +319,8 @@ are in this release:
 - **LinkedIn guest search** no longer fetches descriptions for postings seen on earlier days,
   and keeps its partial results when it runs into the time limit.
 - **New sources:** 30 employers on Workable, Teamtailor and Breezy; the Helmholtz job XML; the
-  Max Planck RSS; KIT and DKFZ through the d.vinci adapter; the Jülich watchlist reads the
-  full RSS feed (97 jobs instead of 25).
+  Max Planck RSS; KIT and DKFZ through the d.vinci adapter (KIT had no student role that day);
+  the Jülich watchlist reads the full RSS feed (97 jobs instead of 25).
 - **python-jobspy 1.4.1** (from 1.1.82). A lane that returns no rows now becomes a health
   warning in the digest instead of a silent zero.
 - **Smaller fixes:** the JSON-LD reader accepts any script-tag attributes, `@graph` and a

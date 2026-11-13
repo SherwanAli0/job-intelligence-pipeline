@@ -116,6 +116,16 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "EY":               60,
     "RWE":              60,
     "E.ON":             60,
+    # Added 2026-11-13: employer ATS feeds with the full ad rank with the other
+    # ATSs; stub-only feeds (Breezy, the research XML/RSS) below them.
+    "Workable":         92,
+    "Teamtailor":       92,
+    "Breezy":           72,
+    "KIT":              70,
+    "DKFZ":             70,
+    "Watchlist":        70,
+    "Helmholtz":        66,
+    "MaxPlanck":        66,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -1192,6 +1202,16 @@ _BODY_MIN_WORDS = 25             # below this the language test cannot judge
 
 
 def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
+    try:
+        import scrapers as _s
+        with _s._BODY_LOCK:             # the per-host report covers this step only
+            _s._BODY_OUTCOMES.clear()
+    except Exception:
+        pass
+    return _fill_missing_bodies_inner(jobs)
+
+
+def _fill_missing_bodies_inner(jobs: list[dict]) -> list[str]:
     """Fetch the full ad for candidates whose body is too short for the
     language test to judge. Under the English-only rule a stub body is a
     drop, so without this step an English ad that arrived as a two-line
@@ -1996,6 +2016,8 @@ def _record_run_stats(stats: dict) -> None:
 _RETIRED_SOURCES = frozenset({
     "HiringCafe",   # Cloudflare challenge since 2026-09-01; no bot-evasion in this repo
     "SAP",          # generic company-page entry, dead since 2026-09-22 (see config.COMPANY_PAGES)
+    "BundDE",       # robots.txt disallows the service.bund.de job search (2026-11-13)
+    "Bosch",        # company page disallowed by robots.txt; Bosch stays via SmartRecruiters (2026-11-13)
 })
 
 

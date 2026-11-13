@@ -522,3 +522,62 @@ class TestRobotsRetry:
         robots_on["down.example"] = (521, "")
         assert not robots.allowed("https://down.example/jobs")
         assert "down.example" in robots.summary_line()
+
+
+# ---------------------------------------------------------------- Fable 5.2 review fixes
+class TestReviewFixes:
+    def test_german_places_with_a_code_or_hyphen_stay_german(self):
+        for loc in ("be - berlin", "th - erfurt", "it - münchen", "in - ingolstadt", "ma - mannheim",
+                    "in-house, berlin", "it-campus köln", "co-working space hamburg", "in-office bonn"):
+            assert not filters.is_foreign_location(loc), loc
+        for loc in ("us - gaithersburg - md", "in - bangalore", "usa - tarzana, ca"):
+            assert filters.is_foreign_location(loc), loc
+
+    def test_a_robots_file_with_a_byte_order_mark_still_blocks(self, robots_on):
+        robots_on["bom.example"] = (200, "\ufeffUser-agent: *\nDisallow: /\n")
+        assert robots.blocked_by("https://bom.example/jobs") == "*"
+        assert robots.parse("\xef\xbb\xbfUser-agent: *\nDisallow: /x\n") == [(["*"], [("disallow", "/x")])]
+
+    def test_teamtailor_fully_remote_is_labelled_remote(self):
+        rss = ('<rss xmlns:tt="https://teamtailor.com/locations"><channel><item>'
+               '<title>Data Engineer</title><link>https://heydata.teamtailor.com/jobs/1</link>'
+               '<remoteStatus>fully</remoteStatus><tt:locations><tt:location><tt:city>Berlin</tt:city>'
+               '<tt:country>Germany</tt:country></tt:location></tt:locations></item></channel></rss>').encode("utf-8")
+        (row,) = scrapers._teamtailor_rows(rss, "heyData")
+        assert row["location"] == "Remote, Berlin, Germany"
+
+    def test_switched_off_sources_raise_no_standing_alarm(self):
+        import main
+        assert {"BundDE", "Bosch"} <= main._RETIRED_SOURCES
+
+    def test_new_sources_have_a_tie_break_priority(self):
+        import main
+        for src in ("Workable", "Teamtailor", "Breezy", "Helmholtz", "MaxPlanck", "KIT", "DKFZ", "Watchlist"):
+            assert main._SOURCE_PRIORITY.get(src, 0) > 0, src
+        assert main._SOURCE_PRIORITY["Workable"] > main._SOURCE_PRIORITY["Adzuna"]
+
+    def test_the_body_report_covers_the_body_fetch_step_only(self, monkeypatch):
+        import main
+        scrapers._body_note("https://enrichment.example/1", "HTTP 429")
+        main._fill_missing_bodies([])
+        assert "enrichment.example" not in scrapers.body_fetch_report()
+
+    def test_robots_fetches_each_host_once_under_concurrency(self, monkeypatch):
+        import threading
+        import time as _t
+        calls = []
+
+        def slow(url):
+            calls.append(url)
+            _t.sleep(0.2)
+            return _Resp({}, 200, "User-agent: *\nAllow: /\n")
+        monkeypatch.setenv("JOBHUNTER_ROBOTS", "1")
+        robots.reset()
+        monkeypatch.setattr(robots, "_fetch_robots", slow)
+        threads = [threading.Thread(target=robots.blocked_by, args=(f"https://one.example/{i}",)) for i in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(calls) == 1
+        robots.reset()

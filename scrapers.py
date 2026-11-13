@@ -268,8 +268,9 @@ HEADERS = {
 # documented public job API (governed by its own documentation and terms) is
 # exempt; every other address is checked against the host's robots.txt with
 # the rules in robots.py, and a disallowed one is not requested at all. The
-# audit that led here: /services/rss/job/ is disallowed on all 13 CSB employer
-# sites, XING disallows its GraphQL search, service.bund.de its job search.
+# audit that led here (13 Nov 2026): /services/rss/job/ was disallowed on all
+# 13 CSB employer sites, XING disallows its GraphQL search, service.bund.de its
+# job search. python-jobspy and duckduckgo_search make their own requests.
 import robots as _robots
 
 _robots.FETCH_HEADERS = HEADERS
@@ -4405,11 +4406,14 @@ def _teamtailor_rows(content: bytes, company: str) -> list[dict]:
             places.append(", ".join(x for x in ((loc.findtext(_TT_NS + "city") or "").strip(),
                                                 (loc.findtext(_TT_NS + "country") or "").strip()) if x))
         status = (it.findtext("remoteStatus") or "").strip().lower()
-        if not _german_or_remote(places, status in ("remote", "fully")):
+        # Live values on 2026-11-13: none, hybrid, onsite, temporary, fully.
+        remote = status in ("remote", "fully")
+        if not _german_or_remote(places, remote):
             continue
         location = "; ".join(p for p in places if p) or "Germany"
-        if status in ("remote", "hybrid") and status not in location.lower():
-            location = f"{status.capitalize()}, {location}"
+        label = "Remote" if remote else "Hybrid" if status == "hybrid" else ""
+        if label and label.lower() not in location.lower():
+            location = f"{label}, {location}"
         desc = BeautifulSoup(it.findtext("description") or "", "html.parser").get_text("\n", strip=True)
         out.append(job(title=title, company=company, location=location, url=url, source="Teamtailor",
                        description=desc, posted_at=_rss_date(it.findtext("pubDate") or "")))

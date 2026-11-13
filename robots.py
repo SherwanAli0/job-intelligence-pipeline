@@ -3,14 +3,17 @@
 The owner's rule for this public repository: no bot evasion and no scraping
 that breaks a site's terms. robots.txt is where a site says which paths
 automated clients may fetch. This module was added on 2026-11-13, after an
-audit found the CSB scraper reading /services/rss/job/, which four employer
-sites (E.ON, Bayer, Vodafone, Deloitte) disallow, and a career portal whose
+audit found the CSB scraper reading /services/rss/job/, which robots.txt
+disallowed on all 13 CSB employer sites that afternoon (several of those files
+answered 404 later the same day), and a career portal whose
 robots.txt blocks python-requests by name while the scrapers send a browser
 User-Agent.
 
 Policy, in one place:
 
-* Web pages, sitemaps and site feeds are checked with allowed(). A path that
+* Web pages, sitemaps and site feeds requested by scrapers.py itself are
+  checked with allowed() (python-jobspy and the duckduckgo_search library make
+  their own requests; liveness.py calls the Workday API directly). A path that
   robots.txt disallows for "*", or for a script client this pipeline actually
   is (python-requests, curl, ...), is skipped. Sending a browser User-Agent
   does not make a block aimed at scripts stop applying.
@@ -54,6 +57,7 @@ _TIMEOUT = 10
 
 _CACHE: dict[str, tuple[str, list]] = {}
 _LOCK = threading.Lock()
+_HOST_LOCKS: dict[str, threading.Lock] = {}   # one fetch per host, the rest wait for it
 SKIPPED: Counter = Counter()          # host -> URLs skipped this run
 UNREACHABLE: set = set()              # hosts whose robots.txt could not be reached
 
@@ -76,7 +80,10 @@ def parse(text: str) -> list[tuple[list[str], list[tuple[str, str]]]]:
     agents: list[str] = []
     rules: list[tuple[str, str]] = []
     in_agents = False
-    for raw in (text or "").splitlines():
+    # A byte-order mark (also when decoded as ISO-8859-1) would turn the first
+    # "User-agent" into an unknown field and drop that group's rules.
+    text = (text or "").lstrip("\ufeff").lstrip("\xef\xbb\xbf")
+    for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
         if ":" not in line:
             continue
@@ -143,6 +150,15 @@ def _load(scheme: str, host: str) -> tuple[str, list]:
     with _LOCK:
         if host in _CACHE:
             return _CACHE[host]
+        host_lock = _HOST_LOCKS.setdefault(host, threading.Lock())
+    with host_lock:
+        with _LOCK:
+            if host in _CACHE:          # another thread fetched it meanwhile
+                return _CACHE[host]
+        return _load_once(scheme, host)
+
+
+def _load_once(scheme: str, host: str) -> tuple[str, list]:
     try:
         r = _fetch_robots(f"{scheme}://{host}/robots.txt")
         code = int(getattr(r, "status_code", 0) or 0)
@@ -151,8 +167,9 @@ def _load(scheme: str, host: str) -> tuple[str, list]:
     else:
         if code == 200:
             try:
-                text = r.text if isinstance(getattr(r, "text", None), str) else \
-                    (getattr(r, "content", b"") or b"").decode("utf-8", "replace")
+                content = getattr(r, "content", None)
+                text = content.decode("utf-8-sig", "replace") if isinstance(content, bytes) and content \
+                    else (r.text if isinstance(getattr(r, "text", None), str) else "")
                 entry = ("ok", parse(text))
             except Exception:
                 entry = ("ok", [])
