@@ -92,3 +92,153 @@ class TestLeadingCountryCode:
     def test_german_and_mixed_strings_are_not(self):
         for loc in ("de - berlin", "us - remote - germany", "2 locations", "köln"):
             assert not filters.is_foreign_location(loc), loc
+
+
+# ---------------------------------------------------------------- items 2 and 13
+import pytest  # noqa: E402
+
+import robots  # noqa: E402
+
+
+@pytest.fixture
+def robots_on(monkeypatch):
+    """robots.txt checks on, with fake robots.txt files per host."""
+    monkeypatch.setenv("JOBHUNTER_ROBOTS", "1")
+    robots.reset()
+    files: dict = {}
+
+    def fake_fetch(url):
+        host = url.split("/")[2]
+        code, text = files.get(host, (404, ""))
+        if code == "raise":
+            raise ConnectionError("down")
+        return _Resp({}, code, text)
+    monkeypatch.setattr(robots, "_fetch_robots", fake_fetch)
+    yield files
+    robots.reset()
+
+
+XING_ROBOTS = """User-agent: CrazyWebCrawler-Spider
+Disallow: /
+User-agent: *
+Disallow: /xing-one/api
+Disallow: /jobs/search/
+Disallow: /jobs/search?*
+Allow: /start/signup
+"""
+
+
+class TestRobotsRules:
+    def test_xing_api_is_disallowed_and_job_pages_are_not(self, robots_on):
+        robots_on["www.xing.com"] = (200, XING_ROBOTS)
+        assert robots.blocked_by("https://www.xing.com/xing-one/api") == "*"
+        assert robots.blocked_by("https://www.xing.com/jobs/search?keywords=data") == "*"
+        assert robots.blocked_by("https://www.xing.com/jobs/koeln-werkstudent-data-146268547") == ""
+
+    def test_a_block_aimed_at_python_scripts_applies(self, robots_on):
+        robots_on["portal.example"] = (200, "User-agent: python-requests\nDisallow: /\n\n"
+                                            "User-agent: *\nAllow: /\n")
+        assert robots.blocked_by("https://portal.example/vacancies") == "python-requests"
+
+    def test_longest_match_wins_and_allow_wins_a_tie(self, robots_on):
+        robots_on["a.example"] = (200, "User-agent: *\nDisallow: /jobs/\nAllow: /jobs/public/\n"
+                                       "Disallow: /x\nAllow: /x\n")
+        assert robots.blocked_by("https://a.example/jobs/123") == "*"
+        assert robots.blocked_by("https://a.example/jobs/public/123") == ""
+        assert robots.blocked_by("https://a.example/x") == ""
+
+    def test_wildcards_and_end_anchor(self, robots_on):
+        robots_on["b.example"] = (200, "User-agent: *\nDisallow: /*.pdf$\nDisallow: /*?*\n")
+        assert robots.blocked_by("https://b.example/files/ad.pdf") == "*"
+        assert robots.blocked_by("https://b.example/files/ad.pdf.html") == ""
+        assert robots.blocked_by("https://b.example/search?q=x") == "*"
+
+    def test_missing_file_allows_and_unreachable_file_blocks(self, robots_on):
+        robots_on["c.example"] = (404, "")
+        robots_on["d.example"] = (503, "")
+        robots_on["e.example"] = ("raise", "")
+        assert robots.blocked_by("https://c.example/anything") == ""
+        assert robots.blocked_by("https://d.example/anything") == "unreachable"
+        assert robots.blocked_by("https://e.example/anything") == "unreachable"
+
+    def test_owner_exceptions_are_not_checked(self, robots_on):
+        robots_on["www.linkedin.com"] = (200, "User-agent: *\nDisallow: /\n")
+        assert robots.blocked_by("https://www.linkedin.com/jobs/view/1") == ""
+
+    def test_switch_off(self, robots_on, monkeypatch):
+        robots_on["f.example"] = (200, "User-agent: *\nDisallow: /\n")
+        monkeypatch.setenv("JOBHUNTER_ROBOTS", "0")
+        assert robots.blocked_by("https://f.example/x") == ""
+
+
+class TestRobotsGuardInScrapers:
+    def test_a_disallowed_address_is_never_requested(self, robots_on, monkeypatch):
+        robots_on["career.example"] = (200, "User-agent: *\nDisallow: /services/\n")
+        called = []
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **k: called.append(a) or _Resp({}))
+        r = scrapers._guarded_get("https://career.example/services/rss/job/", params={"q": "x"})
+        assert r.status_code == 451 and called == []
+        assert robots.SKIPPED["career.example"] == 1
+
+    def test_query_parameters_count(self, robots_on, monkeypatch):
+        robots_on["www.xing.com"] = (200, XING_ROBOTS)
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **k: _Resp({}))
+        assert scrapers._guarded_get("https://www.xing.com/jobs/search", params={"q": "x"}).status_code == 451
+
+    def test_documented_apis_are_exempt(self, robots_on, monkeypatch):
+        robots_on["api.smartrecruiters.com"] = (200, "User-agent: *\nDisallow: /\n")
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **k: _Resp({"content": []}))
+        assert scrapers._guarded_get("https://api.smartrecruiters.com/v1/companies/X/postings").status_code == 200
+        assert scrapers._robots_exempt("https://acme.jobs.personio.de/xml")
+        assert scrapers._robots_exempt("https://acme.recruitee.com/api/offers/")
+        assert not scrapers._robots_exempt("https://www.xing.com/xing-one/api")
+
+    def test_bund_source_switches_itself_off(self, robots_on, monkeypatch):
+        robots_on["www.service.bund.de"] = (200, "User-agent: *\nDisallow: /Content/DE/Stellen/Suche/\n")
+
+        def no_request(*a, **k):
+            raise AssertionError("no request expected")
+        monkeypatch.setattr(scrapers.requests, "get", no_request)
+        assert scrapers.scrape_bund_rss() == []
+
+
+class TestCsbSitemap:
+    def test_student_slugs_from_the_sitemap(self, monkeypatch):
+        xml = ("<urlset>"
+               "<url><loc>https://job.hdi.group/job/Hilden-Werkstudentin-Robotics-&amp;-KI-Automatisierung/1454405533/</loc></url>"
+               "<url><loc>https://job.hdi.group/job/Mainz-Sachbearbeiterin-Schaden/1443846733/</loc></url>"
+               "<url><loc>https://job.hdi.group/job/K%C3%B6ln-Praktikum-Data-Analytics/1/</loc></url>"
+               "</urlset>")
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **k: _Resp({}, 200, xml))
+        links = scrapers._csb_sitemap_links("https://job.hdi.group")
+        assert list(links.values()) == ["Hilden Werkstudentin Robotics & KI Automatisierung",
+                                        "Köln Praktikum Data Analytics"]
+
+    def test_no_csb_request_uses_the_services_path(self):
+        import inspect
+        assert "services/rss" not in inspect.getsource(scrapers.scrape_csb)
+        assert "https://careers.eon.com" not in {h for h, _ in scrapers._CSB_SITES}
+
+
+# ---------------------------------------------------------------- item 9
+class TestJsonLd:
+    AD = '{"@type": "JobPosting", "title": "Werkstudent Data", "description": "x"}'
+
+    def test_single_quotes_and_extra_attributes(self):
+        html = f"<script data-x='1' type='application/ld+json' nonce=\"a\">{self.AD}</script>"
+        assert scrapers._parse_jsonld_jobposting(html)["title"] == "Werkstudent Data"
+
+    def test_graph_wrapper_and_list_type(self):
+        html = ('<script type="application/ld+json">{"@context": "https://schema.org", "@graph": ['
+                '{"@type": "Organization"}, {"@type": ["JobPosting"], "title": "ML Intern"}]}</script>')
+        assert scrapers._parse_jsonld_jobposting(html)["title"] == "ML Intern"
+
+    def test_the_old_exact_tag_still_works(self):
+        assert scrapers._parse_jsonld_jobposting(f'<script type="application/ld+json">{self.AD}</script>')
+
+    def test_body_failures_are_reported_per_host(self):
+        scrapers._BODY_OUTCOMES.clear()
+        scrapers._body_note("https://a.example/1", "ok")
+        scrapers._body_note("https://b.example/1", "HTTP 403")
+        scrapers._body_note("https://b.example/2", "HTTP 403")
+        assert scrapers.body_fetch_report() == "b.example 2/2 (HTTP 403 2)"

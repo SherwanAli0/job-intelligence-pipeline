@@ -628,7 +628,8 @@ COMPANY_PAGES = [
     {"name": "Continental",        "url": "https://jobs.continental.com/en/search/?q=data+scientist&location=Germany",                         "type": "generic"},
     {"name": "Infineon",           "url": "https://www.infineon.com/cms/en/careers/job-opportunities/?search=data+scientist",                  "type": "generic"},
     {"name": "Deutsche Telekom",   "url": "https://careers.telekom.com/jobs?q=data+scientist&location=Germany",                                "type": "generic"},
-    {"name": "E.ON",               "url": "https://careers.eon.com/jobs?q=data+scientist&location=Germany",                                    "type": "generic"},
+    # E.ON left 2026-11-13: careers.eon.com answers with a Cloudflare challenge;
+    # its board moved to jobs.eon.com (scrapers.scrape_eon).
     {"name": "TUI",                "url": "https://careers.tuigroup.com/jobs?q=data+scientist&location=Germany",                               "type": "generic"},
     {"name": "CHECK24",            "url": "https://jobs.check24.de/search?search=data",                                                                "type": "generic"},
     {"name": "Volkswagen",         "url": "https://www.volkswagenag.com/en/group/careers/job-portal.html",                                     "type": "generic"},

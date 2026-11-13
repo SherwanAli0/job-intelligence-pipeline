@@ -24,6 +24,13 @@ def _no_liveness_requests(monkeypatch):
     monkeypatch.setenv("JOBHUNTER_LIVENESS", "0")
 
 
+@pytest.fixture(autouse=True)
+def _no_robots_requests(monkeypatch):
+    """robots.py fetches each host's robots.txt; no unit test may touch the
+    network. tests/test_fix_list_1113.py switches it on with fake files."""
+    monkeypatch.setenv("JOBHUNTER_ROBOTS", "0")
+
+
 @pytest.fixture
 def job():
     """Factory for a minimal valid job dict; override any field per test."""

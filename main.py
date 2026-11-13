@@ -1234,6 +1234,14 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     print(f"[Body fetch] {got}/{len(need)} stub-body ads fetched"
           + (f" ({len(over)} over the {cap} cap)" if over else "")
           + (f"; {len(unresolved)} unresolved, eligible for a retry" if unresolved else ""))
+    try:
+        import scrapers as _s
+        report = _s.body_fetch_report()
+        if report:
+            # Which hosts fail and why (fix list 2026-11-13, item 9).
+            print(f"[Body fetch] failures by host: {report}")
+    except Exception:
+        pass
     return [j["id"] for j in unresolved if j.get("id")]
 
 

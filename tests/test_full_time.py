@@ -199,7 +199,7 @@ class TestTheSearchesReachFullTimeRoles:
 
     @pytest.mark.parametrize("name,needle", [
         ("_LI_GUEST_QUERIES", "junior data scientist"), ("_ADZUNA_QUERIES", "Junior Data Scientist"),
-        ("_XING_QUERIES", "Junior Data Scientist"), ("_SR_QUERIES", "junior"),
+        ("_SR_QUERIES", "junior"),
         ("_WD_FULLTIME_SEARCHES", "junior"), ("ARBEITSAGENTUR_FULLTIME_QUERIES", "Data Scientist"),
     ])
     def test_every_query_driven_source_asks_for_full_time_roles(self, name, needle):
