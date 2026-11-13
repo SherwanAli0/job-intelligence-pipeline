@@ -505,6 +505,16 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
           + (f", {truncated} over the {_JOBSPY_DESC_CAP} cap" if truncated else "") + ")")
 
 
+def _cell(value) -> str:
+    """A dataframe cell as text. python-jobspy 1.4.0 returns None for an empty
+    description, which str() turned into the literal "None"; NaN does the
+    same as "nan"."""
+    if value is None:
+        return ""
+    text = str(value)
+    return "" if text.strip().lower() in ("nan", "none", "nat") else text
+
+
 def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
                          lock=None) -> None:
     """Convert a JobSpy dataframe into job() dicts, appending to results.
@@ -515,7 +525,7 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
     every repeated row used to cost another description fetch. Skipping them
     is what makes room for all 42 queries inside the time box."""
     for _, row in df.iterrows():
-        url = str(row.get("job_url", "")) or str(row.get("url", ""))
+        url = _cell(row.get("job_url")) or _cell(row.get("url"))
         if not url:
             continue
         if seen_urls is not None:
@@ -536,12 +546,12 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
         if direct.lower() in ("nan", "none"):
             direct = ""
         results.append(job(
-            title=str(row.get("title", "")),
-            company=str(row.get("company", "")),
-            location=str(row.get("location", "")),
+            title=_cell(row.get("title")),
+            company=_cell(row.get("company")),
+            location=_cell(row.get("location")),
             url=url,
-            source=str(row.get("site", "jobspy")),
-            description=str(row.get("description", "")),
+            source=_cell(row.get("site")) or "jobspy",
+            description=_cell(row.get("description")),
             posted_at=str(posted) if posted else "",
             apply_url=direct,
         ))
@@ -592,6 +602,37 @@ def _query_hours_old(query: str) -> int:
     return base
 
 
+# Per-lane result of the current JobSpy run: rows returned and the errors
+# python-jobspy reported. Since 1.2.0 a blocked board no longer raises; it
+# returns an empty frame and (1.4.0) names the error in df.attrs["errors"],
+# so a broken lane looked like "linkedin 84/84" with zero rows.
+_JOBSPY_LANE_REPORT: dict = {}
+
+
+def _jobspy_call_kwargs() -> dict:
+    """Keyword arguments for this python-jobspy version: fetch_description
+    replaced linkedin_fetch_description in 1.2.0, and verbose went to 1."""
+    import inspect
+    from jobspy import scrape_jobs  # type: ignore
+    params = inspect.signature(scrape_jobs).parameters
+    kw = {"verbose": 0} if "verbose" in params else {}
+    if "fetch_description" in params:
+        kw["fetch_description"] = False
+    else:
+        kw["linkedin_fetch_description"] = False
+    return kw
+
+
+def jobspy_lane_warnings() -> list[str]:
+    """Health warnings for lanes that returned nothing (for the digest)."""
+    out = []
+    for site, rep in sorted(_JOBSPY_LANE_REPORT.items()):
+        if rep["rows"] == 0 and rep["queries"]:
+            why = ", ".join(f"{m} ({n}x)" for m, n in rep["errors"].most_common(2)) or "no error reported"
+            out.append(f"JobSpy {site} returned 0 jobs from {rep['queries']} queries: {why}")
+    return out
+
+
 def _jobspy_lane(site: str, queries: list[str], results: list[dict],
                  seen_urls: set, lock, results_wanted: int, pause: float) -> None:
     """Run every query against ONE site, appending to the shared buffer.
@@ -603,6 +644,8 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
     from jobspy import scrape_jobs  # type: ignore
 
     _JOBSPY_PROGRESS[site] = [0, len(queries)]
+    report = _JOBSPY_LANE_REPORT.setdefault(site, {"rows": 0, "queries": 0, "errors": Counter()})
+    extra = _jobspy_call_kwargs()
     for query in queries:
         try:
             df = scrape_jobs(
@@ -616,11 +659,15 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
                 country_indeed="Germany",
                 # Descriptions come from phase two (title-screened, parallel),
                 # not inline: inline fetching cost one request per posting and
-                # timed the whole source out.
-                linkedin_fetch_description=False,
+                # timed the whole source out (see _jobspy_call_kwargs).
+                **extra,
             )
+            report["queries"] += 1
+            for msg in ((getattr(df, "attrs", None) or {}).get("errors") or {}).values():
+                report["errors"][str(msg)[:80]] += 1
             fresh: list[dict] = []
             _jobspy_rows_to_jobs(df, fresh, seen_urls, lock)
+            report["rows"] += len(fresh)
             # Enrich THIS query's jobs before publishing them, so whatever a
             # timeout salvages already has descriptions and filters properly.
             unseen = [j for j in fresh if j.get("id") not in KNOWN_JOB_IDS]
@@ -628,8 +675,9 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
             _enrich_jobspy_descriptions(unseen, quiet=True)
             with lock:
                 results.extend(fresh)
-        except Exception:
-            pass
+        except Exception as e:
+            report["queries"] += 1
+            report["errors"][type(e).__name__] += 1
         finally:
             _JOBSPY_PROGRESS[site][0] += 1
         time.sleep(pause)
@@ -646,6 +694,7 @@ def scrape_jobspy() -> list[dict]:
         results.clear()
         _JOBSPY_DESC_STATS[:] = [0, 0, 0]
         _JOBSPY_PROGRESS.clear()
+        _JOBSPY_LANE_REPORT.clear()
         _JOBSPY_KNOWN_SKIPPED[0] = 0
         active = _jobspy_active_queries()
         seen_urls: set[str] = set()
@@ -672,6 +721,10 @@ def scrape_jobspy() -> list[dict]:
         print(f"  [JobSpy] descriptions: {f_}/{n_} fetched, {s_} skipped on title, "
               f"{_JOBSPY_KNOWN_SKIPPED[0]} skipped as already seen")
         print(f"  [JobSpy] {len(results)} jobs total")
+        for site, rep in sorted(_JOBSPY_LANE_REPORT.items()):
+            errs = ", ".join(f"{m} ({n}x)" for m, n in rep["errors"].most_common(3))
+            print(f"  [JobSpy] {site}: {rep['rows']} rows from {rep['queries']} queries"
+                  + (f"; errors: {errs}" if errs else ""))
         return results
     except Exception as e:
         print(f"  [JobSpy] failed: {e}")

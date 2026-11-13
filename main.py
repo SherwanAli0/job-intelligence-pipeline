@@ -2266,6 +2266,12 @@ def node_scrape(state: dict) -> dict:
     health_warnings = _dead_source_warnings(_load_run_history(), src_counts)
     # Registry pass: catches sources dead for longer than the history
     # window can see (the failure mode the median check misses).
+    # A JobSpy lane that returned nothing is said the same day (2026-11-13):
+    # python-jobspy >= 1.2.0 reports a blocked board instead of raising.
+    try:
+        health_warnings.extend(_scrapers.jobspy_lane_warnings())
+    except Exception:
+        pass
     _flagged = {w.split("'")[1] for w in health_warnings if "'" in w}
     for w in _absent_source_warnings_from(_load_source_registry(), src_counts):
         if "'" in w and w.split("'")[1] in _flagged:
