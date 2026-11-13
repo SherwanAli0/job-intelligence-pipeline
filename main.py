@@ -1798,6 +1798,8 @@ _LONG_LIVED_SOURCES = frozenset({
     "WDR", "Lufthansa", "DZNE", "Uniper", "SWD", "1und1", "Vodafone",
     "UKB", "rhenag", "DeutscheBahn", "INVERTO", "Deloitte", "EY", "RWE", "E.ON",
     "Watchlist",
+    # Research feeds and research-centre boards (2026-11-13)
+    "Helmholtz", "MaxPlanck", "KIT", "DKFZ",
 })
 
 

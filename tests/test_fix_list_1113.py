@@ -335,3 +335,55 @@ class TestEon:
         import inspect
         assert "scrape_eon" in inspect.getsource(scrapers.scrape_all)
         assert "E.ON" in __import__("main")._LONG_LIVED_SOURCES
+
+
+# ---------------------------------------------------------------- items 5, 6, 12
+class TestResearchFeeds:
+    HELMHOLTZ = ("<jobs>"
+                 "<job><position>Studentische Hilfskräfte</position><title>Studentische Hilfskraft Data Science (m/w/d)</title>"
+                 "<institute>Forschungszentrum Jülich</institute><location>Jülich</location>"
+                 "<url>https://www.fz-juelich.de/de/karriere/stellenangebote/2026S-1</url></job>"
+                 "<job><position>Führungskräfte</position><title>Bereichsleiter Umwelt</title>"
+                 "<institute>KIT</institute><location>Karlsruhe</location><url>http://x/a.pdf</url></job>"
+                 "<job><position>Praktikum</position><title>Schülerpraktikum Geosysteme</title>"
+                 "<institute>GFZ</institute><location>Potsdam</location><url>http://x/b</url></job>"
+                 "</jobs>").encode("utf-8")
+    MPG = ("<rss><channel>"
+           "<item><title>Studentische Hilfskraft (m/w/d) Maschinelles Lernen</title>"
+           "<link>https://www.mpg.de/job-1</link><pubDate>Fri, 13 Nov 2026 00:00:00 +0100</pubDate>"
+           "<description>Das Max-Planck-Institut für Mathematik in Bonn sucht ...</description></item>"
+           "<item><title>Promotionsstellen Quantengravitation</title><link>https://www.mpg.de/2</link>"
+           "<description>in Potsdam</description></item>"
+           "</channel></rss>").encode("utf-8")
+    FZJ_RSS = ("<rss><channel><item><title>Werkstudent KI (w/m/d)</title>"
+               "<link>https://www.fz-juelich.de/de/karriere/stellenangebote/2026W-1</link>"
+               "<description>https://recruiting.fz-juelich.de/jobposting/abc1</description>"
+               "<pubDate>Thu, 12 Nov 2026 10:00:00 +0000</pubDate></item></channel></rss>").encode("utf-8")
+
+    def test_helmholtz_keeps_student_roles_only(self):
+        rows, total = scrapers._helmholtz_rows(self.HELMHOLTZ)
+        assert total == 3 and [r["title"] for r in rows] == ["Studentische Hilfskraft Data Science (m/w/d)"]
+        assert rows[0]["company"] == "Forschungszentrum Jülich" and rows[0]["location"] == "Jülich, Germany"
+        assert rows[0]["_stub"] and rows[0]["source"] == "Helmholtz"
+
+    def test_max_planck_gets_the_city_from_the_text(self):
+        rows, total = scrapers._mpg_rows(self.MPG)
+        assert total == 2 and len(rows) == 1
+        assert rows[0]["location"] == "Bonn, Germany" and rows[0]["posted_at"] == "2026-11-13"
+
+    def test_juelich_rss_uses_the_recruiting_links(self):
+        rows = scrapers._wl_fzj_rss_rows(self.FZJ_RSS)
+        assert rows == [{"title": "Werkstudent KI (w/m/d)", "url": "https://recruiting.fz-juelich.de/jobposting/abc1",
+                         "location": "Jülich", "posted": "2026-11-12"}]
+
+    def test_pdf_ads_are_not_read_as_text(self, monkeypatch):
+        monkeypatch.setattr(scrapers.requests, "get",
+                            lambda *a, **k: _Resp({}, 200, "%PDF-1.7 binary", {"content-type": "application/pdf"}))
+        assert scrapers._fetch_full_description("https://example.org/ad.pdf") == ""
+
+    def test_new_sources_are_wired_and_long_lived(self):
+        import inspect
+        import main
+        assert "scrape_research_feeds" in inspect.getsource(scrapers.scrape_all)
+        assert {"jobs.pse.kit.edu", "jobs.dkfz.de"} <= {t[0] for t in scrapers._DVINCI_TENANTS}
+        assert {"Helmholtz", "MaxPlanck", "KIT", "DKFZ"} <= main._LONG_LIVED_SOURCES

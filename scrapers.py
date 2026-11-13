@@ -1919,6 +1919,9 @@ def _fetch_full_description(url: str) -> str:
         if r.status_code != 200:
             _body_note(url, f"HTTP {r.status_code}")
             return ""
+        if "pdf" in ((getattr(r, "headers", {}) or {}).get("content-type", "") or "").lower():
+            _body_note(url, "PDF")             # binary, no page text to extract
+            return ""
         # Second path: schema.org JobPosting. Script-rendered career pages
         # ship an empty <main> but still carry the whole ad as JSON-LD.
         try:
@@ -4257,6 +4260,89 @@ def scrape_research_institutes() -> list[dict]:
 # is discovered from the sitemap index on every run rather than hardcoded.
 # robots.txt disallows "/*cHash" in general but then explicitly re-allows
 # "/sitemap.xml?sitemap=*&cHash=*", which is exactly the path used here.
+# -- Research feeds: Helmholtz job XML and Max Planck RSS (2026-11-13) --------
+# Helmholtz publishes one XML of jobs across its centres (255 that day: KIT 59,
+# FZ Jülich 50, AWI 20, DESY 19, HZB 15, HZDR 14, GFZ 13, DZNE 12, DKFZ 12 ...),
+# valid UTF-8, robots.txt Crawl-delay 30, so it is read once per run. The Max
+# Planck RSS lists the 30 newest ads of all institutes. Neither carries the ad
+# text, so rows are stubs and the body fetch reads the linked page.
+_HELMHOLTZ_XML = "https://www.helmholtz.de/hochschul-jobde/"
+_MPG_RSS = "https://www.mpg.de/feeds/stellenangebote.rss"
+_RESEARCH_FEEDS = (("Helmholtz", _HELMHOLTZ_XML), ("Max Planck", _MPG_RSS))
+_RESEARCH_STUDENT = re.compile(
+    r"werkstudent|working student|studentisch|hilfskr|\bhiwi\b|\bshk\b|\bwhk\b|praktik|internship"
+    r"|\bintern\b|praxissemester|student assistant|student research", re.IGNORECASE)
+# School-pupil and non-student placements are not student jobs.
+_RESEARCH_NOT_STUDENT = re.compile(r"sch(?:ü|ue)ler|ohne studienbezug|grund-/vorpraktikum|vorpraktikum",
+                                   re.IGNORECASE)
+_MPG_CITY_RE = re.compile(r"\bin ([A-ZÄÖÜ][a-zäöüß]+(?:[ -][A-ZÄÖÜ][a-zäöüß]+)?)")
+
+
+def _rss_date(value: str) -> str:
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(value).date().isoformat()
+    except Exception:
+        return ""
+
+
+def _helmholtz_rows(content: bytes) -> tuple[list[dict], int]:
+    import xml.etree.ElementTree as ET
+    out: list[dict] = []
+    jobs = list(ET.fromstring(content).iter("job"))
+    for jb in jobs:
+        title = (jb.findtext("title") or "").strip()
+        position = (jb.findtext("position") or "").strip()
+        if not title or not (_RESEARCH_STUDENT.search(title) or _RESEARCH_STUDENT.search(position)):
+            continue
+        if _RESEARCH_NOT_STUDENT.search(title):
+            continue
+        institute = (jb.findtext("institute") or "").strip() or "Helmholtz"
+        city = (jb.findtext("location") or "").strip()
+        url = (jb.findtext("url") or "").strip() or _HELMHOLTZ_XML
+        row = job(title=title, company=institute, location=f"{city}, Germany" if city else "Germany",
+                  url=url, source="Helmholtz", description=f"{title}\n{institute}\n{position}")
+        row["_stub"] = True
+        out.append(row)
+    return out, len(jobs)
+
+
+def _mpg_rows(content: bytes) -> tuple[list[dict], int]:
+    import xml.etree.ElementTree as ET
+    from filters import is_german_location
+    out: list[dict] = []
+    items = list(ET.fromstring(content).iter("item"))
+    for it in items:
+        title = (it.findtext("title") or "").strip()
+        if not title or not _RESEARCH_STUDENT.search(title) or _RESEARCH_NOT_STUDENT.search(title):
+            continue
+        text = BeautifulSoup(it.findtext("description") or "", "html.parser").get_text(" ", strip=True)
+        city = next((c for c in _MPG_CITY_RE.findall(text) if is_german_location(c.lower())), "")
+        row = job(title=title, company="Max-Planck-Gesellschaft",
+                  location=f"{city}, Germany" if city else "Germany",
+                  url=(it.findtext("link") or "").strip(), source="MaxPlanck",
+                  description=f"{title}\n{text}", posted_at=_rss_date(it.findtext("pubDate") or ""))
+        row["_stub"] = True
+        out.append(row)
+    return out, len(items)
+
+
+def scrape_research_feeds() -> list[dict]:
+    out: list[dict] = []
+    for name, url, parse in (("Helmholtz", _HELMHOLTZ_XML, _helmholtz_rows), ("Max Planck", _MPG_RSS, _mpg_rows)):
+        try:
+            r = _guarded_get(url, headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                print(f"  [{name}] HTTP {r.status_code}")
+                continue
+            rows, total = parse(r.content)
+            out.extend(rows)
+            print(f"  [{name}] {len(rows)} student roles of {total} in the feed")
+        except Exception as e:
+            print(f"  [{name}] failed: {e}")
+    return out
+
+
 _BWI_SITEMAP_INDEX = "https://www.bwi.de/sitemap.xml"
 _BWI_STUDENT_URL = re.compile(
     r"werkstudent|studentische|hilfskraft|praktik|internship", re.IGNORECASE)
@@ -4429,6 +4515,9 @@ _DVINCI_TENANTS = (
     # A value containing a dot is a full host, not a *.dvinci-hr.com slug.
     ("jobs.dzne.de", "DZNE", "Bonn"),          # neuroscience research, English ads
     ("inverto", "INVERTO", "Köln"),            # BCG procurement consultancy - English "Consulting Intern - Digital & AI"
+    # Research centres on d.vinci (checked 2026-11-13): KIT 74 jobs, DKFZ 12.
+    ("jobs.pse.kit.edu", "KIT", "Karlsruhe"),
+    ("jobs.dkfz.de", "DKFZ", "Heidelberg"),
 )
 _DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische"
                              r"|student (research )?assistant|hilfskraft|working student",
@@ -4955,6 +5044,10 @@ _WL_GOOGLE = ("https://www.google.com/about/careers/applications/jobs/results/"
 _WL_APPLE = "https://jobs.apple.com/de-de/search?location=germany-DEU&team=internships-STDNT-INTRN"
 _WL_SAP = "https://careers.sap.com/search/?q={q}&locationsearch=germany&startrow={start}"
 _WL_FZJ = "https://www.fz-juelich.de/de/karriere/stellenangebote"
+# The page lists about 25 jobs; the RSS feed all of them (97 on 2026-11-13),
+# with the same recruiting.fz-juelich.de links, so known jobs keep their ids.
+_WL_FZJ_RSS = ("https://www.fz-juelich.de/++api++/@@rss?portal_type=Joboffer"
+               "&path=/Plone/de/karriere/stellenangebote")
 _WL_DE_MONTHS = {"jan": 1, "feb": 2, "mär": 3, "mrz": 3, "apr": 4, "mai": 5, "jun": 6,
                  "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dez": 12}
 
@@ -5082,7 +5175,28 @@ def _wl_sap() -> list[dict]:
     return list(rows.values())
 
 
+def _wl_fzj_rss_rows(content: bytes) -> list[dict]:
+    import xml.etree.ElementTree as ET
+    rows = []
+    for it in ET.fromstring(content).iter("item"):
+        title = (it.findtext("title") or "").strip()
+        ad = (it.findtext("description") or "").strip()
+        url = ad if ad.startswith("http") else (it.findtext("link") or "").strip()
+        if title and url:
+            rows.append({"title": title, "url": url, "location": "Jülich",
+                         "posted": _rss_date(it.findtext("pubDate") or "")})
+    return rows
+
+
 def _wl_fzj() -> list[dict]:
+    try:
+        r = _guarded_get(_WL_FZJ_RSS, headers=HEADERS, timeout=30)
+        if r.status_code == 200:
+            rows = _wl_fzj_rss_rows(r.content)
+            if rows:
+                return rows
+    except Exception:
+        pass
     return _wl_fzj_rows(_wl_get(_WL_FZJ))
 
 
@@ -5137,6 +5251,7 @@ def scrape_all() -> list[dict]:
         scrape_arbeitsagentur,     # Official German employment agency API
         scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
         scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
+        scrape_research_feeds,     # Helmholtz job XML + Max Planck RSS (2026-11-13)
         scrape_internship_watchlist,  # Google, Apple, SAP, FZ Jülich career pages
         scrape_bwi,                # BWI GmbH - Bundeswehr IT, Bonn/Meckenheim
         scrape_igus,               # igus Köln - JSON API, full ad text inline
