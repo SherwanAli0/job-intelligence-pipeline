@@ -370,6 +370,13 @@ _US_CODES = ("al ak az ar ca co ct fl ga hi ia id il in ks ky la ma md me mi mn 
 # "DE" (Delaware) is deliberately not in the list: it is also Germany's code.
 _US_CODE_RE = re.compile(r",\s*(?:" + "|".join(_US_CODES) + r")(?:\s+\d{5}(?:-\d{4})?)?\s*(?:,\s*(?:usa|us))?\s*$")
 _CA_AU_CODE_RE = re.compile(r",\s*(?:on|qc|bc|ab|mb|nb|ns|nl|pe|sk|nsw|vic|qld|tas|act)\s*$")
+# Workday writes many locations as "US - Gaithersburg - MD", "IN - Bangalore"
+# or "USA - Tarzana, CA": a leading country code, then a dash. Added 2026-11-13
+# after "US - Tarzana - CA" was read as unplaceable (the Workday facet bug).
+_LEADING_CC_RE = re.compile(
+    r"^(?:usa?|uk|gb|in|cn|jp|sg|ca|mx|br|au|nz|ie|fr|es|it|nl|be|pl|ch|at|se|dk|no|fi|pt"
+    r"|cz|hu|ro|gr|tr|il|ae|sa|qa|eg|ma|za|ng|ke|kr|tw|hk|my|ph|th|vn|id|ar|cl|co|cr|pe"
+    r"|lb|sk|si|hr|bg|rs|ua|lu)\s*[-\u2013\u2014]\s*\S")
 _FOREIGN_CC_RE = re.compile(r",\s*(?:at|ch|nl|fr|es|it|pl|pt|ie|gb|uk|dk|se|fi|cz|hu|ro|lu|us|ca|au|nz)\s*$")
 # German state codes as Indeed and some boards write them: "Hamminkeln, NW",
 # "Herzogenaurach, BY", "Paderborn, NW, DE", "Köln, NW, DE, 50933".
@@ -442,7 +449,8 @@ def _strong_foreign(loc: str) -> bool:
     return bool(
         _word_re(FOREIGN_COUNTRIES).search(loc)
         or _word_re(FOREIGN_REGIONS).search(loc)
-        or _US_CODE_RE.search(loc) or _CA_AU_CODE_RE.search(loc) or _FOREIGN_CC_RE.search(loc))
+        or _US_CODE_RE.search(loc) or _CA_AU_CODE_RE.search(loc) or _FOREIGN_CC_RE.search(loc)
+        or _LEADING_CC_RE.search(loc))
 
 
 def _has_german_signal(loc: str) -> bool:

@@ -874,6 +874,11 @@ _DE_EXTRA_PLACES = (
 _DE_PLACE_RE = None
 
 
+def _foreign_place(loc: str) -> bool:
+    from filters import is_foreign_location
+    return is_foreign_location(loc or "")
+
+
 def _de_place(loc: str) -> bool:
     """True when the string names Germany or a German place. One list for the
     whole pipeline (filters.is_german_location, with its foreign-country veto)
@@ -2296,6 +2301,8 @@ _WD_BUDGET_SECONDS = int(os.environ.get("JOBHUNTER_WD_BUDGET", "480"))
 _WD_FT_BUDGET_SECONDS = int(os.environ.get("JOBHUNTER_WD_FT_BUDGET", "300"))
 _WD_KEEP_FULLTIME = 10            # of the detail slots, at most this many go to the full-time pass
 _WD_STATS = {"searches_skipped": 0, "details_skipped": 0}
+# Tenants whose reply showed they ignore the Germany country facet (this run).
+_WD_FACET_IGNORED: set = set()
 _WD_STATS_LOCK = threading.Lock()
 _WD_BASE_URLS: set = set()        # filled by the base scraper; the full-time pass skips these
 # Ranking of full-time candidates: tech titles first, then junior ones.
@@ -2369,6 +2376,39 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
         return ""
 
 
+def _wd_has_facet(node, name: str) -> bool:
+    """Is `name` a facetParameter anywhere in a Workday facets tree? Sanofi
+    nests locationCountry under locationMainGroup; AstraZeneca and ING have no
+    locationCountry at all (checked live 2026-11-13)."""
+    if isinstance(node, dict):
+        if node.get("facetParameter") == name:
+            return True
+        return any(_wd_has_facet(v, name) for v in node.values() if isinstance(v, (dict, list)))
+    if isinstance(node, list):
+        return any(_wd_has_facet(v, name) for v in node)
+    return False
+
+
+def _wd_facet_honoured(data: dict, postings: list) -> bool:
+    """Did the tenant apply the Germany facet, or accept the parameter and
+    ignore it? Until 2026-11-13 any 200 reply counted as "Germany", and nine
+    tenants (pwc, micron, thermofisher, roche, cisco, ing, msd, gevernova,
+    astrazeneca) put 395 foreign postings into three days of runs, labelled
+    ", Germany" - two of them scored above the send threshold.
+
+    A reply without a locationCountry facet did not apply it. A reply without
+    any facets list (older tenants, test doubles) is judged by its postings:
+    two or more foreign locations, or only foreign ones, means ignored."""
+    facets = data.get("facets") if isinstance(data, dict) else None
+    if isinstance(facets, list) and facets and not _wd_has_facet(facets, "locationCountry"):
+        return False
+    from filters import is_foreign_location
+    locs = [str(jp.get("locationsText") or "") for jp in postings]
+    locs = [l for l in locs if l]
+    foreign = sum(1 for l in locs if is_foreign_location(l))
+    return not (foreign >= 2 or (foreign and foreign == len(locs)))
+
+
 def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) -> list[dict]:
     """One Workday tenant. Extracted so tenants can be fetched concurrently:
     measured at 718s sequentially across 15 tenants, the second-largest cost
@@ -2414,6 +2454,7 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
         return out
     cands: dict[str, dict] = {}
     facet_ok = True                     # until the tenant answers 400 to it
+    facet_judged = False                # the first faceted reply with postings decides
     try:
         for search in searches:
             facets = {"locationCountry": [_WD_COUNTRY_DE]} if facet_ok else {}
@@ -2437,12 +2478,22 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
                     continue
                 if r.status_code != 200:
                     break
-                postings = r.json().get("jobPostings", []) or []
+                data = r.json() or {}
+                postings = data.get("jobPostings", []) or []
                 if not postings:
                     if facets and offset == 0:
                         facets = {}         # facet matched nothing here: retry plain
                         continue
                     break
+                if facets and not facet_judged:
+                    facet_judged = True
+                    if not _wd_facet_honoured(data, postings):
+                        # Accepted and ignored: this reply IS the plain list.
+                        # Keep it, but nothing in it is known to be German.
+                        facets = {}
+                        facet_ok = False
+                        with _WD_STATS_LOCK:
+                            _WD_FACET_IGNORED.add(tenant)
                 for jp in postings:
                     title = (jp.get("title") or "").strip()
                     if not title:
@@ -2504,9 +2555,10 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
             job_url = f"https://{host}{c['path']}" if c["path"] else list_url
             desc = _wd_fetch_description(host, tenant, site, c["path"])
             location = c["location"]
-            if c["de_facet"] and not _de_place(location):
+            if c["de_facet"] and not _de_place(location) and not _foreign_place(location):
                 # The facet proved Germany; "2 Locations" alone would be
-                # judged as unknown by the geography filters.
+                # judged as unknown by the geography filters. A place the
+                # filters know is foreign is never relabelled (2026-11-13).
                 location = f"{location}, Germany" if location else "Germany"
             row = job(
                 title=c["title"],
@@ -2545,8 +2597,12 @@ def scrape_workday_cxs() -> list[dict]:
     plan = _wd_plan(t0)
     with _WD_STATS_LOCK:
         _WD_STATS.update(searches_skipped=0, details_skipped=0)
+        _WD_FACET_IGNORED.clear()
     results = _parallel_collect(_wd_tenants_quick_first(),
                                 lambda e: _workday_cxs_tenant(e, plan["base"], "base"), "WD-CXS")
+    if _WD_FACET_IGNORED:
+        print(f"  [WD-CXS] {len(_WD_FACET_IGNORED)} tenants ignore the Germany facet; their "
+              f"postings are not labelled Germany: {', '.join(sorted(_WD_FACET_IGNORED))}")
     _WD_BASE_URLS.clear()
     _WD_BASE_URLS.update(r["url"] for r in results)
     print(f"  [WD-CXS] {len(results)} AI/ML-relevant jobs across {len(WORKDAY_CXS_TENANTS)} tenants "
