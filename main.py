@@ -1811,6 +1811,7 @@ _LONG_LIVED_SOURCES = frozenset({
 _EMPLOYER_ATS_SOURCES = frozenset({
     "Greenhouse", "Lever", "Ashby", "Personio", "Recruitee",
     "SmartRecruiters", "Workday-CXS", "Workday", "Amazon",
+    "Workable", "Teamtailor", "Breezy",
 })
 
 

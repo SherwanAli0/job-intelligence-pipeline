@@ -4260,6 +4260,165 @@ def scrape_research_institutes() -> list[dict]:
 # is discovered from the sitemap index on every run rather than hardcoded.
 # robots.txt disallows "/*cHash" in general but then explicitly re-allows
 # "/sitemap.xml?sitemap=*&cHash=*", which is exactly the path used here.
+# -- Workable, Teamtailor and Breezy employer feeds (2026-11-13) ---------------
+# Three applicant-tracking systems with a public per-company feed, each checked
+# live on 2026-11-13 (robots.txt allows all three paths):
+#   Workable   apply.workable.com/api/v1/widget/accounts/{slug}?details=true
+#              (JSON with the full ad; an old duplicate slug answers 200 with 0 jobs)
+#   Teamtailor {site}/jobs.rss?per_page=1000 (RSS with the full ad and tt:locations;
+#              per_page=200 cut a 448-job site off at 200)
+#   Breezy     {slug}.breezy.hr/json (JSON without the ad text: rows are stubs)
+# Only jobs with a German location, or remote ones, are kept; the geography
+# filters judge the rest downstream as for every source.
+_WORKABLE_ACCOUNTS = (
+    ("socialsweethearts", "social sweethearts"),      # Bonn, Köln, Düsseldorf
+    ("circonomit", "Circonomit"),                     # Köln
+    ("envalior", "Envalior"),                         # NRW
+    ("vivaldi-group", "Vivaldi Group"),               # consulting, Düsseldorf
+    ("quistor", "Broadpin"),                          # Münster
+    ("tetrascience", "TetraScience"),
+    ("infosys-consulting-europe", "Infosys Consulting"),
+    ("fioneer", "SAP Fioneer"),
+    ("animore", "Animore"),                           # AI, student and intern roles
+    ("avomind", "Avomind"),                           # tech recruiter
+    ("onodrim-industries", "Onodrim Industries"),
+    ("usercentrics", "Usercentrics"),
+    ("unit8", "Unit8"),
+    ("visium", "Visium"),
+    ("skeletontech", "Skeleton Technologies"),
+    ("getolo", "getolo"),
+    ("universalquantum", "Universal Quantum"),
+    ("twocircles", "Two Circles"),
+)
+_TEAMTAILOR_SITES = (
+    ("coacgmbh-1728891424.teamtailor.com", "coac"),   # Köln
+    ("grouponede.teamtailor.com", "group.one"),       # Dortmund
+    ("heydata.teamtailor.com", "heyData"),
+    ("ailoys-1732528276.teamtailor.com", "Ailoys"),
+    ("appsfactory.teamtailor.com", "Appsfactory"),
+    ("huaweiresearchcentergermanyaustria.teamtailor.com", "Huawei Research Center Germany"),
+    ("tibber.teamtailor.com", "Tibber"),
+)
+_BREEZY_ACCOUNTS = (
+    ("eigenblue", "eigenblue"),                       # industrial AI
+    ("transparent-hiring", "Transparent Hiring"),
+    ("ablefy", "Ablefy"),
+    ("alasco", "Alasco"),
+    ("gecko", "GECKO"),
+)
+_TT_NS = "{https://teamtailor.com/locations}"
+
+
+def _german_or_remote(places: list[str], remote: bool) -> bool:
+    from filters import is_german_location
+    return remote or any(is_german_location(p.lower()) for p in places if p)
+
+
+def _workable_rows(data: dict, company: str) -> list[dict]:
+    out = []
+    for j in (data or {}).get("jobs") or []:
+        title = (j.get("title") or "").strip()
+        url = j.get("url") or j.get("shortlink") or ""
+        if not title or not url:
+            continue
+        locs = j.get("locations") or [{"city": j.get("city"), "country": j.get("country")}]
+        places = []
+        for l in locs:
+            country = (l.get("country") or "").strip() or _XING_COUNTRIES.get((l.get("countryCode") or "").upper(), "")
+            places.append(", ".join(x for x in ((l.get("city") or "").strip(), country) if x))
+        remote = str(j.get("telecommuting")).strip().lower() == "true"
+        if not _german_or_remote(places, remote):
+            continue
+        location = "; ".join(p for p in places if p) or "Germany"
+        if remote and "remote" not in location.lower():
+            location = f"Remote, {location}"
+        desc = BeautifulSoup(j.get("description") or "", "html.parser").get_text("\n", strip=True)
+        out.append(job(title=title, company=(data.get("name") or company).strip(), location=location, url=url,
+                       source="Workable", description=desc,
+                       posted_at=str(j.get("published_on") or j.get("created_at") or "")))
+    return out
+
+
+def _teamtailor_rows(content: bytes, company: str) -> list[dict]:
+    import xml.etree.ElementTree as ET
+    out = []
+    for it in ET.fromstring(content).iter("item"):
+        title = (it.findtext("title") or "").strip()
+        url = (it.findtext("link") or "").strip()
+        if not title or not url:
+            continue
+        places = []
+        for loc in it.iter(_TT_NS + "location"):
+            places.append(", ".join(x for x in ((loc.findtext(_TT_NS + "city") or "").strip(),
+                                                (loc.findtext(_TT_NS + "country") or "").strip()) if x))
+        status = (it.findtext("remoteStatus") or "").strip().lower()
+        if not _german_or_remote(places, status in ("remote", "fully")):
+            continue
+        location = "; ".join(p for p in places if p) or "Germany"
+        if status in ("remote", "hybrid") and status not in location.lower():
+            location = f"{status.capitalize()}, {location}"
+        desc = BeautifulSoup(it.findtext("description") or "", "html.parser").get_text("\n", strip=True)
+        out.append(job(title=title, company=company, location=location, url=url, source="Teamtailor",
+                       description=desc, posted_at=_rss_date(it.findtext("pubDate") or "")))
+    return out
+
+
+def _breezy_rows(data: list, company: str) -> list[dict]:
+    out = []
+    for x in data or []:
+        title = (x.get("name") or "").strip()
+        url = x.get("url") or ""
+        if not title or not url:
+            continue
+        locs = x.get("locations") or [x.get("location") or {}]
+        de = [l for l in locs if ((l.get("country") or {}).get("id") or "").upper() == "DE"]
+        remote = any(l.get("is_remote") for l in locs)
+        if not de and not remote:
+            continue
+        places = [f"{(l.get('city') or '').strip()}, Germany".lstrip(", ") for l in de] or \
+                 [str((locs[0] or {}).get("name") or "")]
+        location = "; ".join(p for p in places if p) or "Germany"
+        if remote:
+            location = f"Remote, {location}"
+        kind = (x.get("type") or {}).get("name") or ""
+        row = job(title=title, company=((x.get("company") or {}).get("name") or company).strip(), location=location,
+                  url=url, source="Breezy", description=f"{title}\n{kind}\n{x.get('department') or ''}",
+                  posted_at=str(x.get("published_date") or "")[:10])
+        row["_stub"] = True
+        out.append(row)
+    return out
+
+
+def scrape_employer_feeds() -> list[dict]:
+    """Workable, Teamtailor and Breezy employers (see _WORKABLE_ACCOUNTS)."""
+    out: list[dict] = []
+    counts = {"Workable": 0, "Teamtailor": 0, "Breezy": 0}
+    calls = ([("Workable", f"https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true",
+               lambda r, c=company: _workable_rows(r.json(), c)) for slug, company in _WORKABLE_ACCOUNTS]
+             + [("Teamtailor", f"https://{site}/jobs.rss?per_page=1000",
+                 lambda r, c=company: _teamtailor_rows(r.content, c)) for site, company in _TEAMTAILOR_SITES]
+             + [("Breezy", f"https://{slug}.breezy.hr/json",
+                 lambda r, c=company: _breezy_rows(r.json(), c)) for slug, company in _BREEZY_ACCOUNTS])
+
+    def fetch(call):
+        platform, url, parse = call
+        try:
+            r = _guarded_get(url, headers=HEADERS, timeout=25)
+            if r.status_code != 200:
+                print(f"  [{platform}] {url.split('/')[2]} HTTP {r.status_code}")
+                return []
+            return parse(r)
+        except Exception as e:
+            print(f"  [{platform}] {url.split('/')[2]} failed: {type(e).__name__}")
+            return []
+    for row in _parallel_collect(calls, fetch, "employer-feeds", workers=6):
+        counts[row["source"]] += 1
+        out.append(row)
+    print("  [Employer feeds] " + ", ".join(f"{k} {v}" for k, v in counts.items())
+          + " jobs in Germany or remote")
+    return out
+
+
 # -- Research feeds: Helmholtz job XML and Max Planck RSS (2026-11-13) --------
 # Helmholtz publishes one XML of jobs across its centres (255 that day: KIT 59,
 # FZ Jülich 50, AWI 20, DESY 19, HZB 15, HZDR 14, GFZ 13, DZNE 12, DKFZ 12 ...),
@@ -5287,6 +5446,7 @@ def scrape_all() -> list[dict]:
         scrape_lever,              # Mistral, Qonto, MoonPay, Neon, TrustYou, Nuri
         scrape_ashby,              # Perplexity, Deepgram, Ramp, Supabase, Linear, etc.
         scrape_recruitee,          # Limehome and other EU startups
+        scrape_employer_feeds,     # Workable, Teamtailor, Breezy employers (2026-11-13)
         scrape_germantechjobs,     # germantechjobs.de RSS - German tech aggregator
         scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
         scrape_linkedin_guest,     # LinkedIn guest API - server-side entry-level filter

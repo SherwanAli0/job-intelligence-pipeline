@@ -387,3 +387,47 @@ class TestResearchFeeds:
         assert "scrape_research_feeds" in inspect.getsource(scrapers.scrape_all)
         assert {"jobs.pse.kit.edu", "jobs.dkfz.de"} <= {t[0] for t in scrapers._DVINCI_TENANTS}
         assert {"Helmholtz", "MaxPlanck", "KIT", "DKFZ"} <= main._LONG_LIVED_SOURCES
+
+
+# ---------------------------------------------------------------- item 7
+class TestEmployerFeeds:
+    def test_workable_keeps_german_and_remote_jobs(self):
+        data = {"name": "Circonomit ", "jobs": [
+            {"title": "Working Student AI", "url": "https://apply.workable.com/j/A", "telecommuting": False,
+             "published_on": "2026-11-12", "description": "<p>Ad</p>",
+             "locations": [{"city": "Cologne", "country": "Germany", "countryCode": "DE"}]},
+            {"title": "Engineer", "url": "https://apply.workable.com/j/B", "telecommuting": False,
+             "locations": [{"city": "Lisbon", "country": "Portugal", "countryCode": "PT"}]},
+            {"title": "Data Analyst", "url": "https://apply.workable.com/j/C", "telecommuting": True,
+             "locations": [{"city": "Lisbon", "country": "Portugal", "countryCode": "PT"}]}]}
+        rows = scrapers._workable_rows(data, "Circonomit")
+        assert [(r["title"], r["location"]) for r in rows] == [
+            ("Working Student AI", "Cologne, Germany"), ("Data Analyst", "Remote, Lisbon, Portugal")]
+        assert rows[0]["company"] == "Circonomit" and rows[0]["description"] == "Ad"
+
+    def test_teamtailor_reads_its_location_elements(self):
+        rss = ('<rss xmlns:tt="https://teamtailor.com/locations"><channel><item>'
+               '<title>Werkstudent Data</title><link>https://coac.teamtailor.com/jobs/1-werkstudent</link>'
+               '<description>&lt;p&gt;Ad&lt;/p&gt;</description><pubDate>Tue, 03 Nov 2026 10:44:52 +0100</pubDate>'
+               '<remoteStatus>hybrid</remoteStatus><tt:locations><tt:location><tt:city>Köln</tt:city>'
+               '<tt:country>Germany</tt:country></tt:location></tt:locations></item></channel></rss>').encode("utf-8")
+        (row,) = scrapers._teamtailor_rows(rss, "coac")
+        assert row["location"] == "Hybrid, Köln, Germany" and row["posted_at"] == "2026-11-03"
+        assert row["source"] == "Teamtailor" and row["description"] == "Ad"
+
+    def test_breezy_rows_are_stubs_for_the_body_fetch(self):
+        data = [{"name": "(Junior) Backend Engineer - AI Agents", "url": "https://eigenblue.breezy.hr/p/1",
+                 "published_date": "2026-11-10T09:39:16Z", "type": {"name": "Vollzeit"},
+                 "company": {"name": "eigenblue "},
+                 "locations": [{"country": {"id": "DE"}, "city": "Munich", "is_remote": False}]},
+                {"name": "Sales US", "url": "https://eigenblue.breezy.hr/p/2",
+                 "locations": [{"country": {"id": "US"}, "city": "Austin", "is_remote": False}]}]
+        (row,) = scrapers._breezy_rows(data, "eigenblue")
+        assert row["location"] == "Munich, Germany" and row["_stub"] and row["company"] == "eigenblue"
+
+    def test_feeds_are_wired(self):
+        import inspect
+        import main
+        assert "scrape_employer_feeds" in inspect.getsource(scrapers.scrape_all)
+        assert len(scrapers._WORKABLE_ACCOUNTS) >= 18 and len(scrapers._TEAMTAILOR_SITES) >= 7
+        assert {"Workable", "Teamtailor", "Breezy"} <= main._EMPLOYER_ATS_SOURCES
