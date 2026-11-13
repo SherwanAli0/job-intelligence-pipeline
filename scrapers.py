@@ -87,7 +87,7 @@ def _start_scraper(scraper):
     """Start a scraper on a daemon thread and return (name, box, thread)."""
     import threading
 
-    box: dict = {"jobs": []}
+    box: dict = {"jobs": [], "t0": time.time()}
 
     def _target():
         try:
@@ -111,17 +111,20 @@ _PENDING_SCRAPERS: list = []
 # Jobs JobSpy has collected so far this run. Read by the timeout handler so a
 # slow LinkedIn scrape yields partial results instead of nothing at all.
 _JOBSPY_PARTIAL: list = []
+# The same for the LinkedIn guest search (2026-11-13): it hit its 600 s limit
+# in 6 of 20 runs, and on a timeout its jobs came back only if the thread
+# finished within the late grace period.
+_LI_GUEST_PARTIAL: list = []
+_PARTIAL_BUFFERS = {"scrape_jobspy": _JOBSPY_PARTIAL, "scrape_linkedin_guest": _LI_GUEST_PARTIAL}
 
 
 def _salvage_background(name: str) -> list[dict]:
     """What a still-running background scraper has accumulated so far.
 
     Snapshot, not handoff: the thread may still be appending, so copy under
-    the GIL and let the daemon die with the process. Only JobSpy publishes
-    partial progress today; anything else returns empty and is skipped."""
-    if name == "scrape_jobspy":
-        return list(_JOBSPY_PARTIAL)
-    return []
+    the GIL and let the daemon die with the process. JobSpy and the LinkedIn
+    guest search publish partial progress; anything else returns empty."""
+    return list(_PARTIAL_BUFFERS.get(name, []))
 # [fetched, needed, skipped_on_title] accumulated across per-query enrichment
 _JOBSPY_DESC_STATS: list = [0, 0, 0]
 
@@ -130,7 +133,7 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
     """Run one scraper with a wall-clock limit. Returns (jobs, timed_out)."""
     import threading
 
-    box: dict = {"jobs": []}
+    box: dict = {"jobs": [], "t0": time.time()}
 
     def _target():
         try:
@@ -147,7 +150,7 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
         # returning either ~380 jobs or exactly 0, never anything between,
         # because a slow run lost the lot. Partial results are worth far more
         # than none - they still get filtered and scored like any other job.
-        partial = list(_JOBSPY_PARTIAL) if scraper.__name__ == "scrape_jobspy" else []
+        partial = _salvage_background(scraper.__name__)
         if partial:
             print(f"  [{scraper.__name__}] timed out \u2014 keeping {len(partial)} "
                   f"jobs collected so far, still watching for the rest")
@@ -161,12 +164,23 @@ def _recover_late_scrapers(grace_seconds: int = 300) -> list[dict]:
     recovered: list[dict] = []
     for name, box, t in _PENDING_SCRAPERS:
         t.join(grace_seconds if t.is_alive() else 0)
+        took = round(time.time() - box.get("t0", time.time()), 1)
         if not t.is_alive() and box["jobs"]:
             print(f"  [{name}] finished late \u2014 recovering {len(box['jobs'])} jobs")
             recovered.extend(box["jobs"])
-            SCRAPER_TIMINGS[name + " (late)"] = 0.0
-        elif t.is_alive():
-            print(f"  [{name}] still hung after the grace period \u2014 permanently skipped")
+            SCRAPER_TIMINGS[name + " (late)"] = took
+        else:
+            # Hung, or died with an exception after the timeout: whatever it
+            # published so far is still real jobs (ids already returned at the
+            # timeout are removed by scrape_all's id dedup).
+            partial = _salvage_background(name)
+            state = "still hung after the grace period" if t.is_alive() else "ended without a result"
+            if partial:
+                print(f"  [{name}] {state} \u2014 keeping {len(partial)} jobs it had collected")
+                recovered.extend(partial)
+            else:
+                print(f"  [{name}] {state} \u2014 permanently skipped")
+            SCRAPER_TIMINGS[name + " (late)"] = took
     _PENDING_SCRAPERS.clear()
     return recovered
 
@@ -3855,7 +3869,9 @@ def _li_canonical_url(href: str) -> str:
 
 
 def scrape_linkedin_guest() -> list[dict]:
-    results: list[dict] = []
+    # Shared buffer, so a timeout can keep what was collected (see _PARTIAL_BUFFERS).
+    results: list[dict] = _LI_GUEST_PARTIAL
+    results.clear()
     seen_urls: set[str] = set()
 
     # BREADTH BEFORE DEPTH. LinkedIn throttles at roughly 10 pages per IP, and
@@ -3932,11 +3948,16 @@ def scrape_linkedin_guest() -> list[dict]:
                 continue
 
     # Same two-phase enrichment as JobSpy: title-screen first, then parallel
-    # description fetches for the plausible subset only.
-    _enrich_jobspy_descriptions(results)
+    # description fetches for the plausible subset only. Postings seen on an
+    # earlier day are dropped by node_filter's first line whatever their text
+    # says, so their descriptions are not fetched (the JobSpy lanes skip them
+    # the same way since 2026-11-11; this source did not until 2026-11-13).
+    unseen = [j for j in results if j.get("id") not in KNOWN_JOB_IDS]
+    _enrich_jobspy_descriptions(unseen)
     print(f"  [LinkedIn-Guest] {len(results)} student-role jobs "
-          f"across {len(_LI_GUEST_QUERIES)} queries")
-    return results
+          f"across {len(_LI_GUEST_QUERIES)} queries ({len(results) - len(unseen)} already seen, "
+          f"descriptions not fetched)")
+    return list(results)
 
 
 # -- Stellenwerk - the university job boards of Bonn, Köln and Düsseldorf -----

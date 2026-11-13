@@ -242,3 +242,64 @@ class TestJsonLd:
         scrapers._body_note("https://b.example/1", "HTTP 403")
         scrapers._body_note("https://b.example/2", "HTTP 403")
         assert scrapers.body_fetch_report() == "b.example 2/2 (HTTP 403 2)"
+
+
+# ---------------------------------------------------------------- item 3
+class TestLinkedInGuest:
+    PAGE = "".join(
+        f'<li><a class="base-card__full-link" href="https://de.linkedin.com/jobs/view/werkstudent-{i}-{i}"></a>'
+        f'<h3 class="base-search-card__title">Werkstudent Data {i}</h3>'
+        f'<h4 class="base-search-card__subtitle">Acme {i}</h4>'
+        f'<span class="job-search-card__location">Köln</span></li>' for i in range(6))
+
+    def test_already_seen_postings_get_no_description_fetch(self, monkeypatch):
+        calls = {"n": 0}
+
+        def fake_get(url, params=None, headers=None, timeout=None):
+            calls["n"] += 1
+            return _Resp({}, 200 if calls["n"] == 1 else 404, self.PAGE if calls["n"] == 1 else "")
+        monkeypatch.setattr(scrapers.requests, "get", fake_get)
+        monkeypatch.setattr(scrapers, "_LI_GUEST_QUERIES", ("werkstudent data",))
+        monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
+        enriched = []
+        monkeypatch.setattr(scrapers, "_enrich_jobspy_descriptions",
+                            lambda jobs, **kw: enriched.extend(jobs))
+        first = scrapers.job("Werkstudent Data 0", "Acme 0", "Köln",
+                             scrapers._li_canonical_url("https://de.linkedin.com/jobs/view/werkstudent-0-0"),
+                             "linkedin")
+        monkeypatch.setattr(scrapers, "KNOWN_JOB_IDS", {first["id"]})
+        rows = scrapers.scrape_linkedin_guest()
+        assert len(rows) == 6
+        assert first["id"] not in {j["id"] for j in enriched} and len(enriched) == 5
+
+    def test_a_timeout_keeps_what_the_guest_search_collected(self, monkeypatch):
+        import threading
+        release = threading.Event()
+
+        def scrape_linkedin_guest():
+            scrapers._LI_GUEST_PARTIAL.clear()
+            scrapers._LI_GUEST_PARTIAL.append({"id": "a", "title": "Werkstudent AI"})
+            release.wait(5)
+            return list(scrapers._LI_GUEST_PARTIAL)
+        monkeypatch.setattr(scrapers, "SCRAPER_TIMEOUT_SECONDS", 0.2)
+        scrapers._PENDING_SCRAPERS.clear()
+        jobs, timed_out = scrapers._run_scraper_guarded(scrape_linkedin_guest)
+        assert timed_out and [j["id"] for j in jobs] == ["a"]
+        release.set()
+        assert [j["id"] for j in scrapers._recover_late_scrapers(grace_seconds=5)] == ["a"]
+
+    def test_a_scraper_that_dies_after_the_timeout_still_gives_its_partial(self, monkeypatch):
+        import threading
+        release = threading.Event()
+
+        def scrape_linkedin_guest():
+            scrapers._LI_GUEST_PARTIAL.clear()
+            scrapers._LI_GUEST_PARTIAL.extend([{"id": "a"}, {"id": "b"}])
+            release.wait(5)
+            raise RuntimeError("enrichment failed")
+        monkeypatch.setattr(scrapers, "SCRAPER_TIMEOUT_SECONDS", 0.2)
+        monkeypatch.setattr(scrapers.traceback, "print_exc", lambda: None)
+        scrapers._PENDING_SCRAPERS.clear()
+        scrapers._run_scraper_guarded(scrape_linkedin_guest)
+        release.set()
+        assert [j["id"] for j in scrapers._recover_late_scrapers(grace_seconds=5)] == ["a", "b"]
