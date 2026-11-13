@@ -47,7 +47,7 @@ _RADAR_SKILLS = (
     "terraform", "aws", "gcp", "azure", "mlflow", "langchain", "langgraph",
     "llm", "rag", "vector database", "hugging face", "fastapi", "git",
     "ci/cd", "statistics", "a/b test", "nlp", "computer vision", "transformers",
-    "java", "scala", "go ", "rust", "javascript", "typescript", "react",
+    "java", "scala", "go", "rust", "javascript", "typescript", "react",
     "mlops", "vertex ai", "bedrock", "sagemaker", "observability",
 )
 # Skills already on the CV (so the radar can flag GAPS specifically).
@@ -116,6 +116,16 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "EY":               60,
     "RWE":              60,
     "E.ON":             60,
+    # Added 2026-11-13: employer ATS feeds with the full ad rank with the other
+    # ATSs; stub-only feeds (Breezy, the research XML/RSS) below them.
+    "Workable":         92,
+    "Teamtailor":       92,
+    "Breezy":           72,
+    "KIT":              70,
+    "DKFZ":             70,
+    "Watchlist":        70,
+    "Helmholtz":        66,
+    "MaxPlanck":        66,
     "Arbeitsagentur":   60,
     "GetInIT":          58,
     "Absolventa":       56,
@@ -252,20 +262,27 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
         if prior is None:
             best[key] = j
             continue
+        # Every source the job was seen on survives on the kept copy
+        # (2026-11-13): until then only the winner's source was recorded, so
+        # per-source yield credited company boards with jobs LinkedIn and
+        # Indeed had found too (both have priority 0 and lose every tie).
+        seen_on = sorted(set(prior.get("_seen_on") or [prior.get("source", "")])
+                         | set(j.get("_seen_on") or [j.get("source", "")]))
         cur_focus, prv_focus = _in_focus(j), _in_focus(prior)
         if cur_focus != prv_focus:
             if cur_focus:
                 best[key] = j
-            continue
-        cur_pri = _SOURCE_PRIORITY.get(j.get("source", ""), 0)
-        prv_pri = _SOURCE_PRIORITY.get(prior.get("source", ""), 0)
-        if cur_pri > prv_pri:
-            # New source wins; preserve URL from kept row (which is the new one).
-            best[key] = j
-        elif cur_pri == prv_pri:
-            # Tie-break: prefer the row with the longer description (more signal)
-            if len(j.get("description", "")) > len(prior.get("description", "")):
+        else:
+            cur_pri = _SOURCE_PRIORITY.get(j.get("source", ""), 0)
+            prv_pri = _SOURCE_PRIORITY.get(prior.get("source", ""), 0)
+            if cur_pri > prv_pri:
+                # New source wins; preserve URL from kept row (which is the new one).
                 best[key] = j
+            elif cur_pri == prv_pri:
+                # Tie-break: prefer the row with the longer description (more signal)
+                if len(j.get("description", "")) > len(prior.get("description", "")):
+                    best[key] = j
+        best[key]["_seen_on"] = seen_on
     return list(best.values())
 
 # German words anywhere in the title = German-language role
@@ -1185,6 +1202,16 @@ _BODY_MIN_WORDS = 25             # below this the language test cannot judge
 
 
 def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
+    try:
+        import scrapers as _s
+        with _s._BODY_LOCK:             # the per-host report covers this step only
+            _s._BODY_OUTCOMES.clear()
+    except Exception:
+        pass
+    return _fill_missing_bodies_inner(jobs)
+
+
+def _fill_missing_bodies_inner(jobs: list[dict]) -> list[str]:
     """Fetch the full ad for candidates whose body is too short for the
     language test to judge. Under the English-only rule a stub body is a
     drop, so without this step an English ad that arrived as a two-line
@@ -1234,6 +1261,14 @@ def _fill_missing_bodies(jobs: list[dict]) -> list[str]:
     print(f"[Body fetch] {got}/{len(need)} stub-body ads fetched"
           + (f" ({len(over)} over the {cap} cap)" if over else "")
           + (f"; {len(unresolved)} unresolved, eligible for a retry" if unresolved else ""))
+    try:
+        import scrapers as _s
+        report = _s.body_fetch_report()
+        if report:
+            # Which hosts fail and why (fix list 2026-11-13, item 9).
+            print(f"[Body fetch] failures by host: {report}")
+    except Exception:
+        pass
     return [j["id"] for j in unresolved if j.get("id")]
 
 
@@ -1790,6 +1825,8 @@ _LONG_LIVED_SOURCES = frozenset({
     "WDR", "Lufthansa", "DZNE", "Uniper", "SWD", "1und1", "Vodafone",
     "UKB", "rhenag", "DeutscheBahn", "INVERTO", "Deloitte", "EY", "RWE", "E.ON",
     "Watchlist",
+    # Research feeds and research-centre boards (2026-11-13)
+    "Helmholtz", "MaxPlanck", "KIT", "DKFZ",
 })
 
 
@@ -1801,6 +1838,7 @@ _LONG_LIVED_SOURCES = frozenset({
 _EMPLOYER_ATS_SOURCES = frozenset({
     "Greenhouse", "Lever", "Ashby", "Personio", "Recruitee",
     "SmartRecruiters", "Workday-CXS", "Workday", "Amazon",
+    "Workable", "Teamtailor", "Breezy",
 })
 
 
@@ -1978,6 +2016,8 @@ def _record_run_stats(stats: dict) -> None:
 _RETIRED_SOURCES = frozenset({
     "HiringCafe",   # Cloudflare challenge since 2026-09-01; no bot-evasion in this repo
     "SAP",          # generic company-page entry, dead since 2026-09-22 (see config.COMPANY_PAGES)
+    "BundDE",       # robots.txt disallows the service.bund.de job search (2026-11-13)
+    "Bosch",        # company page disallowed by robots.txt; Bosch stays via SmartRecruiters (2026-11-13)
 })
 
 
@@ -2132,6 +2172,19 @@ def _apply_ghost_penalty(scored: list[dict]) -> int:
     return n
 
 
+# Go the language, not the English word (2026-11-13: "go" counted 13% of all
+# ads, second only to Python, from "go the extra mile", "go-live" and
+# "go-to-market"). Case-sensitive on the original text: golang, Go next to a
+# developer word, or Go in a list with another language.
+_GO_LANG_RE = re.compile(
+    r"(?i:\bgolang\b)"
+    r"|\bGo\b(?=\s*(?:\(golang\)|developer|engineer|programmier|programming|backend|microservices?|entwickl))"
+    r"|(?:Python|Java|Rust|C\+\+|C#|Kotlin|Scala|TypeScript|JavaScript|Node(?:\.js)?|Ruby|PHP)"
+    r"\s*(?:,|/|\bor\b|\band\b|\bund\b|\boder\b)\s*Go\b"
+    r"|\bGo\s*(?:,|/|\bor\b|\band\b|\bund\b|\boder\b)\s*"
+    r"(?:Python|Java|Rust|C\+\+|C#|Kotlin|Scala|TypeScript|JavaScript|Node|Ruby|PHP)\b")
+
+
 def _skill_pattern(skill: str):
     """Whole-token match. Plain substring counted "rag" inside "Vertrag",
     "git" inside "digital", "rust" inside "trust" and "scala" inside
@@ -2159,13 +2212,15 @@ def _skill_radar(jobs: list[dict], top_n: int = 15) -> None:
     counts = Counter()
     patterns = {skill.strip(): _skill_pattern(skill) for skill in _RADAR_SKILLS}
     for j in jobs:
-        blob = ((j.get("title") or "") + " " + (j.get("description") or "")).lower()
+        raw = (j.get("title") or "") + " " + (j.get("description") or "")
+        blob = raw.lower()
         for skill, pat in patterns.items():
-            if pat.search(blob):
+            if (_GO_LANG_RE.search(raw) if skill == "go" else pat.search(blob)):
                 counts[skill] += 1
     profile_text = _profile_skill_text()
     on_cv = {s for s in patterns if s in _CV_SKILLS
-             or (profile_text and patterns[s].search(profile_text))}
+             or (profile_text and (re.search(r"\bgolang\b", profile_text) if s == "go"
+                                   else patterns[s].search(profile_text)))}
     if not counts:
         return
     total = len(jobs)
@@ -2233,6 +2288,12 @@ def node_scrape(state: dict) -> dict:
     health_warnings = _dead_source_warnings(_load_run_history(), src_counts)
     # Registry pass: catches sources dead for longer than the history
     # window can see (the failure mode the median check misses).
+    # A JobSpy lane that returned nothing is said the same day (2026-11-13):
+    # python-jobspy >= 1.2.0 reports a blocked board instead of raising.
+    try:
+        health_warnings.extend(_scrapers.jobspy_lane_warnings())
+    except Exception:
+        pass
     _flagged = {w.split("'")[1] for w in health_warnings if "'" in w}
     for w in _absent_source_warnings_from(_load_source_registry(), src_counts):
         if "'" in w and w.split("'")[1] in _flagged:
@@ -2281,7 +2342,8 @@ def _audit_row(j: dict, stage: str, **extra) -> dict:
     row = {"stage": stage, "id": j.get("id", ""), "title": (j.get("title") or "")[:160],
            "company": (j.get("company") or "")[:80], "location": (j.get("location") or "")[:80],
            "source": j.get("source", ""), "form": j.get("_form", ""),
-           "where": j.get("_where", ""), "url": j.get("url", "")}
+           "where": j.get("_where", ""), "url": j.get("url", ""),
+           "seen_on": ",".join(j.get("_seen_on") or [j.get("source", "")])}
     row.update(extra)
     return row
 

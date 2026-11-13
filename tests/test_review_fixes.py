@@ -259,9 +259,11 @@ def test_every_source_has_all_its_full_time_queries():
         assert q in scrapers._SR_QUERIES, q
     assert len(scrapers.ARBEITSAGENTUR_FULLTIME_QUERIES) >= 8
     assert scrapers._BA_ENRICH_CAP >= 350
-    for q in ("Junior Data Scientist", "Junior Data Analyst", "Junior Machine Learning Engineer",
-              "Junior Softwareentwickler Python", "Berufseinsteiger Data", "Data Engineer"):
-        assert q in scrapers._XING_QUERIES, q
+    # XING reads its job sitemaps since 2026-11-13 (no search queries): the
+    # slug filter must take the same entry-level full-time roles.
+    for slug in ("junior-data-scientist", "junior-data-analyst", "junior-machine-learning-engineer",
+                 "junior-softwareentwickler-python", "berufseinsteiger-data-engineer"):
+        assert scrapers._xing_slug_wanted(f"https://www.xing.com/jobs/koeln-{slug}-1"), slug
     ft = [q for q in config.SEARCH_QUERIES
           if not re.search(r"werkstudent|working student|student|praktik|intern|teilzeit|part-time", q.lower())]
     assert len(ft) >= 20

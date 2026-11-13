@@ -255,7 +255,9 @@ class TestGermanyWideSources:
         assert ("stryker", "wd1", "StrykerCareers") in tenants
         assert ("harman", "wd3", "HARMAN") in tenants
         assert ("ag", "wd3", "Airbus") in tenants
-        assert {"RWE", "E.ON"} <= {s for _, s in scrapers._CSB_SITES}
+        # E.ON left the CSB list on 2026-11-13 (Cloudflare challenge on
+        # careers.eon.com); scrape_eon reads jobs.eon.com instead.
+        assert "RWE" in {s for _, s in scrapers._CSB_SITES}
         for src in ("RWE", "E.ON"):
             assert src in main._SOURCE_PRIORITY and src in main._LONG_LIVED_SOURCES
 

@@ -8,14 +8,18 @@ so after ~30 applications you KNOW which tracks/channels actually convert
 instead of guessing.
 
 State lives in applied_jobs.json - gitignored (this repo is PUBLIC and your
-application history is personal data). After every change it is mirrored to the
-APPLIED_JOBS repo secret via `gh secret set`, which is how CI sees it.
+application history is personal data). Since 2026-11-13 every change is also
+written through storage.py, so with JOBHUNTER_S3_BUCKET set (as on the AWS
+task) the scheduled run sees your outcomes; before, only a local file and a
+GitHub secret were written, and the AWS run never saw them. The old
+`gh secret set` mirror runs only with JOBHUNTER_TRACK_SECRET_SYNC=1.
 
-CLI (run locally - the secret sync happens automatically):
+CLI (run locally; set JOBHUNTER_S3_BUCKET to share state with the AWS run):
   py -3.11 track.py apply  <job-url-or-id>  ["Job Title"]  ["Company"]
   py -3.11 track.py status <job-url-or-id>  interview|rejected|offer|awaiting
   py -3.11 track.py list
   py -3.11 track.py stats
+  py -3.11 track.py eval     # do high scores get more interviews? (fix list item 14)
 """
 
 import hashlib
@@ -64,8 +68,17 @@ def load_applied() -> dict:
 
 
 def save_applied(data: dict) -> None:
-    APPLIED_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    _sync_secret(data)
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    APPLIED_FILE.write_text(text, encoding="utf-8")
+    try:
+        import storage
+        if storage.using_s3():          # locally APPLIED_FILE itself is the state
+            storage.write_text(APPLIED_FILE.name, text)     # the key load_applied reads
+    except Exception as e:
+        print(f"(note: could not write the tracker through storage: {type(e).__name__})")
+    import os
+    if os.environ.get("JOBHUNTER_TRACK_SECRET_SYNC", "0").strip() == "1":
+        _sync_secret(data)
 
 
 def _sync_secret(data: dict) -> None:
@@ -224,6 +237,90 @@ def conversion_stats() -> dict:
     return per
 
 
+# -- Do high scores get more interviews? (2026-11-13, fix list item 14) -------
+SCORE_BANDS = ((80, "80+"), (70, "70-79"), (60, "60-69"), (45, "45-59"), (0, "under 45"))
+MIN_PER_CLASS = 5           # outcomes needed on each side before an AUC means anything
+
+
+def auc(positive: list[float], negative: list[float]) -> float | None:
+    """Probability that a random interview-or-offer job scored higher than a
+    random rejected or ghosted one (ties count half): the ROC AUC, computed
+    without any library."""
+    if not positive or not negative:
+        return None
+    wins = 0.0
+    for p in positive:
+        for n in negative:
+            wins += 1.0 if p > n else 0.5 if p == n else 0.0
+    return wins / (len(positive) * len(negative))
+
+
+def _shown_scores() -> tuple[dict, dict]:
+    """score by url_hash and by company::title, from the shown-jobs log."""
+    try:
+        import storage
+        raw = storage.read_text("shown_jobs.jsonl") or ""
+    except Exception:
+        raw = ""
+    by_hash, by_ct = {}, {}
+    for line in raw.splitlines():
+        try:
+            s = json.loads(line)
+        except Exception:
+            continue
+        score = s.get("score")
+        if score is None:
+            continue
+        if s.get("url_hash"):
+            by_hash[s["url_hash"]] = score
+        ct = f"{(s.get('company') or '').lower().strip()}::{(s.get('title') or '').lower().strip()}"
+        by_ct[ct] = score
+    return by_hash, by_ct
+
+
+def score_outcomes() -> list[tuple[float, str]]:
+    """(pipeline score, outcome) for every application the pipeline showed.
+    outcome: "good" (interview, offer), "bad" (rejected, or no answer after
+    STALE_AWAIT_DAYS), "open" (still waiting)."""
+    by_hash, by_ct = _shown_scores()
+    out = []
+    for k, v in load_applied().items():
+        ct = f"{(v.get('company') or '').lower().strip()}::{(v.get('title') or '').lower().strip()}"
+        score = by_hash.get(k, by_ct.get(ct))
+        if score is None:
+            continue
+        status = v.get("status", "applied")
+        if status in ("interview", "offer"):
+            outcome = "good"
+        elif status == "rejected" or _days_since(v.get("last_change") or v.get("applied_at")) >= STALE_AWAIT_DAYS:
+            outcome = "bad"
+        else:
+            outcome = "open"
+        out.append((float(score), outcome))
+    return out
+
+
+def score_report() -> list[str]:
+    rows = score_outcomes()
+    if not rows:
+        return ["No tracked application matches a job the pipeline showed yet."]
+    lines = ["Interview rate by pipeline score (applications with an answer):"]
+    for low, label in SCORE_BANDS:
+        band = [o for s, o in rows if s >= low and all(s < hi for hi, _ in SCORE_BANDS if hi > low)]
+        decided = [o for o in band if o != "open"]
+        good = sum(1 for o in decided if o == "good")
+        if band:
+            lines.append(f"  {label:9s} applied {len(band):3d}  answered {len(decided):3d}  interview/offer {good}")
+    pos = [s for s, o in rows if o == "good"]
+    neg = [s for s, o in rows if o == "bad"]
+    if len(pos) >= MIN_PER_CLASS and len(neg) >= MIN_PER_CLASS:
+        lines.append(f"ROC AUC of the score: {auc(pos, neg):.2f} (0.5 = no better than chance)")
+    else:
+        lines.append(f"Not enough outcomes for an AUC yet: {len(pos)} interview/offer, {len(neg)} "
+                     f"rejected or ghosted (need {MIN_PER_CLASS} of each; about 50 in total is better).")
+    return lines
+
+
 def _print_conversion() -> None:
     per = conversion_stats()
     if not per:
@@ -267,6 +364,10 @@ def _cli() -> int:
             for j in fu:
                 print(f"  {j['days']:3d}d  {j.get('title','')[:45]:45s} @ {j.get('company','')}")
         _print_conversion()
+        print()
+        print("\n".join(score_report()))
+    elif cmd == "eval":
+        print("\n".join(score_report()))
     else:
         print(__doc__)
         return 1

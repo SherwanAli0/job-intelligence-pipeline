@@ -24,6 +24,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -86,7 +87,7 @@ def _start_scraper(scraper):
     """Start a scraper on a daemon thread and return (name, box, thread)."""
     import threading
 
-    box: dict = {"jobs": []}
+    box: dict = {"jobs": [], "t0": time.time()}
 
     def _target():
         try:
@@ -110,17 +111,20 @@ _PENDING_SCRAPERS: list = []
 # Jobs JobSpy has collected so far this run. Read by the timeout handler so a
 # slow LinkedIn scrape yields partial results instead of nothing at all.
 _JOBSPY_PARTIAL: list = []
+# The same for the LinkedIn guest search (2026-11-13): it hit its 600 s limit
+# in 6 of 20 runs, and on a timeout its jobs came back only if the thread
+# finished within the late grace period.
+_LI_GUEST_PARTIAL: list = []
+_PARTIAL_BUFFERS = {"scrape_jobspy": _JOBSPY_PARTIAL, "scrape_linkedin_guest": _LI_GUEST_PARTIAL}
 
 
 def _salvage_background(name: str) -> list[dict]:
     """What a still-running background scraper has accumulated so far.
 
     Snapshot, not handoff: the thread may still be appending, so copy under
-    the GIL and let the daemon die with the process. Only JobSpy publishes
-    partial progress today; anything else returns empty and is skipped."""
-    if name == "scrape_jobspy":
-        return list(_JOBSPY_PARTIAL)
-    return []
+    the GIL and let the daemon die with the process. JobSpy and the LinkedIn
+    guest search publish partial progress; anything else returns empty."""
+    return list(_PARTIAL_BUFFERS.get(name, []))
 # [fetched, needed, skipped_on_title] accumulated across per-query enrichment
 _JOBSPY_DESC_STATS: list = [0, 0, 0]
 
@@ -129,7 +133,7 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
     """Run one scraper with a wall-clock limit. Returns (jobs, timed_out)."""
     import threading
 
-    box: dict = {"jobs": []}
+    box: dict = {"jobs": [], "t0": time.time()}
 
     def _target():
         try:
@@ -146,7 +150,7 @@ def _run_scraper_guarded(scraper) -> tuple[list, bool]:
         # returning either ~380 jobs or exactly 0, never anything between,
         # because a slow run lost the lot. Partial results are worth far more
         # than none - they still get filtered and scored like any other job.
-        partial = list(_JOBSPY_PARTIAL) if scraper.__name__ == "scrape_jobspy" else []
+        partial = _salvage_background(scraper.__name__)
         if partial:
             print(f"  [{scraper.__name__}] timed out \u2014 keeping {len(partial)} "
                   f"jobs collected so far, still watching for the rest")
@@ -160,12 +164,23 @@ def _recover_late_scrapers(grace_seconds: int = 300) -> list[dict]:
     recovered: list[dict] = []
     for name, box, t in _PENDING_SCRAPERS:
         t.join(grace_seconds if t.is_alive() else 0)
+        took = round(time.time() - box.get("t0", time.time()), 1)
         if not t.is_alive() and box["jobs"]:
             print(f"  [{name}] finished late \u2014 recovering {len(box['jobs'])} jobs")
             recovered.extend(box["jobs"])
-            SCRAPER_TIMINGS[name + " (late)"] = 0.0
-        elif t.is_alive():
-            print(f"  [{name}] still hung after the grace period \u2014 permanently skipped")
+            SCRAPER_TIMINGS[name + " (late)"] = took
+        else:
+            # Hung, or died with an exception after the timeout: whatever it
+            # published so far is still real jobs (ids already returned at the
+            # timeout are removed by scrape_all's id dedup).
+            partial = _salvage_background(name)
+            state = "still hung after the grace period" if t.is_alive() else "ended without a result"
+            if partial:
+                print(f"  [{name}] {state} \u2014 keeping {len(partial)} jobs it had collected")
+                recovered.extend(partial)
+            else:
+                print(f"  [{name}] {state} \u2014 permanently skipped")
+            SCRAPER_TIMINGS[name + " (late)"] = took
     _PENDING_SCRAPERS.clear()
     return recovered
 
@@ -246,6 +261,97 @@ HEADERS = {
         "Chrome/120.0.0.0 Safari/537.36"
     )
 }
+
+
+# -- robots.txt guard (2026-11-13) --------------------------------------------
+# Every request in this module goes through _guarded_get / _guarded_post. A
+# documented public job API (governed by its own documentation and terms) is
+# exempt; every other address is checked against the host's robots.txt with
+# the rules in robots.py, and a disallowed one is not requested at all. The
+# audit that led here (13 Nov 2026): /services/rss/job/ was disallowed on all
+# 13 CSB employer sites, XING disallows its GraphQL search, service.bund.de its
+# job search. python-jobspy and duckduckgo_search make their own requests.
+import robots as _robots
+
+_robots.FETCH_HEADERS = HEADERS
+
+_ROBOTS_API_PREFIXES = (
+    "https://boards-api.greenhouse.io/", "https://api.lever.co/", "https://api.ashbyhq.com/",
+    "https://api.smartrecruiters.com/", "https://rest.arbeitsagentur.de/", "https://api.adzuna.com/",
+    "https://www.arbeitnow.com/api/", "https://remotive.com/api/", "https://jobicy.com/api/",
+    "https://apply.workable.com/api/", "https://api.search.brave.com/", "https://hn.algolia.com/api/",
+)
+_ROBOTS_API_RE = re.compile(r"^https://[^/]+\.(?:jobs\.personio\.(?:de|com)/xml|recruitee\.com/api/)")
+
+
+class _RobotsBlocked:
+    """Stand-in response for an address robots.txt disallows: callers see a
+    failed request (status 451) with an empty body and never reach the host."""
+    status_code = 451
+    text = ""
+    content = b""
+    reason = "disallowed by robots.txt"
+
+    def __init__(self, url: str = ""):
+        self.url = url
+        self.headers: dict = {}
+
+    def json(self):
+        return {}
+
+    def raise_for_status(self):
+        raise requests.HTTPError(f"robots.txt disallows {self.url}")
+
+
+def _robots_exempt(url: str) -> bool:
+    url = url or ""
+    return url.startswith(_ROBOTS_API_PREFIXES) or bool(_ROBOTS_API_RE.match(url))
+
+
+def _robots_full_url(url: str, params) -> str:
+    if not params:
+        return url
+    try:
+        return requests.Request("GET", url, params=params).prepare().url or url
+    except Exception:
+        return url
+
+
+def _guarded_get(url, *args, **kwargs):
+    if not _robots_exempt(url) and not _robots.allowed(_robots_full_url(url, kwargs.get("params"))):
+        return _RobotsBlocked(url)
+    return requests.get(url, *args, **kwargs)
+
+
+def _guarded_post(url, *args, **kwargs):
+    if not _robots_exempt(url) and not _robots.allowed(url):
+        return _RobotsBlocked(url)
+    return requests.post(url, *args, **kwargs)
+
+
+# Body-fetch outcomes per host for this run (fix list item 9): which hosts
+# fail, and why, instead of one "70/108 fetched" number.
+_BODY_LOCK = threading.Lock()
+_BODY_OUTCOMES: dict = {}
+
+
+def _body_note(url: str, outcome: str) -> None:
+    host = urllib.parse.urlsplit(url or "").netloc.lower() or "?"
+    with _BODY_LOCK:
+        _BODY_OUTCOMES.setdefault(host, Counter())[outcome] += 1
+
+
+def body_fetch_report(top: int = 8) -> str:
+    """'host failed/tried (reasons)' for the hosts with the most failures."""
+    with _BODY_LOCK:
+        rows = []
+        for host, c in _BODY_OUTCOMES.items():
+            failed = sum(v for k, v in c.items() if k != "ok")
+            if failed:
+                why = ", ".join(f"{k} {v}" for k, v in c.most_common() if k != "ok")
+                rows.append((failed, f"{host} {failed}/{sum(c.values())} ({why})"))
+    rows.sort(key=lambda r: -r[0])
+    return "; ".join(r for _, r in rows[:top])
 
 
 # -- helpers --------------------------------------------------------------------
@@ -400,6 +506,16 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
           + (f", {truncated} over the {_JOBSPY_DESC_CAP} cap" if truncated else "") + ")")
 
 
+def _cell(value) -> str:
+    """A dataframe cell as text. python-jobspy 1.4.0 returns None for an empty
+    description, which str() turned into the literal "None"; NaN does the
+    same as "nan"."""
+    if value is None:
+        return ""
+    text = str(value)
+    return "" if text.strip().lower() in ("nan", "none", "nat") else text
+
+
 def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
                          lock=None) -> None:
     """Convert a JobSpy dataframe into job() dicts, appending to results.
@@ -410,7 +526,7 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
     every repeated row used to cost another description fetch. Skipping them
     is what makes room for all 42 queries inside the time box."""
     for _, row in df.iterrows():
-        url = str(row.get("job_url", "")) or str(row.get("url", ""))
+        url = _cell(row.get("job_url")) or _cell(row.get("url"))
         if not url:
             continue
         if seen_urls is not None:
@@ -431,12 +547,12 @@ def _jobspy_rows_to_jobs(df, results: list[dict], seen_urls: set | None = None,
         if direct.lower() in ("nan", "none"):
             direct = ""
         results.append(job(
-            title=str(row.get("title", "")),
-            company=str(row.get("company", "")),
-            location=str(row.get("location", "")),
+            title=_cell(row.get("title")),
+            company=_cell(row.get("company")),
+            location=_cell(row.get("location")),
             url=url,
-            source=str(row.get("site", "jobspy")),
-            description=str(row.get("description", "")),
+            source=_cell(row.get("site")) or "jobspy",
+            description=_cell(row.get("description")),
             posted_at=str(posted) if posted else "",
             apply_url=direct,
         ))
@@ -487,6 +603,37 @@ def _query_hours_old(query: str) -> int:
     return base
 
 
+# Per-lane result of the current JobSpy run: rows returned and the errors
+# python-jobspy reported. Since 1.2.0 a blocked board no longer raises; it
+# returns an empty frame and (1.4.0) names the error in df.attrs["errors"],
+# so a broken lane looked like "linkedin 84/84" with zero rows.
+_JOBSPY_LANE_REPORT: dict = {}
+
+
+def _jobspy_call_kwargs() -> dict:
+    """Keyword arguments for this python-jobspy version: fetch_description
+    replaced linkedin_fetch_description in 1.2.0, and verbose went to 1."""
+    import inspect
+    from jobspy import scrape_jobs  # type: ignore
+    params = inspect.signature(scrape_jobs).parameters
+    kw = {"verbose": 0} if "verbose" in params else {}
+    if "fetch_description" in params:
+        kw["fetch_description"] = False
+    else:
+        kw["linkedin_fetch_description"] = False
+    return kw
+
+
+def jobspy_lane_warnings() -> list[str]:
+    """Health warnings for lanes that returned nothing (for the digest)."""
+    out = []
+    for site, rep in sorted(_JOBSPY_LANE_REPORT.items()):
+        if rep["rows"] == 0 and rep["queries"]:
+            why = ", ".join(f"{m} ({n}x)" for m, n in rep["errors"].most_common(2)) or "no error reported"
+            out.append(f"JobSpy {site} returned 0 jobs from {rep['queries']} queries: {why}")
+    return out
+
+
 def _jobspy_lane(site: str, queries: list[str], results: list[dict],
                  seen_urls: set, lock, results_wanted: int, pause: float) -> None:
     """Run every query against ONE site, appending to the shared buffer.
@@ -498,6 +645,8 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
     from jobspy import scrape_jobs  # type: ignore
 
     _JOBSPY_PROGRESS[site] = [0, len(queries)]
+    report = _JOBSPY_LANE_REPORT.setdefault(site, {"rows": 0, "queries": 0, "errors": Counter()})
+    extra = _jobspy_call_kwargs()
     for query in queries:
         try:
             df = scrape_jobs(
@@ -511,11 +660,15 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
                 country_indeed="Germany",
                 # Descriptions come from phase two (title-screened, parallel),
                 # not inline: inline fetching cost one request per posting and
-                # timed the whole source out.
-                linkedin_fetch_description=False,
+                # timed the whole source out (see _jobspy_call_kwargs).
+                **extra,
             )
+            report["queries"] += 1
+            for msg in ((getattr(df, "attrs", None) or {}).get("errors") or {}).values():
+                report["errors"][str(msg)[:80]] += 1
             fresh: list[dict] = []
             _jobspy_rows_to_jobs(df, fresh, seen_urls, lock)
+            report["rows"] += len(fresh)
             # Enrich THIS query's jobs before publishing them, so whatever a
             # timeout salvages already has descriptions and filters properly.
             unseen = [j for j in fresh if j.get("id") not in KNOWN_JOB_IDS]
@@ -523,8 +676,9 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
             _enrich_jobspy_descriptions(unseen, quiet=True)
             with lock:
                 results.extend(fresh)
-        except Exception:
-            pass
+        except Exception as e:
+            report["queries"] += 1
+            report["errors"][type(e).__name__] += 1
         finally:
             _JOBSPY_PROGRESS[site][0] += 1
         time.sleep(pause)
@@ -541,6 +695,7 @@ def scrape_jobspy() -> list[dict]:
         results.clear()
         _JOBSPY_DESC_STATS[:] = [0, 0, 0]
         _JOBSPY_PROGRESS.clear()
+        _JOBSPY_LANE_REPORT.clear()
         _JOBSPY_KNOWN_SKIPPED[0] = 0
         active = _jobspy_active_queries()
         seen_urls: set[str] = set()
@@ -567,6 +722,10 @@ def scrape_jobspy() -> list[dict]:
         print(f"  [JobSpy] descriptions: {f_}/{n_} fetched, {s_} skipped on title, "
               f"{_JOBSPY_KNOWN_SKIPPED[0]} skipped as already seen")
         print(f"  [JobSpy] {len(results)} jobs total")
+        for site, rep in sorted(_JOBSPY_LANE_REPORT.items()):
+            errs = ", ".join(f"{m} ({n}x)" for m, n in rep["errors"].most_common(3))
+            print(f"  [JobSpy] {site}: {rep['rows']} rows from {rep['queries']} queries"
+                  + (f"; errors: {errs}" if errs else ""))
         return results
     except Exception as e:
         print(f"  [JobSpy] failed: {e}")
@@ -592,7 +751,7 @@ def scrape_arbeitnow() -> list[dict]:
     seen_slugs: set[str] = set()
     try:
         for page in range(1, 6):  # up to 5 pages (~100 jobs total)
-            r = requests.get(
+            r = _guarded_get(
                 "https://www.arbeitnow.com/api/job-board-api",
                 params={"page": page},
                 headers=HEADERS,
@@ -652,7 +811,7 @@ _JOBICY_GEO_OK = re.compile(r"germany|deutschland|europe|emea|dach|\beu\b|anywhe
 def scrape_jobicy() -> list[dict]:
     results: list[dict] = []
     try:
-        r = requests.get("https://jobicy.com/api/v2/remote-jobs",
+        r = _guarded_get("https://jobicy.com/api/v2/remote-jobs",
                          params={"count": 50, "geo": "germany"},
                          headers=HEADERS, timeout=15)
         if r.status_code == 200:
@@ -687,7 +846,7 @@ def scrape_remotive() -> list[dict]:
     ]
     try:
         for q in queries:
-            r = requests.get(
+            r = _guarded_get(
                 "https://remotive.com/api/remote-jobs",
                 params={"search": q, "limit": 20},
                 headers=HEADERS,
@@ -757,7 +916,7 @@ def scrape_hn_who_is_hiring() -> list[dict]:
     results = []
     try:
         # Find the latest "Who is hiring?" threads (posted by user `whoishiring`)
-        r = requests.get(
+        r = _guarded_get(
             _HN_SEARCH_API,
             params={
                 "query": "Ask HN: Who is hiring?",
@@ -780,7 +939,7 @@ def scrape_hn_who_is_hiring() -> list[dict]:
 
         for thread_id in thread_ids:
             try:
-                r = requests.get(f"{_HN_ITEM_API}/{thread_id}", timeout=20)
+                r = _guarded_get(f"{_HN_ITEM_API}/{thread_id}", timeout=20)
                 if r.status_code != 200:
                     continue
                 thread = r.json()
@@ -874,6 +1033,11 @@ _DE_EXTRA_PLACES = (
 _DE_PLACE_RE = None
 
 
+def _foreign_place(loc: str) -> bool:
+    from filters import is_foreign_location
+    return is_foreign_location(loc or "")
+
+
 def _de_place(loc: str) -> bool:
     """True when the string names Germany or a German place. One list for the
     whole pipeline (filters.is_german_location, with its foreign-country veto)
@@ -891,7 +1055,7 @@ def _de_or_remote(loc: str) -> bool:
 def _greenhouse_board(slug: str) -> list[dict]:
     out = []
     try:
-        r = requests.get(
+        r = _guarded_get(
             f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
             timeout=15,
         )
@@ -939,7 +1103,7 @@ def scrape_greenhouse() -> list[dict]:
 def _lever_board(slug: str) -> list[dict]:
     out = []
     try:
-        r = requests.get(
+        r = _guarded_get(
             f"https://api.lever.co/v0/postings/{slug}?mode=json",
             timeout=15,
         )
@@ -1164,7 +1328,7 @@ def _ba_enrich(ref: str) -> dict:
     """
     try:
         enc = _b64.b64encode(ref.encode()).decode()
-        r = requests.get(
+        r = _guarded_get(
             f"{_BA_DETAIL_URL}/{enc}",
             headers={**HEADERS, "X-API-Key": _BA_API_KEY},
             timeout=12,
@@ -1256,7 +1420,7 @@ def scrape_arbeitsagentur() -> list[dict]:
         nonlocal enriched
         for page in range(1, _BA_MAX_PAGES + 1):
             try:
-                r = requests.get(
+                r = _guarded_get(
                     _BA_SEARCH_URL,
                     params={"was": query, "size": _BA_PAGE_SIZE, "page": page,
                             "veroeffentlichtseit": _ba_window_days(),
@@ -1392,7 +1556,7 @@ def _scrape_workday_tenant(tenant: str, site: str, company_name: str) -> list[di
                     "offset": 0,
                     "searchText": keyword,
                 }
-                r = requests.post(url, json=payload, headers=HEADERS, timeout=10)
+                r = _guarded_post(url, json=payload, headers=HEADERS, timeout=10)
                 if r.status_code != 200:
                     continue
                 data = r.json()
@@ -1446,7 +1610,7 @@ def scrape_successfactors() -> list[dict]:
     for company_id, company_name in SF_COMPANIES:
         try:
             url = f"https://career4.successfactors.com/career?company={company_id}&resultType=XML"
-            r = requests.get(url, headers=HEADERS, timeout=15)
+            r = _guarded_get(url, headers=HEADERS, timeout=15)
             if r.status_code != 200:
                 continue
             soup = BeautifulSoup(r.text, "xml")
@@ -1548,7 +1712,7 @@ def scrape_brave_search() -> list[dict]:
             # Free tier allows 1 query/second; retry a throttled query twice
             # with backoff before giving up on it.
             for attempt in (1, 2, 3):
-                r = requests.get(
+                r = _guarded_get(
                     "https://api.search.brave.com/res/v1/web/search",
                     headers={
                         "Accept": "application/json",
@@ -1796,14 +1960,21 @@ def _fetch_full_description(url: str) -> str:
         text = _xing_fetch_description(url)
         if text:
             return text[:6000]
+    if not _robots_exempt(url) and not _robots.allowed(url):
+        _body_note(url, "robots.txt")
+        return ""
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
+        r = _guarded_get(url, headers=HEADERS, timeout=10)
         if r.status_code in (429, 500, 502, 503, 504):
             # One paced retry: a throttled or briefly failing page is not a
             # verdict on the ad (43 of 101 body fetches failed on 2026-11-11).
             time.sleep(2.0)
-            r = requests.get(url, headers=HEADERS, timeout=15)
+            r = _guarded_get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
+            _body_note(url, f"HTTP {r.status_code}")
+            return ""
+        if "pdf" in ((getattr(r, "headers", {}) or {}).get("content-type", "") or "").lower():
+            _body_note(url, "PDF")             # binary, no page text to extract
             return ""
         # Second path: schema.org JobPosting. Script-rendered career pages
         # ship an empty <main> but still carry the whole ad as JSON-LD.
@@ -1813,6 +1984,7 @@ def _fetch_full_description(url: str) -> str:
                 ld_text = BeautifulSoup(str(ld["description"]), "html.parser").get_text(
                     separator=" ", strip=True)
                 if len(ld_text) > 200:
+                    _body_note(url, "ok")
                     return ld_text[:5000]
         except Exception:
             pass
@@ -1832,11 +2004,15 @@ def _fetch_full_description(url: str) -> str:
             if el:
                 text = el.get_text(separator=" ", strip=True)
                 if len(text) > 200:
+                    _body_note(url, "ok")
                     return text[:3000]
 
         # Fallback: full page text
-        return soup.get_text(separator=" ", strip=True)[:3000]
-    except Exception:
+        text = soup.get_text(separator=" ", strip=True)[:3000]
+        _body_note(url, "ok" if len(text) > 200 else "no text")
+        return text
+    except Exception as e:
+        _body_note(url, type(e).__name__)
         return ""
 
 
@@ -1951,7 +2127,7 @@ def scrape_amazon() -> list[dict]:
 
     for q in _AMAZON_QUERIES:
         try:
-            r = requests.get(
+            r = _guarded_get(
                 _AMAZON_API,
                 params={
                     "base_query": q,
@@ -2022,7 +2198,7 @@ def scrape_personio() -> list[dict]:
     results: list[dict] = []
     for slug in PERSONIO_SLUGS:
         try:
-            r = requests.get(
+            r = _guarded_get(
                 f"https://{slug}.jobs.personio.de/xml",
                 headers=HEADERS,
                 timeout=15,
@@ -2133,7 +2309,7 @@ def _sr_posting_text(slug: str, pid: str) -> str:
     """The ad itself, from the public posting-detail API. The listing carries
     no description, so without this a SmartRecruiters row is metadata only."""
     try:
-        r = requests.get(f"{_SR_API.format(slug=slug)}/{pid}", timeout=15)
+        r = _guarded_get(f"{_SR_API.format(slug=slug)}/{pid}", timeout=15)
         if r.status_code != 200:
             return ""
         secs = ((r.json().get("jobAd") or {}).get("sections") or {})
@@ -2166,7 +2342,7 @@ def scrape_smartrecruiters() -> list[dict]:
             for q in _SR_QUERIES:
                 offset = 0
                 while offset < _SR_MAX_PER_QUERY:
-                    r = requests.get(
+                    r = _guarded_get(
                         _SR_API.format(slug=slug),
                         params={"country": "de", "q": q, "limit": 100, "offset": offset},
                         timeout=15,
@@ -2296,6 +2472,8 @@ _WD_BUDGET_SECONDS = int(os.environ.get("JOBHUNTER_WD_BUDGET", "480"))
 _WD_FT_BUDGET_SECONDS = int(os.environ.get("JOBHUNTER_WD_FT_BUDGET", "300"))
 _WD_KEEP_FULLTIME = 10            # of the detail slots, at most this many go to the full-time pass
 _WD_STATS = {"searches_skipped": 0, "details_skipped": 0}
+# Tenants whose reply showed they ignore the Germany country facet (this run).
+_WD_FACET_IGNORED: set = set()
 _WD_STATS_LOCK = threading.Lock()
 _WD_BASE_URLS: set = set()        # filled by the base scraper; the full-time pass skips these
 # Ranking of full-time candidates: tech titles first, then junior ones.
@@ -2358,7 +2536,7 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
         external_path = "/" + external_path
     detail_url = f"https://{host}/wday/cxs/{tenant}/{site}{external_path}"
     try:
-        r = requests.get(detail_url, headers=_wd_headers(host), timeout=10)
+        r = _guarded_get(detail_url, headers=_wd_headers(host), timeout=10)
         if r.status_code != 200:
             return ""
         info = (r.json().get("jobPostingInfo") or {})
@@ -2367,6 +2545,39 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
         return BeautifulSoup(desc_html, "html.parser").get_text(separator="\n").strip()
     except Exception:
         return ""
+
+
+def _wd_has_facet(node, name: str) -> bool:
+    """Is `name` a facetParameter anywhere in a Workday facets tree? Sanofi
+    nests locationCountry under locationMainGroup; AstraZeneca and ING have no
+    locationCountry at all (checked live 2026-11-13)."""
+    if isinstance(node, dict):
+        if node.get("facetParameter") == name:
+            return True
+        return any(_wd_has_facet(v, name) for v in node.values() if isinstance(v, (dict, list)))
+    if isinstance(node, list):
+        return any(_wd_has_facet(v, name) for v in node)
+    return False
+
+
+def _wd_facet_honoured(data: dict, postings: list) -> bool:
+    """Did the tenant apply the Germany facet, or accept the parameter and
+    ignore it? Until 2026-11-13 any 200 reply counted as "Germany", and nine
+    tenants (pwc, micron, thermofisher, roche, cisco, ing, msd, gevernova,
+    astrazeneca) put 395 foreign postings into three days of runs, labelled
+    ", Germany" - two of them scored above the send threshold.
+
+    A reply without a locationCountry facet did not apply it. A reply without
+    any facets list (older tenants, test doubles) is judged by its postings:
+    two or more foreign locations, or only foreign ones, means ignored."""
+    facets = data.get("facets") if isinstance(data, dict) else None
+    if isinstance(facets, list) and facets and not _wd_has_facet(facets, "locationCountry"):
+        return False
+    from filters import is_foreign_location
+    locs = [str(jp.get("locationsText") or "") for jp in postings]
+    locs = [l for l in locs if l]
+    foreign = sum(1 for l in locs if is_foreign_location(l))
+    return not (foreign >= 2 or (foreign and foreign == len(locs)))
 
 
 def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) -> list[dict]:
@@ -2414,6 +2625,7 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
         return out
     cands: dict[str, dict] = {}
     facet_ok = True                     # until the tenant answers 400 to it
+    facet_judged = False                # the first faceted reply with postings decides
     try:
         for search in searches:
             facets = {"locationCountry": [_WD_COUNTRY_DE]} if facet_ok else {}
@@ -2429,7 +2641,7 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
                 payload["searchText"] = search
                 payload["offset"] = offset
                 payload["limit"] = 20
-                r = requests.post(list_url, json=payload,
+                r = _guarded_post(list_url, json=payload,
                                   headers=_wd_headers(host), timeout=15)
                 if r.status_code == 400 and facets:
                     facets = {}             # tenant rejects the facet: retry plain
@@ -2437,12 +2649,22 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
                     continue
                 if r.status_code != 200:
                     break
-                postings = r.json().get("jobPostings", []) or []
+                data = r.json() or {}
+                postings = data.get("jobPostings", []) or []
                 if not postings:
                     if facets and offset == 0:
                         facets = {}         # facet matched nothing here: retry plain
                         continue
                     break
+                if facets and not facet_judged:
+                    facet_judged = True
+                    if not _wd_facet_honoured(data, postings):
+                        # Accepted and ignored: this reply IS the plain list.
+                        # Keep it, but nothing in it is known to be German.
+                        facets = {}
+                        facet_ok = False
+                        with _WD_STATS_LOCK:
+                            _WD_FACET_IGNORED.add(tenant)
                 for jp in postings:
                     title = (jp.get("title") or "").strip()
                     if not title:
@@ -2504,9 +2726,10 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
             job_url = f"https://{host}{c['path']}" if c["path"] else list_url
             desc = _wd_fetch_description(host, tenant, site, c["path"])
             location = c["location"]
-            if c["de_facet"] and not _de_place(location):
+            if c["de_facet"] and not _de_place(location) and not _foreign_place(location):
                 # The facet proved Germany; "2 Locations" alone would be
-                # judged as unknown by the geography filters.
+                # judged as unknown by the geography filters. A place the
+                # filters know is foreign is never relabelled (2026-11-13).
                 location = f"{location}, Germany" if location else "Germany"
             row = job(
                 title=c["title"],
@@ -2545,8 +2768,12 @@ def scrape_workday_cxs() -> list[dict]:
     plan = _wd_plan(t0)
     with _WD_STATS_LOCK:
         _WD_STATS.update(searches_skipped=0, details_skipped=0)
+        _WD_FACET_IGNORED.clear()
     results = _parallel_collect(_wd_tenants_quick_first(),
                                 lambda e: _workday_cxs_tenant(e, plan["base"], "base"), "WD-CXS")
+    if _WD_FACET_IGNORED:
+        print(f"  [WD-CXS] {len(_WD_FACET_IGNORED)} tenants ignore the Germany facet; their "
+              f"postings are not labelled Germany: {', '.join(sorted(_WD_FACET_IGNORED))}")
     _WD_BASE_URLS.clear()
     _WD_BASE_URLS.update(r["url"] for r in results)
     print(f"  [WD-CXS] {len(results)} AI/ML-relevant jobs across {len(WORKDAY_CXS_TENANTS)} tenants "
@@ -2636,7 +2863,7 @@ def scrape_adzuna() -> list[dict]:
 
     for query in _ADZUNA_QUERIES:
         try:
-            r = requests.get(
+            r = _guarded_get(
                 _ADZUNA_BASE.format(page=1),
                 params={
                     "app_id":           app_id,
@@ -2719,7 +2946,7 @@ def scrape_ashby() -> list[dict]:
 
     for slug in ASHBY_SLUGS:
         try:
-            r = requests.get(
+            r = _guarded_get(
                 f"https://api.ashbyhq.com/posting-api/job-board/{slug}",
                 params={"includeCompensation": "true"},
                 headers=HEADERS,
@@ -2808,7 +3035,7 @@ def scrape_recruitee() -> list[dict]:
 
     for slug in RECRUITEE_SLUGS:
         try:
-            r = requests.get(
+            r = _guarded_get(
                 f"https://{slug}.recruitee.com/api/offers",
                 headers=HEADERS,
                 timeout=15,
@@ -2901,7 +3128,7 @@ def scrape_germantechjobs() -> list[dict]:
     """
     results: list[dict] = []
     try:
-        r = requests.get(_GERMANTECHJOBS_RSS, headers=HEADERS, timeout=20)
+        r = _guarded_get(_GERMANTECHJOBS_RSS, headers=HEADERS, timeout=20)
         if r.status_code != 200:
             print(f"  [GermanTechJobs] HTTP {r.status_code}, skipping")
             return results
@@ -2948,7 +3175,7 @@ def scrape_remote_eu_boards() -> list[dict]:
 
     # WorkingNomads - clean JSON list
     try:
-        r = requests.get("https://www.workingnomads.com/api/exposed_jobs/",
+        r = _guarded_get("https://www.workingnomads.com/api/exposed_jobs/",
                          headers=HEADERS, timeout=15)
         if r.status_code == 200:
             for it in (r.json() or []):
@@ -2972,7 +3199,7 @@ def scrape_remote_eu_boards() -> list[dict]:
     # WeWorkRemotely - programming + data RSS categories
     for cat in ("remote-programming-jobs", "remote-data-jobs"):
         try:
-            r = requests.get(f"https://weworkremotely.com/categories/{cat}.rss",
+            r = _guarded_get(f"https://weworkremotely.com/categories/{cat}.rss",
                              headers=HEADERS, timeout=15)
             if r.status_code != 200 or "<item" not in r.text:
                 continue
@@ -3017,7 +3244,7 @@ def scrape_company_page(company_cfg: dict[str, Any]) -> list[dict]:
     name = company_cfg["name"]
     url = company_cfg["url"]
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        r = _guarded_get(url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(r.text, "html.parser")
 
         # Generic heuristic: look for job-like links
@@ -3065,7 +3292,7 @@ _BSJ_RSS = "https://berlinstartupjobs.com/feed/"
 def scrape_berlinstartupjobs() -> list[dict]:
     results: list[dict] = []
     try:
-        r = requests.get(_BSJ_RSS, headers=HEADERS, timeout=15)
+        r = _guarded_get(_BSJ_RSS, headers=HEADERS, timeout=15)
         if r.status_code != 200 or "<item" not in r.text:
             print(f"  [BerlinStartupJobs] HTTP {r.status_code} or no feed, skipping")
             return results
@@ -3124,7 +3351,7 @@ def scrape_join() -> list[dict]:
     results: list[dict] = []
     for url in _JOIN_CANDIDATES:
         try:
-            r = requests.get(url, headers=HEADERS, timeout=10)
+            r = _guarded_get(url, headers=HEADERS, timeout=10)
             if r.status_code != 200:
                 continue
             ct = r.headers.get("Content-Type", "")
@@ -3201,57 +3428,42 @@ def scrape_join() -> list[dict]:
 # the full description is pulled from each job page's JSON-LD JobPosting so the
 # English/experience/German filters and the scorer have real text to judge.
 
-_XING_URL = "https://www.xing.com/xing-one/api"
-_XING_CONSUMER = "loggedout.web.jobs.search_results.center"
-_XING_HEADERS = {
-    "User-Agent": HEADERS["User-Agent"],
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "Origin": "https://www.xing.com",
-    "Referer": "https://www.xing.com/jobs/search",
-}
-_XING_QUERY = """query JobSearchByQuery($query: JobSearchQueryInput!, $consumer: String!, $limit: Int, $offset: Int) {
-  jobSearchByQuery(query: $query, consumer: $consumer, limit: $limit, offset: $offset) {
-    collection {
-      jobDetail {
-        ... on VisibleJob {
-          id
-          title
-          url
-          activatedAt
-          location { city country { countryCode } }
-          companyInfo { companyNameOverride company { companyName } }
-        }
-      }
-    }
-  }
-}"""
+# 2026-11-13: XING's robots.txt disallows /xing-one/api and /graphql/, the
+# search endpoint this source used since 2026-09. Job pages (/jobs/{slug}) and
+# the job sitemaps are allowed, so the source now reads the sitemaps: ten files
+# of 50,000 URLs each, every URL with a lastmod date and a descriptive slug
+# ("/jobs/koeln-werkstudent-data-analytics-146268547"). Recent student or
+# junior tech slugs are picked first, then each page's JSON-LD JobPosting
+# gives title, company, location, date and the full ad.
+_XING_SITEMAP_INDEX = "https://www.xing.com/jobs/sitemap.xml.gz"
+_XING_SITEMAP_DAYS = 2          # sitemap lastmod at most this old
+_XING_FORM_SLUG = re.compile(
+    r"werkstudent|working-student|studentisch|studentenjob|hiwi|hilfskraft|praktik|internship"
+    r"|-intern-|-intern$|trainee|junior|berufseinsteiger|absolvent|teilzeit|part-time",
+    re.IGNORECASE)
+_XING_TECH_SLUG = re.compile(
+    r"data|daten|informatik|software|entwickl|developer|python|machine-learning|-ml-|-ki-|-ai-"
+    r"|kuenstlich|artificial|analyst|analytics|business-intelligence|-bi-|cloud|devops|mlops"
+    r"|nlp|llm",
+    re.IGNORECASE)
+_XING_URL_RE = re.compile(r"<url>\s*<loc>([^<]+)</loc>\s*(?:<lastmod>([^<]+)</lastmod>)?", re.S)
 
-# Werkstudent-only across the four tracks. XING is DE-native and its
-# Mittelstand segment is exactly where Werkstudent ads live.
-# The same query without the country field. If XING ever rejects the country
-# field, the source falls back to city-only locations instead of returning
-# nothing for every query.
-_XING_QUERY_LEGACY = _XING_QUERY.replace("location { city country { countryCode } }", "location { city }")
-
-_XING_QUERIES = (
-    "Werkstudent Data Science", "Werkstudent Machine Learning",
-    "Werkstudent Künstliche Intelligenz", "Werkstudent Data Analyst",
-    "Werkstudent Business Intelligence", "Werkstudent Informatik",
-    "Werkstudent Python", "Studentische Hilfskraft Informatik",
-    "Praktikum Data Science", "Praktikum Informatik",
-    "Teilzeit Data", "Teilzeit Informatik",
-    # full-time, entry level (2026-10-14)
-    "Junior Data Scientist", "Junior Data Analyst", "Junior Machine Learning Engineer",
-    "Junior Softwareentwickler Python", "Berufseinsteiger Data", "Data Engineer",
-)
-
-_XING_DESC_CAP = 60  # max job-page description fetches per run
+_XING_DESC_CAP = 60  # max job pages fetched per run
 
 _XING_COUNTRIES = {"DE": "Germany", "AT": "Austria", "CH": "Switzerland", "LU": "Luxembourg",
                    "NL": "Netherlands", "BE": "Belgium", "FR": "France", "PL": "Poland",
                    "ES": "Spain", "IT": "Italy", "GB": "United Kingdom", "US": "United States"}
 
+
+def _utf8_text(r) -> str:
+    """Response text, decoded as UTF-8 when the server names no charset.
+    XING (like Stellenwerk) sends "text/html" without one, so requests falls
+    back to ISO-8859-1 and every umlaut and dash arrives as mojibake."""
+    ctype = (getattr(r, "headers", {}) or {}).get("content-type", "") or ""
+    if "charset" in ctype.lower():
+        return r.text
+    content = getattr(r, "content", b"") or b""
+    return content.decode("utf-8", "replace") if content else (getattr(r, "text", "") or "")
 
 def _xing_location(loc) -> str:
     """'City, Germany' from XING's location object. XING only gave the bare
@@ -3270,10 +3482,10 @@ def _xing_fetch_description(url: str) -> str:
     """Pull the full description from a XING job page's JSON-LD JobPosting."""
     try:
         import json as _json
-        r = requests.get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=12)
+        r = _guarded_get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=12)
         if r.status_code != 200:
             return ""
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup = BeautifulSoup(_utf8_text(r), "html.parser")
         for s in soup.find_all("script", type="application/ld+json"):
             if not s.string:
                 continue
@@ -3288,86 +3500,79 @@ def _xing_fetch_description(url: str) -> str:
         return ""
 
 
-def scrape_xing() -> list[dict]:
-    """Scrape XING jobs via its public GraphQL search + JSON-LD description enrichment."""
-    results: list[dict] = []
-    seen_ids: set[str] = set()
-    enriched = 0
-    query_text = _XING_QUERY
+def _xing_slug_wanted(url: str) -> bool:
+    slug = url.rsplit("/", 1)[-1]
+    return bool(_XING_FORM_SLUG.search(slug) and _XING_TECH_SLUG.search(slug))
 
-    def _post(text: str, keywords: str):
-        payload = {
-            "operationName": "JobSearchByQuery",
-            "query": text,
-            "variables": {
-                "consumer": _XING_CONSUMER,
-                "query": {"keywords": keywords},
-                "limit": 20,
-                "offset": 0,
-            },
-        }
-        r = requests.post(_XING_URL, json=payload, headers=_XING_HEADERS, timeout=20)
-        try:
-            body = r.json()
-        except Exception:
-            body = {}
-        ok = r.status_code == 200 and not (body.get("errors") and not body.get("data"))
-        return r, body, ok
 
-    for query in _XING_QUERIES:
-        try:
-            r, body, ok = _post(query_text, query)
-            if not ok and query_text is _XING_QUERY:
-                # A rejected field would otherwise look like "no jobs today".
-                print(f"  [XING] query rejected (HTTP {r.status_code}: "
-                      f"{str(body.get('errors') or r.text)[:240]}) - falling back to city-only locations")
-                query_text = _XING_QUERY_LEGACY
-                r, body, ok = _post(query_text, query)
-            if not ok:
-                print(f"  [XING] '{query}' failed (HTTP {r.status_code})")
-                continue
-            data = (body.get("data") or {}).get("jobSearchByQuery") or {}
-            for c in data.get("collection", []) or []:
-                jd = c.get("jobDetail") or {}
-                jid = jd.get("id")
-                if not jid or jid in seen_ids:
-                    continue
-                seen_ids.add(jid)
+def _gunzip_text(content: bytes) -> str:
+    import gzip
+    try:
+        return gzip.decompress(content).decode("utf-8", "replace")
+    except Exception:
+        return (content or b"").decode("utf-8", "replace")
 
-                title = jd.get("title", "") or ""
-                url = jd.get("url", "") or ""
-                if not title or not url:
-                    continue
-                ci = jd.get("companyInfo") or {}
-                company = (
-                    ci.get("companyNameOverride")
-                    or (ci.get("company") or {}).get("companyName")
-                    or "XING"
-                )
-                location = _xing_location(jd.get("location"))
-                posted = jd.get("activatedAt", "") or ""
 
-                description = ""
-                if enriched < _XING_DESC_CAP:
-                    description = _xing_fetch_description(url)
-                    enriched += 1
-                    time.sleep(0.2)
-
-                results.append(job(
-                    title=title,
-                    company=company,
-                    location=location,
-                    url=url,
-                    source="XING",
-                    description=description,
-                    posted_at=posted,
-                ))
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"  [XING] query '{query}' failed: {e}")
+def _xing_candidates(now=None) -> list[str]:
+    """Recent student or junior tech job URLs from XING's job sitemaps, newest
+    first."""
+    from datetime import datetime, timedelta, timezone
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=_XING_SITEMAP_DAYS)).isoformat()
+    r = _guarded_get(_XING_SITEMAP_INDEX, headers=HEADERS, timeout=30)
+    if r.status_code != 200:
+        print(f"  [XING] sitemap index HTTP {r.status_code}")
+        return []
+    files = [u for u in re.findall(r"<loc>([^<]+)</loc>", _gunzip_text(r.content))
+             if re.search(r"/jobs/\d+-sitemap\.xml", u)]
+    picked: list[tuple[str, str]] = []
+    for f in files:
+        rr = _guarded_get(f.strip(), headers=HEADERS, timeout=60)
+        if rr.status_code != 200:
             continue
+        for loc, lastmod in _XING_URL_RE.findall(_gunzip_text(rr.content)):
+            if (lastmod or "") >= cutoff and _xing_slug_wanted(loc):
+                m = re.search(r"-(\d+)$", loc.strip())
+                picked.append((int(m.group(1)) if m else 0, loc.strip()))
+    # A lastmod also moves when an old ad is edited; the id only grows with
+    # new postings, so the highest ids are the freshest (an Exxeta ad from
+    # August carried a lastmod of that week).
+    picked.sort(reverse=True)
+    return [u for _, u in picked]
 
-    print(f"  [XING] {len(results)} jobs ({enriched} enriched with full description)")
+
+def _xing_page(url: str) -> list[dict]:
+    try:
+        r = _guarded_get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=15)
+        if r.status_code != 200:
+            return []
+        d = _parse_jsonld_jobposting(_utf8_text(r))
+        if not d:
+            return []
+        title = (d.get("title") or "").strip()
+        if not title:
+            return []
+        org = d.get("hiringOrganization") or {}
+        company = (org.get("name") if isinstance(org, dict) else str(org or "")) or "XING"
+        location = _ld_place(d)
+        desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text(" ", strip=True)
+        return [job(title=title, company=company, location=location, url=url, source="XING",
+                    description=desc, posted_at=str(d.get("datePosted") or ""))]
+    except Exception:
+        return []
+
+
+def scrape_xing() -> list[dict]:
+    """XING via its job sitemaps and each page's JSON-LD (see _XING_SITEMAP_INDEX)."""
+    try:
+        cands = _xing_candidates()
+    except Exception as e:
+        print(f"  [XING] sitemap read failed: {e}")
+        return []
+    picked = cands[:_XING_DESC_CAP]
+    results = _parallel_collect(picked, _xing_page, "XING", workers=4)
+    print(f"  [XING] {len(results)} jobs from {len(picked)} of {len(cands)} recent student/junior "
+          f"tech postings in the sitemaps")
     return results
 
 
@@ -3376,15 +3581,36 @@ def scrape_xing() -> list[dict]:
 # Pages often carry several ld+json blocks (BreadcrumbList, ItemList, ...), so
 # the parser must select @type == JobPosting specifically.
 
+_JSONLD_RE = re.compile(
+    r"<script\b[^>]*\btype\s*=\s*[\"']?application/ld\+json[\"']?[^>]*>(.*?)</script>",
+    re.S | re.I)
+
+
+def _is_jobposting(item) -> bool:
+    t = item.get("@type") if isinstance(item, dict) else None
+    return t == "JobPosting" or (isinstance(t, list) and "JobPosting" in t)
+
+
 def _parse_jsonld_jobposting(html: str) -> dict | None:
-    for m in re.finditer(r'<script type="application/ld\+json">(.*?)</script>', html, re.S):
+    """The first schema.org JobPosting in a page. Since 2026-11-13 the script
+    tag may carry other attributes or single quotes, the block may wrap its
+    items in @graph, and @type may be a list; the old regex matched only the
+    exact tag <script type="application/ld+json">."""
+    for m in _JSONLD_RE.finditer(html or ""):
         try:
-            d = json.loads(m.group(1))
+            d = json.loads(m.group(1).strip(), strict=False)
         except Exception:
             continue
-        for item in (d if isinstance(d, list) else [d]):
-            if isinstance(item, dict) and item.get("@type") == "JobPosting":
+        stack = d if isinstance(d, list) else [d]
+        while stack:
+            item = stack.pop(0)
+            if not isinstance(item, dict):
+                continue
+            if _is_jobposting(item):
                 return item
+            graph = item.get("@graph")
+            if isinstance(graph, list):
+                stack.extend(graph)
     return None
 
 
@@ -3399,6 +3625,69 @@ def _jsonld_location(d: dict) -> str:
         if c:
             cities.append(str(c))
     return ", ".join(cities[:3]) or "Germany"
+
+
+# -- E.ON - jobs.eon.com sitemap + JSON-LD (2026-11-13) -----------------------
+# E.ON's old CSB board (careers.eon.com) answers its search with a Cloudflare
+# challenge and returned 0 jobs from 5 Nov 2026 on. The board moved to
+# jobs.eon.com, whose robots.txt allows everything except /api/, /admin/ and
+# newsletter pages and points to a sitemap of every posting (404 that day, 41
+# of them student or trainee roles). Each ad page carries a JSON-LD JobPosting.
+# Pages are about 420 KB, so slugs are filtered before any page is requested.
+_EON_SITEMAP = "https://jobs.eon.com/sitemap.xml"
+_EON_SLUG = re.compile(
+    r"werkstudent|working[-_]student|studentisch|praktik|internship|\bintern\b|hilfskraft|trainee",
+    re.IGNORECASE)
+_EON_CAP = 45
+
+
+def _ld_place(d: dict) -> str:
+    """'City, Country' from a JSON-LD JobPosting's first jobLocation."""
+    locs = d.get("jobLocation") or []
+    locs = [locs] if isinstance(locs, dict) else locs
+    addr = ((locs[0] if locs else {}) or {}).get("address") or {}
+    if not isinstance(addr, dict):
+        return "Germany"
+    country = addr.get("addressCountry") or ""
+    if isinstance(country, dict):
+        country = country.get("name") or ""
+    return _xing_location({"city": addr.get("addressLocality") or "",
+                           "country": {"countryCode": str(country)[:2]}})
+
+
+def _eon_page(url: str) -> list[dict]:
+    try:
+        r = _guarded_get(url, headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            return []
+        d = _parse_jsonld_jobposting(_utf8_text(r))
+        if not d or not (d.get("title") or "").strip():
+            return []
+        org = d.get("hiringOrganization") or {}
+        company = (org.get("name") if isinstance(org, dict) else str(org or "")) or "E.ON"
+        desc = BeautifulSoup(d.get("description") or "", "html.parser").get_text("\n", strip=True)
+        return [job(title=d["title"].strip(), company=company, location=_ld_place(d), url=url,
+                    source="E.ON", description=desc, posted_at=str(d.get("datePosted") or ""))]
+    except Exception:
+        return []
+
+
+def scrape_eon() -> list[dict]:
+    try:
+        r = _guarded_get(_EON_SITEMAP, headers=HEADERS, timeout=30)
+        if r.status_code != 200:
+            print(f"  [E.ON] sitemap HTTP {r.status_code}")
+            return []
+        urls = [_html.unescape(u.strip()) for u in re.findall(r"<loc>([^<]+)</loc>", _utf8_text(r))]
+        urls = [u for u in urls if "/job/" in u
+                and _EON_SLUG.search(urllib.parse.unquote(u).replace("-", " "))]
+        picked = urls[:_EON_CAP]
+        rows = _parallel_collect(picked, _eon_page, "E.ON", workers=4)
+        print(f"  [E.ON] {len(rows)} student/trainee roles from {len(picked)} of {len(urls)} in the sitemap")
+        return rows
+    except Exception as e:
+        print(f"  [E.ON] failed: {e}")
+        return []
 
 
 # -- Absolventa (D2) - German graduate/trainee board via sitemap + JSON-LD ----
@@ -3441,7 +3730,7 @@ def _absolventa_id(url: str) -> int:
 
 def _absolventa_page(url: str) -> list[dict]:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = _guarded_get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return []
         d = _parse_jsonld_jobposting(r.text)
@@ -3467,7 +3756,7 @@ def _absolventa_page(url: str) -> list[dict]:
 
 def scrape_absolventa() -> list[dict]:
     try:
-        r = requests.get(_ABSOLVENTA_SITEMAP, headers=HEADERS, timeout=30)
+        r = _guarded_get(_ABSOLVENTA_SITEMAP, headers=HEADERS, timeout=30)
         if r.status_code != 200:
             print(f"  [Absolventa] sitemap HTTP {r.status_code}")
             return []
@@ -3506,7 +3795,7 @@ _NEXT_DATA_RE = re.compile(
 
 def _getinit_page(url: str) -> list[dict]:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = _guarded_get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return []
         m = _NEXT_DATA_RE.search(r.text)
@@ -3540,7 +3829,7 @@ def _getinit_page(url: str) -> list[dict]:
 
 def scrape_getinit() -> list[dict]:
     try:
-        r = requests.get(_GETINIT_SITEMAP, headers=HEADERS, timeout=30)
+        r = _guarded_get(_GETINIT_SITEMAP, headers=HEADERS, timeout=30)
         if r.status_code != 200:
             print(f"  [GetInIT] sitemap HTTP {r.status_code}")
             return []
@@ -3588,7 +3877,7 @@ def scrape_hiringcafe() -> list[dict]:
     seen_urls: set[str] = set()
     try:
         import urllib.parse
-        home = requests.get("https://hiringcafe.com", headers=HEADERS, timeout=20)
+        home = _guarded_get("https://hiringcafe.com", headers=HEADERS, timeout=20)
         m = _HIRINGCAFE_BUILDID_RE.search(home.text)
         if not m:
             print("  [HiringCafe] buildId not found on homepage \u2014 site redeployed with a new layout?")
@@ -3602,7 +3891,7 @@ def scrape_hiringcafe() -> list[dict]:
             })
             url = (f"https://hiringcafe.com/_next/data/{build_id}/index.json"
                    f"?searchState={urllib.parse.quote(state)}")
-            r = requests.get(url, headers={**HEADERS, "x-nextjs-data": "1"}, timeout=25)
+            r = _guarded_get(url, headers={**HEADERS, "x-nextjs-data": "1"}, timeout=25)
             if r.status_code != 200:
                 print(f"  [HiringCafe] '{query}' HTTP {r.status_code}")
                 continue
@@ -3693,7 +3982,9 @@ def _li_canonical_url(href: str) -> str:
 
 
 def scrape_linkedin_guest() -> list[dict]:
-    results: list[dict] = []
+    # Shared buffer, so a timeout can keep what was collected (see _PARTIAL_BUFFERS).
+    results: list[dict] = _LI_GUEST_PARTIAL
+    results.clear()
     seen_urls: set[str] = set()
 
     # BREADTH BEFORE DEPTH. LinkedIn throttles at roughly 10 pages per IP, and
@@ -3713,7 +4004,7 @@ def scrape_linkedin_guest() -> list[dict]:
             if query in exhausted:
                 continue
             try:
-                r = requests.get(
+                r = _guarded_get(
                     _LI_GUEST_URL,
                     params={
                         "keywords": query,
@@ -3770,11 +4061,16 @@ def scrape_linkedin_guest() -> list[dict]:
                 continue
 
     # Same two-phase enrichment as JobSpy: title-screen first, then parallel
-    # description fetches for the plausible subset only.
-    _enrich_jobspy_descriptions(results)
+    # description fetches for the plausible subset only. Postings seen on an
+    # earlier day are dropped by node_filter's first line whatever their text
+    # says, so their descriptions are not fetched (the JobSpy lanes skip them
+    # the same way since 2026-11-11; this source did not until 2026-11-13).
+    unseen = [j for j in results if j.get("id") not in KNOWN_JOB_IDS]
+    _enrich_jobspy_descriptions(unseen)
     print(f"  [LinkedIn-Guest] {len(results)} student-role jobs "
-          f"across {len(_LI_GUEST_QUERIES)} queries")
-    return results
+          f"across {len(_LI_GUEST_QUERIES)} queries ({len(results) - len(unseen)} already seen, "
+          f"descriptions not fetched)")
+    return list(results)
 
 
 # -- Stellenwerk - the university job boards of Bonn, Köln and Düsseldorf -----
@@ -3805,7 +4101,7 @@ _STELLENWERK_CAP = 150
 
 def _stellenwerk_page(url: str) -> list[dict]:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = _guarded_get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return []
         # The response carries no charset, so requests falls back to
@@ -3835,7 +4131,7 @@ def _stellenwerk_page(url: str) -> list[dict]:
 
 def scrape_stellenwerk() -> list[dict]:
     try:
-        r = requests.get(_STELLENWERK_SITEMAP, headers=HEADERS, timeout=30)
+        r = _guarded_get(_STELLENWERK_SITEMAP, headers=HEADERS, timeout=30)
         if r.status_code != 200:
             print(f"  [Stellenwerk] sitemap HTTP {r.status_code}")
             return []
@@ -3939,7 +4235,7 @@ _RMK_NRW = re.compile(
 
 def _rmk_page(url: str, source: str) -> list[dict]:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = _guarded_get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return []
         soup = BeautifulSoup(r.text, "html.parser")
@@ -3991,7 +4287,7 @@ def scrape_research_institutes() -> list[dict]:
     results: list[dict] = []
     for host, source in _RMK_SITES:
         try:
-            r = requests.get(f"{host}/sitemap.xml", headers=HEADERS, timeout=30)
+            r = _guarded_get(f"{host}/sitemap.xml", headers=HEADERS, timeout=30)
             if r.status_code != 200:
                 print(f"  [{source}] sitemap HTTP {r.status_code}")
                 continue
@@ -4018,6 +4314,251 @@ def scrape_research_institutes() -> list[dict]:
 # is discovered from the sitemap index on every run rather than hardcoded.
 # robots.txt disallows "/*cHash" in general but then explicitly re-allows
 # "/sitemap.xml?sitemap=*&cHash=*", which is exactly the path used here.
+# -- Workable, Teamtailor and Breezy employer feeds (2026-11-13) ---------------
+# Three applicant-tracking systems with a public per-company feed, each checked
+# live on 2026-11-13 (robots.txt allows all three paths):
+#   Workable   apply.workable.com/api/v1/widget/accounts/{slug}?details=true
+#              (JSON with the full ad; an old duplicate slug answers 200 with 0 jobs)
+#   Teamtailor {site}/jobs.rss?per_page=1000 (RSS with the full ad and tt:locations;
+#              per_page=200 cut a 448-job site off at 200)
+#   Breezy     {slug}.breezy.hr/json (JSON without the ad text: rows are stubs)
+# Only jobs with a German location, or remote ones, are kept; the geography
+# filters judge the rest downstream as for every source.
+_WORKABLE_ACCOUNTS = (
+    ("socialsweethearts", "social sweethearts"),      # Bonn, Köln, Düsseldorf
+    ("circonomit", "Circonomit"),                     # Köln
+    ("envalior", "Envalior"),                         # NRW
+    ("vivaldi-group", "Vivaldi Group"),               # consulting, Düsseldorf
+    ("quistor", "Broadpin"),                          # Münster
+    ("tetrascience", "TetraScience"),
+    ("infosys-consulting-europe", "Infosys Consulting"),
+    ("fioneer", "SAP Fioneer"),
+    ("animore", "Animore"),                           # AI, student and intern roles
+    ("avomind", "Avomind"),                           # tech recruiter
+    ("onodrim-industries", "Onodrim Industries"),
+    ("usercentrics", "Usercentrics"),
+    ("unit8", "Unit8"),
+    ("visium", "Visium"),
+    ("skeletontech", "Skeleton Technologies"),
+    ("getolo", "getolo"),
+    ("universalquantum", "Universal Quantum"),
+    ("twocircles", "Two Circles"),
+)
+_TEAMTAILOR_SITES = (
+    ("coacgmbh-1728891424.teamtailor.com", "coac"),   # Köln
+    ("grouponede.teamtailor.com", "group.one"),       # Dortmund
+    ("heydata.teamtailor.com", "heyData"),
+    ("ailoys-1732528276.teamtailor.com", "Ailoys"),
+    ("appsfactory.teamtailor.com", "Appsfactory"),
+    ("huaweiresearchcentergermanyaustria.teamtailor.com", "Huawei Research Center Germany"),
+    ("tibber.teamtailor.com", "Tibber"),
+)
+_BREEZY_ACCOUNTS = (
+    ("eigenblue", "eigenblue"),                       # industrial AI
+    ("transparent-hiring", "Transparent Hiring"),
+    ("ablefy", "Ablefy"),
+    ("alasco", "Alasco"),
+    ("gecko", "GECKO"),
+)
+_TT_NS = "{https://teamtailor.com/locations}"
+
+
+def _german_or_remote(places: list[str], remote: bool) -> bool:
+    from filters import is_german_location
+    return remote or any(is_german_location(p.lower()) for p in places if p)
+
+
+def _workable_rows(data: dict, company: str) -> list[dict]:
+    out = []
+    for j in (data or {}).get("jobs") or []:
+        title = (j.get("title") or "").strip()
+        url = j.get("url") or j.get("shortlink") or ""
+        if not title or not url:
+            continue
+        locs = j.get("locations") or [{"city": j.get("city"), "country": j.get("country")}]
+        places = []
+        for l in locs:
+            country = (l.get("country") or "").strip() or _XING_COUNTRIES.get((l.get("countryCode") or "").upper(), "")
+            places.append(", ".join(x for x in ((l.get("city") or "").strip(), country) if x))
+        remote = str(j.get("telecommuting")).strip().lower() == "true"
+        if not _german_or_remote(places, remote):
+            continue
+        location = "; ".join(p for p in places if p) or "Germany"
+        if remote and "remote" not in location.lower():
+            location = f"Remote, {location}"
+        desc = BeautifulSoup(j.get("description") or "", "html.parser").get_text("\n", strip=True)
+        out.append(job(title=title, company=(data.get("name") or company).strip(), location=location, url=url,
+                       source="Workable", description=desc,
+                       posted_at=str(j.get("published_on") or j.get("created_at") or "")))
+    return out
+
+
+def _teamtailor_rows(content: bytes, company: str) -> list[dict]:
+    import xml.etree.ElementTree as ET
+    out = []
+    for it in ET.fromstring(content).iter("item"):
+        title = (it.findtext("title") or "").strip()
+        url = (it.findtext("link") or "").strip()
+        if not title or not url:
+            continue
+        places = []
+        for loc in it.iter(_TT_NS + "location"):
+            places.append(", ".join(x for x in ((loc.findtext(_TT_NS + "city") or "").strip(),
+                                                (loc.findtext(_TT_NS + "country") or "").strip()) if x))
+        status = (it.findtext("remoteStatus") or "").strip().lower()
+        # Live values on 2026-11-13: none, hybrid, onsite, temporary, fully.
+        remote = status in ("remote", "fully")
+        if not _german_or_remote(places, remote):
+            continue
+        location = "; ".join(p for p in places if p) or "Germany"
+        label = "Remote" if remote else "Hybrid" if status == "hybrid" else ""
+        if label and label.lower() not in location.lower():
+            location = f"{label}, {location}"
+        desc = BeautifulSoup(it.findtext("description") or "", "html.parser").get_text("\n", strip=True)
+        out.append(job(title=title, company=company, location=location, url=url, source="Teamtailor",
+                       description=desc, posted_at=_rss_date(it.findtext("pubDate") or "")))
+    return out
+
+
+def _breezy_rows(data: list, company: str) -> list[dict]:
+    out = []
+    for x in data or []:
+        title = (x.get("name") or "").strip()
+        url = x.get("url") or ""
+        if not title or not url:
+            continue
+        locs = x.get("locations") or [x.get("location") or {}]
+        de = [l for l in locs if ((l.get("country") or {}).get("id") or "").upper() == "DE"]
+        remote = any(l.get("is_remote") for l in locs)
+        if not de and not remote:
+            continue
+        places = [f"{(l.get('city') or '').strip()}, Germany".lstrip(", ") for l in de] or \
+                 [str((locs[0] or {}).get("name") or "")]
+        location = "; ".join(p for p in places if p) or "Germany"
+        if remote:
+            location = f"Remote, {location}"
+        kind = (x.get("type") or {}).get("name") or ""
+        row = job(title=title, company=((x.get("company") or {}).get("name") or company).strip(), location=location,
+                  url=url, source="Breezy", description=f"{title}\n{kind}\n{x.get('department') or ''}",
+                  posted_at=str(x.get("published_date") or "")[:10])
+        row["_stub"] = True
+        out.append(row)
+    return out
+
+
+def scrape_employer_feeds() -> list[dict]:
+    """Workable, Teamtailor and Breezy employers (see _WORKABLE_ACCOUNTS)."""
+    out: list[dict] = []
+    counts = {"Workable": 0, "Teamtailor": 0, "Breezy": 0}
+    calls = ([("Workable", f"https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true",
+               lambda r, c=company: _workable_rows(r.json(), c)) for slug, company in _WORKABLE_ACCOUNTS]
+             + [("Teamtailor", f"https://{site}/jobs.rss?per_page=1000",
+                 lambda r, c=company: _teamtailor_rows(r.content, c)) for site, company in _TEAMTAILOR_SITES]
+             + [("Breezy", f"https://{slug}.breezy.hr/json",
+                 lambda r, c=company: _breezy_rows(r.json(), c)) for slug, company in _BREEZY_ACCOUNTS])
+
+    def fetch(call):
+        platform, url, parse = call
+        try:
+            r = _guarded_get(url, headers=HEADERS, timeout=25)
+            if r.status_code != 200:
+                print(f"  [{platform}] {url.split('/')[2]} HTTP {r.status_code}")
+                return []
+            return parse(r)
+        except Exception as e:
+            print(f"  [{platform}] {url.split('/')[2]} failed: {type(e).__name__}")
+            return []
+    for row in _parallel_collect(calls, fetch, "employer-feeds", workers=6):
+        counts[row["source"]] += 1
+        out.append(row)
+    print("  [Employer feeds] " + ", ".join(f"{k} {v}" for k, v in counts.items())
+          + " jobs in Germany or remote")
+    return out
+
+
+# -- Research feeds: Helmholtz job XML and Max Planck RSS (2026-11-13) --------
+# Helmholtz publishes one XML of jobs across its centres (255 that day: KIT 59,
+# FZ Jülich 50, AWI 20, DESY 19, HZB 15, HZDR 14, GFZ 13, DZNE 12, DKFZ 12 ...),
+# valid UTF-8, robots.txt Crawl-delay 30, so it is read once per run. The Max
+# Planck RSS lists the 30 newest ads of all institutes. Neither carries the ad
+# text, so rows are stubs and the body fetch reads the linked page.
+_HELMHOLTZ_XML = "https://www.helmholtz.de/hochschul-jobde/"
+_MPG_RSS = "https://www.mpg.de/feeds/stellenangebote.rss"
+_RESEARCH_FEEDS = (("Helmholtz", _HELMHOLTZ_XML), ("Max Planck", _MPG_RSS))
+_RESEARCH_STUDENT = re.compile(
+    r"werkstudent|working student|studentisch|hilfskr|\bhiwi\b|\bshk\b|\bwhk\b|praktik|internship"
+    r"|\bintern\b|praxissemester|student assistant|student research", re.IGNORECASE)
+# School-pupil and non-student placements are not student jobs.
+_RESEARCH_NOT_STUDENT = re.compile(r"sch(?:ü|ue)ler|ohne studienbezug|grund-/vorpraktikum|vorpraktikum",
+                                   re.IGNORECASE)
+_MPG_CITY_RE = re.compile(r"\bin ([A-ZÄÖÜ][a-zäöüß]+(?:[ -][A-ZÄÖÜ][a-zäöüß]+)?)")
+
+
+def _rss_date(value: str) -> str:
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(value).date().isoformat()
+    except Exception:
+        return ""
+
+
+def _helmholtz_rows(content: bytes) -> tuple[list[dict], int]:
+    import xml.etree.ElementTree as ET
+    out: list[dict] = []
+    jobs = list(ET.fromstring(content).iter("job"))
+    for jb in jobs:
+        title = (jb.findtext("title") or "").strip()
+        position = (jb.findtext("position") or "").strip()
+        if not title or not (_RESEARCH_STUDENT.search(title) or _RESEARCH_STUDENT.search(position)):
+            continue
+        if _RESEARCH_NOT_STUDENT.search(title):
+            continue
+        institute = (jb.findtext("institute") or "").strip() or "Helmholtz"
+        city = (jb.findtext("location") or "").strip()
+        url = (jb.findtext("url") or "").strip() or _HELMHOLTZ_XML
+        row = job(title=title, company=institute, location=f"{city}, Germany" if city else "Germany",
+                  url=url, source="Helmholtz", description=f"{title}\n{institute}\n{position}")
+        row["_stub"] = True
+        out.append(row)
+    return out, len(jobs)
+
+
+def _mpg_rows(content: bytes) -> tuple[list[dict], int]:
+    import xml.etree.ElementTree as ET
+    from filters import is_german_location
+    out: list[dict] = []
+    items = list(ET.fromstring(content).iter("item"))
+    for it in items:
+        title = (it.findtext("title") or "").strip()
+        if not title or not _RESEARCH_STUDENT.search(title) or _RESEARCH_NOT_STUDENT.search(title):
+            continue
+        text = BeautifulSoup(it.findtext("description") or "", "html.parser").get_text(" ", strip=True)
+        city = next((c for c in _MPG_CITY_RE.findall(text) if is_german_location(c.lower())), "")
+        row = job(title=title, company="Max-Planck-Gesellschaft",
+                  location=f"{city}, Germany" if city else "Germany",
+                  url=(it.findtext("link") or "").strip(), source="MaxPlanck",
+                  description=f"{title}\n{text}", posted_at=_rss_date(it.findtext("pubDate") or ""))
+        row["_stub"] = True
+        out.append(row)
+    return out, len(items)
+
+
+def scrape_research_feeds() -> list[dict]:
+    out: list[dict] = []
+    for name, url, parse in (("Helmholtz", _HELMHOLTZ_XML, _helmholtz_rows), ("Max Planck", _MPG_RSS, _mpg_rows)):
+        try:
+            r = _guarded_get(url, headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                print(f"  [{name}] HTTP {r.status_code}")
+                continue
+            rows, total = parse(r.content)
+            out.extend(rows)
+            print(f"  [{name}] {len(rows)} student roles of {total} in the feed")
+        except Exception as e:
+            print(f"  [{name}] failed: {e}")
+    return out
+
+
 _BWI_SITEMAP_INDEX = "https://www.bwi.de/sitemap.xml"
 _BWI_STUDENT_URL = re.compile(
     r"werkstudent|studentische|hilfskraft|praktik|internship", re.IGNORECASE)
@@ -4026,7 +4567,7 @@ _BWI_CAP = 30
 
 def _bwi_page(url: str) -> list[dict]:
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = _guarded_get(url, headers=HEADERS, timeout=15)
         if r.status_code != 200:
             return []
         html = r.content.decode("utf-8", "replace")
@@ -4063,7 +4604,7 @@ def _bwi_page(url: str) -> list[dict]:
 
 def scrape_bwi() -> list[dict]:
     try:
-        idx = requests.get(_BWI_SITEMAP_INDEX, headers=HEADERS, timeout=25)
+        idx = _guarded_get(_BWI_SITEMAP_INDEX, headers=HEADERS, timeout=25)
         if idx.status_code != 200:
             print(f"  [BWI] sitemap index HTTP {idx.status_code}")
             return []
@@ -4073,7 +4614,7 @@ def scrape_bwi() -> list[dict]:
             print("  [BWI] no jobs sitemap in the index \u2014 site restructured?")
             return []
 
-        sm = requests.get(jobs_sitemap, headers=HEADERS, timeout=25)
+        sm = _guarded_get(jobs_sitemap, headers=HEADERS, timeout=25)
         urls = [u.replace("&amp;", "&") for u in re.findall(r"<loc>(.*?)</loc>", sm.text)]
         picked = [u for u in urls if _BWI_STUDENT_URL.search(u)][:_BWI_CAP]
         results = _parallel_collect(picked, _bwi_page, "BWI")
@@ -4095,7 +4636,7 @@ _IGUS_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester", re.
 
 def scrape_igus() -> list[dict]:
     try:
-        r = requests.get(_IGUS_API, headers=HEADERS, timeout=25)
+        r = _guarded_get(_IGUS_API, headers=HEADERS, timeout=25)
         if r.status_code != 200:
             print(f"  [Igus] HTTP {r.status_code}")
             return []
@@ -4145,7 +4686,7 @@ def scrape_rewe() -> list[dict]:
     seen_ids: set[str] = set()
     for term in _REWE_TERMS:
         try:
-            r = requests.get(_REWE_API, params={"term": term, "limit": 100},
+            r = _guarded_get(_REWE_API, params={"term": term, "limit": 100},
                              headers=HEADERS, timeout=25)
             if r.status_code != 200:
                 print(f"  [REWE] '{term}' HTTP {r.status_code}")
@@ -4190,6 +4731,9 @@ _DVINCI_TENANTS = (
     # A value containing a dot is a full host, not a *.dvinci-hr.com slug.
     ("jobs.dzne.de", "DZNE", "Bonn"),          # neuroscience research, English ads
     ("inverto", "INVERTO", "Köln"),            # BCG procurement consultancy - English "Consulting Intern - Digital & AI"
+    # Research centres on d.vinci (checked 2026-11-13): KIT 74 jobs, DKFZ 12.
+    ("jobs.pse.kit.edu", "KIT", "Karlsruhe"),
+    ("jobs.dkfz.de", "DKFZ", "Heidelberg"),
 )
 _DVINCI_STUDENT = re.compile(r"werkstudent|praktik|internship|praxissemester|studentische"
                              r"|student (research )?assistant|hilfskraft|working student",
@@ -4204,7 +4748,7 @@ def scrape_dvinci() -> list[dict]:
             # no matter what Accept says, a plain one gets JSON. Verified
             # by A/B-ing the exact same request with both UAs.
             base = slug if "." in slug else f"{slug}.dvinci-hr.com"
-            r = requests.get(f"https://{base}/de/jobs",
+            r = _guarded_get(f"https://{base}/de/jobs",
                              headers={"User-Agent": "job-hunter/1.0",
                                       "Accept": "application/json"},
                              timeout=25)
@@ -4244,7 +4788,7 @@ _UNIBONN_URL = ("https://www.uni-bonn.de/de/universitaet/arbeiten-an-der-uni/"
 
 def scrape_unibonn() -> list[dict]:
     try:
-        r = requests.get(_UNIBONN_URL, headers=HEADERS, timeout=25)
+        r = _guarded_get(_UNIBONN_URL, headers=HEADERS, timeout=25)
         if r.status_code != 200:
             print(f"  [UniBonn] HTTP {r.status_code}")
             return []
@@ -4300,8 +4844,44 @@ _CSB_SITES = (
     ("https://careers.ey.com", "EY"),                 # 38 in feed, 5 belt incl. EY-Parthenon Decision Modelling
     # Germany-wide English sweep 2026-09-07 (verified live via the RSS endpoint):
     ("https://jobs.rwe.com", "RWE"),                  # Essen - Working Student IT Security Governance, English ad
-    ("https://careers.eon.com", "E.ON"),              # Essen/Munich - E.ON Digital Technology Working Student ads
+    # careers.eon.com left 2026-11-13: its search answers with a Cloudflare
+    # challenge and its board moved to jobs.eon.com (scrape_eon).
 )
+# Student-type slugs in a CSB sitemap ("/job/Hilden-Werkstudentin-Robotics-.../").
+_CSB_STUDENT_SLUG = re.compile(
+    r"werkstudent|working[\s-]student|student|praktik|\bintern\b|internship|hilfskr|praxissemester",
+    re.IGNORECASE)
+_CSB_SITEMAP_FILES = 4      # child sitemaps read when the root is an index
+
+
+def _csb_sitemap_links(host: str) -> dict[str, str]:
+    """{job URL: title from the slug} for student-type jobs in the host's
+    sitemap. Replaces the RSS feed on 2026-11-13: robots.txt disallows
+    /services/ on all 13 CSB hosts, and the sitemap is allowed and lists the
+    same postings (HDI: 23 student-type URLs that day)."""
+    out: dict[str, str] = {}
+    try:
+        r = _guarded_get(f"{host}/sitemap.xml", headers=HEADERS, timeout=25)
+        if r.status_code != 200:
+            return out
+        text = r.text
+        children = re.findall(r"<sitemap>\s*<loc>([^<]+)</loc>", text)
+        if children:
+            text = ""
+            for u in children[:_CSB_SITEMAP_FILES]:
+                rr = _guarded_get(_html.unescape(u.strip()), headers=HEADERS, timeout=25)
+                if rr.status_code == 200:
+                    text += rr.text
+        for loc in re.findall(r"<loc>([^<]+)</loc>", text):
+            u = _html.unescape(loc.strip())
+            slug = urllib.parse.unquote(urllib.parse.urlsplit(u).path)
+            if "/job/" not in slug or not _CSB_STUDENT_SLUG.search(slug.replace("-", " ")):
+                continue
+            seg = slug.split("/job/", 1)[1].strip("/").split("/")[0]
+            out[u] = re.sub(r"\s+", " ", seg.replace("-", " ")).strip()
+    except Exception:
+        pass
+    return out
 # "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
 # "Student" first (2026-10-04): links are queued in query order and the cap
 # cuts the tail, so with the German forms first the English "Working Student"
@@ -4319,7 +4899,7 @@ def scrape_csb() -> list[dict]:
             seen: set[str] = set()
             rss_titles: dict[str, str] = {}
             for q in _CSB_QUERIES:
-                r = requests.get(f"{host}/search/", params={"q": q},
+                r = _guarded_get(f"{host}/search/", params={"q": q},
                                  headers=HEADERS, timeout=25)
                 if r.status_code != 200:
                     continue
@@ -4332,28 +4912,15 @@ def scrape_csb() -> list[dict]:
                     full = href if href.startswith("http") else host.split("/jobs")[0] + href
                     hrefs.append(full)      # Germany-wide since 2026-09-07
                 time.sleep(0.5)
-            # The RSS feed is more reliable than the HTML search: NRW.BANK's
-            # search page returned nothing while its feed carried the live
-            # Werkstudent IT role, and HDI's HTML list is JS-paginated.
-            for q in _CSB_QUERIES:
-                try:
-                    rss = requests.get(f"{host}/services/rss/job/",
-                                       params={"locale": "de_DE", "keywords": f"({q})"},
-                                       headers=HEADERS, timeout=25)
-                    for m in re.finditer(r"<item>(.*?)</item>", rss.text, re.S):
-                        item = m.group(1)
-                        lk = re.search(r"<link>(.*?)</link>", item, re.S)
-                        tt = re.search(r"<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", item, re.S)
-                        link = lk.group(1).strip() if lk else ""
-                        if "/job/" not in link:
-                            continue
-                        if tt:
-                            rss_titles[link] = tt.group(1).strip()
-                        if link not in seen:
-                            seen.add(link)
-                            hrefs.append(link)  # Germany-wide since 2026-09-07
-                except Exception:
-                    pass
+            # The sitemap adds what the HTML search misses (NRW.BANK's search
+            # page returned nothing while the role was live; HDI's HTML list
+            # is JS-paginated). It replaced the RSS feed on 2026-11-13, which
+            # robots.txt disallows (/services/) on every CSB host.
+            for link, slug_title in _csb_sitemap_links(host).items():
+                rss_titles.setdefault(link, slug_title)
+                if link not in seen:
+                    seen.add(link)
+                    hrefs.append(link)
             picked = hrefs[:_CSB_CAP_PER_SITE]
             got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
             # Some CSB hosts (HDI) serve a generic og:title ("Apply online for
@@ -4403,7 +4970,7 @@ def _page_text(url: str) -> str:
     """Visible text of an ad page (main/body), for sources whose list API
     carries no description. Empty string on any failure."""
     try:
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        r = _guarded_get(url, headers=HEADERS, timeout=20)
         if r.status_code != 200:
             return ""
         soup = BeautifulSoup(r.text, "html.parser")
@@ -4421,7 +4988,7 @@ def scrape_beesite() -> list[dict]:
     for host, company, default_city in _BEESITE_HOSTS:
         try:
             url = f"https://{host}/search/?data={urllib.parse.quote(json.dumps(_BEESITE_QUERY))}"
-            r = requests.get(url, headers=HEADERS, timeout=30)
+            r = _guarded_get(url, headers=HEADERS, timeout=30)
             if r.status_code != 200:
                 print(f"  [BeeSite/{company}] HTTP {r.status_code}")
                 continue
@@ -4492,9 +5059,14 @@ def scrape_bund_rss() -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     fetched = 0
+    why = _robots.blocked_by(_BUND_RSS.format(q="Werkstudent"))
+    if why:
+        # robots.txt: "Disallow: /Content/DE/Stellen/Suche/" (checked 2026-11-13)
+        print(f"  [service.bund.de] robots.txt disallows the job search ({why}) \u2014 source off")
+        return out
     for q in _BUND_QUERIES:
         try:
-            r = requests.get(_BUND_RSS.format(q=q.replace(" ", "+")), headers=HEADERS, timeout=30)
+            r = _guarded_get(_BUND_RSS.format(q=q.replace(" ", "+")), headers=HEADERS, timeout=30)
             if r.status_code != 200:
                 print(f"  [service.bund.de] '{q}' HTTP {r.status_code}")
                 continue
@@ -4535,7 +5107,7 @@ def scrape_ukb() -> list[dict]:
     import html as _h
     out: list[dict] = []
     try:
-        r = requests.get(_UKB_API, params={"per_page": 100}, headers=HEADERS, timeout=30)
+        r = _guarded_get(_UKB_API, params={"per_page": 100}, headers=HEADERS, timeout=30)
         if r.status_code != 200:
             print(f"  [UKB] HTTP {r.status_code}")
             return []
@@ -4571,7 +5143,7 @@ def scrape_rhenag() -> list[dict]:
     import html as _h
     out: list[dict] = []
     try:
-        r = requests.get(_RHENAG_URL, headers=HEADERS, timeout=30)
+        r = _guarded_get(_RHENAG_URL, headers=HEADERS, timeout=30)
         m = re.search(r'data-pages="([^"]+)"', r.text)
         if r.status_code != 200 or not m:
             print(f"  [rhenag] HTTP {r.status_code} \u2014 data-pages attribute not found")
@@ -4628,7 +5200,7 @@ def scrape_db_jobs() -> list[dict]:
     seen: set[str] = set()
     for q in _DB_QUERIES:
         try:
-            r = requests.get(_DB_API, params={"qli": "true", "query": q, "pageNum": 0,
+            r = _guarded_get(_DB_API, params={"qli": "true", "query": q, "pageNum": 0,
                                               "itemsPerPage": 200, "view": "json"},
                              headers=HEADERS, timeout=30)
             if r.status_code != 200:
@@ -4688,12 +5260,16 @@ _WL_GOOGLE = ("https://www.google.com/about/careers/applications/jobs/results/"
 _WL_APPLE = "https://jobs.apple.com/de-de/search?location=germany-DEU&team=internships-STDNT-INTRN"
 _WL_SAP = "https://careers.sap.com/search/?q={q}&locationsearch=germany&startrow={start}"
 _WL_FZJ = "https://www.fz-juelich.de/de/karriere/stellenangebote"
+# The page lists about 25 jobs; the RSS feed all of them (97 on 2026-11-13),
+# with the same recruiting.fz-juelich.de links, so known jobs keep their ids.
+_WL_FZJ_RSS = ("https://www.fz-juelich.de/++api++/@@rss?portal_type=Joboffer"
+               "&path=/Plone/de/karriere/stellenangebote")
 _WL_DE_MONTHS = {"jan": 1, "feb": 2, "mär": 3, "mrz": 3, "apr": 4, "mai": 5, "jun": 6,
                  "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dez": 12}
 
 
 def _wl_get(url: str) -> str:
-    r = requests.get(url, headers=HEADERS, timeout=30)
+    r = _guarded_get(url, headers=HEADERS, timeout=30)
     if r.status_code != 200:
         raise RuntimeError(f"HTTP {r.status_code}")
     return r.text
@@ -4815,7 +5391,28 @@ def _wl_sap() -> list[dict]:
     return list(rows.values())
 
 
+def _wl_fzj_rss_rows(content: bytes) -> list[dict]:
+    import xml.etree.ElementTree as ET
+    rows = []
+    for it in ET.fromstring(content).iter("item"):
+        title = (it.findtext("title") or "").strip()
+        ad = (it.findtext("description") or "").strip()
+        url = ad if ad.startswith("http") else (it.findtext("link") or "").strip()
+        if title and url:
+            rows.append({"title": title, "url": url, "location": "Jülich",
+                         "posted": _rss_date(it.findtext("pubDate") or "")})
+    return rows
+
+
 def _wl_fzj() -> list[dict]:
+    try:
+        r = _guarded_get(_WL_FZJ_RSS, headers=HEADERS, timeout=30)
+        if r.status_code == 200:
+            rows = _wl_fzj_rss_rows(r.content)
+            if rows:
+                return rows
+    except Exception:
+        pass
     return _wl_fzj_rows(_wl_get(_WL_FZJ))
 
 
@@ -4854,6 +5451,9 @@ def scrape_internship_watchlist() -> list[dict]:
 
 def scrape_all() -> list[dict]:
     print("Scraping all sources...")
+    _robots.reset()
+    with _BODY_LOCK:
+        _BODY_OUTCOMES.clear()
     all_jobs: list[dict] = []
 
     scrapers_in_order = [
@@ -4867,6 +5467,7 @@ def scrape_all() -> list[dict]:
         scrape_arbeitsagentur,     # Official German employment agency API
         scrape_stellenwerk,        # Uni Bonn + H-BRS + Köln + Düsseldorf student boards
         scrape_research_institutes,  # Fraunhofer (IAIS/FKIE) + DLR student roles
+        scrape_research_feeds,     # Helmholtz job XML + Max Planck RSS (2026-11-13)
         scrape_internship_watchlist,  # Google, Apple, SAP, FZ Jülich career pages
         scrape_bwi,                # BWI GmbH - Bundeswehr IT, Bonn/Meckenheim
         scrape_igus,               # igus Köln - JSON API, full ad text inline
@@ -4874,6 +5475,7 @@ def scrape_all() -> list[dict]:
         scrape_dvinci,             # Generali/RheinEnergie/DER Touristik/REWE digital
         scrape_unibonn,            # Uni Bonn SHK/HiWi page
         scrape_csb,                # Zurich/Bayer/DEUTZ/HDI/NRW.BANK/Stadt Köln - SuccessFactors CSB
+        scrape_eon,                # E.ON - jobs.eon.com sitemap + JSON-LD (2026-11-13)
         scrape_beesite,            # GIZ/LVR/BaFin/BARMER - BeeSite JSON
         scrape_bund_rss,           # service.bund.de - federal Bonn agencies + Interamt imports
         scrape_ukb,                # Universitätsklinikum Bonn - WordPress REST
@@ -4901,6 +5503,7 @@ def scrape_all() -> list[dict]:
         scrape_lever,              # Mistral, Qonto, MoonPay, Neon, TrustYou, Nuri
         scrape_ashby,              # Perplexity, Deepgram, Ramp, Supabase, Linear, etc.
         scrape_recruitee,          # Limehome and other EU startups
+        scrape_employer_feeds,     # Workable, Teamtailor, Breezy employers (2026-11-13)
         scrape_germantechjobs,     # germantechjobs.de RSS - German tech aggregator
         scrape_remote_eu_boards,   # WorkingNomads + WeWorkRemotely (remote-EU, location-filtered)
         scrape_linkedin_guest,     # LinkedIn guest API - server-side entry-level filter
@@ -4981,4 +5584,7 @@ def scrape_all() -> list[dict]:
     print(f"Scrape timing: {total/60:.1f} min total | slowest: "
           + ", ".join(f"{n.replace('scrape_', '')} {s:.0f}s" for n, s in slowest))
     print(f"Total unique jobs from all sources: {len(unique)}")
+    line = _robots.summary_line()
+    if line:
+        print(f"  [robots] {line}")
     return unique
