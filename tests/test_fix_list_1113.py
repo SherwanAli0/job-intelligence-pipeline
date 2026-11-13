@@ -459,3 +459,41 @@ class TestDedupSourcesAndGoRadar:
         out = capsys.readouterr().out
         line = next(l for l in out.splitlines() if l.strip().startswith("go "))
         assert "67%" in line          # 2 of 3, the English "go" sentence does not count
+
+
+# ---------------------------------------------------------------- item 14
+class TestScoreVersusOutcome:
+    def test_auc(self):
+        import track
+        assert track.auc([80, 90], [40, 50]) == 1.0
+        assert track.auc([50], [50]) == 0.5
+        assert track.auc([40], [80]) == 0.0
+        assert track.auc([], [1]) is None
+
+    def test_outcomes_are_joined_to_the_shown_scores(self, monkeypatch):
+        import json
+        import track
+        shown = "\n".join(json.dumps(r) for r in (
+            {"url_hash": "h1", "score": 82, "company": "A", "title": "T1"},
+            {"url_hash": "h2", "score": 48, "company": "B", "title": "T2"},
+            {"url_hash": "zz", "score": 70, "company": "C", "title": "T3"}))
+        monkeypatch.setattr(track, "load_applied", lambda: {
+            "h1": {"status": "interview", "company": "A", "title": "T1"},
+            "h2": {"status": "rejected", "company": "B", "title": "T2"},
+            "other": {"status": "applied", "company": "C", "title": "T3", "last_change": track._now()}})
+        import storage
+        monkeypatch.setattr(storage, "read_text", lambda name: shown if name == "shown_jobs.jsonl" else None)
+        assert sorted(track.score_outcomes()) == [(48.0, "bad"), (70.0, "open"), (82.0, "good")]
+        report = "\n".join(track.score_report())
+        assert "Not enough outcomes" in report and "80+" in report
+
+    def test_saving_writes_through_storage_and_skips_the_secret(self, monkeypatch, tmp_path):
+        import track
+        import storage
+        written = {}
+        monkeypatch.setattr(storage, "write_text", lambda name, text: written.update({name: text}))
+        monkeypatch.setattr(track, "APPLIED_FILE", tmp_path / "applied_jobs.json")
+        monkeypatch.setattr(track, "_sync_secret", lambda d: (_ for _ in ()).throw(AssertionError("no gh")))
+        monkeypatch.delenv("JOBHUNTER_TRACK_SECRET_SYNC", raising=False)
+        track.save_applied({"k": {"status": "applied"}})
+        assert "applied_jobs.json" in written and (tmp_path / "applied_jobs.json").exists()
