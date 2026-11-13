@@ -178,8 +178,10 @@ class TestTwoPhaseDescriptionFetching:
     two fetches descriptions in parallel for the title-plausible subset."""
 
     def test_phase_one_does_not_fetch_descriptions_inline(self):
-        src = open("scrapers.py", encoding="utf-8").read()
-        assert "linkedin_fetch_description=False" in src, (
+        # python-jobspy 1.2.0 renamed linkedin_fetch_description to
+        # fetch_description; whichever this version takes must be False.
+        flags = {k: v for k, v in scrapers._jobspy_call_kwargs().items() if "fetch_description" in k}
+        assert flags and not any(flags.values()), (
             "inline description fetching is what caused the timeouts"
         )
 

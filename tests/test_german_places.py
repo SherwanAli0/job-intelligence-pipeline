@@ -219,67 +219,31 @@ class TestSourcesCarryTheCountry:
         assert scrapers._xing_location({"country": {"countryCode": "AT"}}) == "Austria"
         assert scrapers._xing_location({"city": "", "country": {"countryCode": "CH"}}) == "Switzerland"
 
-    def test_xing_query_asks_for_the_country(self):
-        assert "country { countryCode }" in scrapers._XING_QUERY
+    def test_a_xing_page_row_gets_the_country(self, monkeypatch):
+        """Since 2026-11-13 XING rows come from the ad page's JSON-LD (its
+        GraphQL search is disallowed by robots.txt)."""
+        page = ('<script data-ch type="application/ld+json">{"@type": "JobPosting", '
+                '"title": "Werkstudent Data", "hiringOrganization": {"name": "KIRCHHOFF"}, '
+                '"datePosted": "2026-11-13T04:00:00Z", "description": "<p>Ad</p>", '
+                '"jobLocation": [{"address": {"addressLocality": "Iserlohn", "addressCountry": "DE"}}]}'
+                '</script>')
 
-    def _xing(self, monkeypatch, payload):
         class _R:
             status_code = 200
-
-            def json(self):
-                return payload
-        monkeypatch.setattr(scrapers.requests, "post", lambda *a, **kw: _R())
-        monkeypatch.setattr(scrapers, "_XING_QUERIES", ("Werkstudent Data",))
-        monkeypatch.setattr(scrapers, "_xing_fetch_description", lambda url: "")
-        monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
-        return scrapers.scrape_xing()
-
-    def test_xing_job_row_gets_the_country(self, monkeypatch):
-        rows = self._xing(monkeypatch, {"data": {"jobSearchByQuery": {"collection": [{"jobDetail": {
-            "id": "1", "title": "Werkstudent Data", "url": "https://www.xing.com/jobs/x-1",
-            "activatedAt": "2026-10-13T08:00:00Z",
-            "location": {"city": "Iserlohn", "country": {"countryCode": "DE"}},
-            "companyInfo": {"companyNameOverride": "KIRCHHOFF", "company": None}}}]}}})
+            headers = {"content-type": "text/html"}
+            content = page.encode("utf-8")
+            text = page
+        monkeypatch.setattr(scrapers.requests, "get", lambda *a, **kw: _R())
+        rows = scrapers._xing_page("https://www.xing.com/jobs/iserlohn-werkstudent-data-1")
         assert rows and rows[0]["location"] == "Iserlohn, Germany"
+        assert rows[0]["company"] == "KIRCHHOFF" and rows[0]["source"] == "XING"
 
-    def test_a_rejected_graphql_field_is_logged_and_falls_back_to_city_only(self, monkeypatch, capsys):
-        """If XING renames or drops the country field, the query fails; every run
-        would look like a quiet day. It must say so, and retry without the field."""
-        sent = []
-
-        class _R:
-            status_code = 200
-
-            def __init__(self, payload):
-                self._p = payload
-
-            def json(self):
-                return self._p
-
-        def fake_post(url, json=None, headers=None, timeout=None):
-            sent.append(json["query"])
-            if "country { countryCode }" in json["query"]:
-                return _R({"errors": [{"message": "The supplied query contains semantic errors"}]})
-            return _R({"data": {"jobSearchByQuery": {"collection": [{"jobDetail": {
-                "id": "1", "title": "Werkstudent Data", "url": "https://www.xing.com/jobs/x-1",
-                "activatedAt": "2026-10-13T08:00:00Z", "location": {"city": "Iserlohn"},
-                "companyInfo": {"companyNameOverride": "KIRCHHOFF", "company": None}}}]}}})
-        monkeypatch.setattr(scrapers.requests, "post", fake_post)
-        monkeypatch.setattr(scrapers, "_XING_QUERIES", ("Werkstudent Data", "Praktikum Informatik"))
-        monkeypatch.setattr(scrapers, "_xing_fetch_description", lambda url: "")
-        monkeypatch.setattr(scrapers.time, "sleep", lambda *_: None)
-        rows = scrapers.scrape_xing()
-        out = capsys.readouterr().out
-        assert "query rejected" in out and "falling back" in out
-        assert rows and rows[0]["location"] == "Iserlohn"          # city only, but the source survives
-        # after the first rejection the legacy query is used for the remaining searches
-        assert sent[0].count("country { countryCode }") == 1 and "country" not in sent[-1]
-        assert sent.count(sent[-1]) >= 2
-
-    def test_the_legacy_query_differs_only_by_the_country_field(self):
-        assert "country" not in scrapers._XING_QUERY_LEGACY
-        assert scrapers._XING_QUERY_LEGACY.replace(
-            "location { city }", "location { city country { countryCode } }") == scrapers._XING_QUERY
+    def test_the_xing_slug_filter_wants_student_or_junior_tech_roles(self):
+        want = scrapers._xing_slug_wanted
+        assert want("https://www.xing.com/jobs/koeln-werkstudent-data-analytics-146268547")
+        assert want("https://www.xing.com/jobs/berlin-junior-data-scientist-1")
+        assert not want("https://www.xing.com/jobs/koeln-projektleiter-tga-koeln-146268547")
+        assert not want("https://www.xing.com/jobs/leipheim-praktikant-handwerk-146437662")
 
     @pytest.mark.parametrize("addr,expected", [
         ({"ort": "Hilden", "region": "NORDRHEIN_WESTFALEN", "land": "DEUTSCHLAND"},

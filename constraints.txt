@@ -6,14 +6,21 @@
 # build failed compiling it from source. Used as pip -c constraints by the
 # Dockerfile and by CI, so tests run against what production runs.
 # To upgrade: change a pin here deliberately and let CI and a dry run prove it.
+# 2026-11-13: python-jobspy 1.1.82 -> 1.4.1 (Indeed hours_old and LinkedIn
+# paging fixes). 1.4.1 needs markdownify>=1.1.0 and curl_cffi instead of
+# tls-client; resolved for the Linux image with pip --dry-run (pandas 2.3.3
+# and numpy 1.26.3 unchanged). The owner chose to judge it on the next real
+# run instead of a dry run.
 # boto3/botocore/urllib3 are NOT pinned: the Lambda base image ships them.
 annotated-types==0.8.0
 anthropic==1.4.0
 anyio==4.15.1
 beautifulsoup4==4.15.0
 certifi==2026.7.22
+cffi==2.1.1
 charset-normalizer==3.5.1
 click==8.5.0
+curl-cffi==0.16.3
 distro==1.9.0
 docstring-parser==0.18.0
 duckduckgo-search==8.1.1
@@ -34,7 +41,7 @@ langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.4
 langsmith==0.12.2
 lxml==6.1.3
-markdownify==0.13.1
+markdownify==1.2.3
 notion-client==3.1.0
 numpy==1.26.3
 orjson==3.12.0
@@ -42,9 +49,10 @@ ormsgpack==1.12.2
 packaging==26.3
 pandas==2.3.3
 primp==2.0.0
+pycparser==3.12
 pydantic==2.13.5
 pydantic-core==2.46.5
-python-jobspy==1.1.82
+python-jobspy==1.4.1
 pytz==2026.3.post1
 pyyaml==6.0.3
 regex==2024.11.6
@@ -53,7 +61,6 @@ requests-toolbelt==1.0.0
 sniffio==1.3.1
 soupsieve==2.9.2
 tenacity==9.1.4
-tls-client==1.0.1
 truststore==0.10.4
 typing-extensions==4.16.0
 typing-inspection==0.4.4
