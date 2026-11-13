@@ -498,3 +498,27 @@ class TestScoreVersusOutcome:
         monkeypatch.delenv("JOBHUNTER_TRACK_SECRET_SYNC", raising=False)
         track.save_applied({"k": {"status": "applied"}})
         assert "applied_jobs.json" in written and (tmp_path / "applied_jobs.json").exists()
+
+
+class TestRobotsRetry:
+    def test_a_network_blip_is_retried_once(self, monkeypatch):
+        calls = []
+
+        def flaky(url, headers=None, timeout=None):
+            calls.append(timeout)
+            if len(calls) == 1:
+                raise TimeoutError("slow")
+            return _Resp({}, 200, "User-agent: *\nDisallow: /private/\n")
+        monkeypatch.setenv("JOBHUNTER_ROBOTS", "1")
+        robots.reset()
+        monkeypatch.setattr(robots.requests, "get", flaky)
+        monkeypatch.setattr("time.sleep", lambda *_: None)
+        assert robots.blocked_by("https://slow.example/jobs") == ""
+        assert robots.blocked_by("https://slow.example/private/x") == "*"
+        assert len(calls) == 2 and calls[1] > calls[0]
+        robots.reset()
+
+    def test_unreachable_hosts_are_named_in_the_summary(self, robots_on):
+        robots_on["down.example"] = (521, "")
+        assert not robots.allowed("https://down.example/jobs")
+        assert "down.example" in robots.summary_line()

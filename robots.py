@@ -55,6 +55,7 @@ _TIMEOUT = 10
 _CACHE: dict[str, tuple[str, list]] = {}
 _LOCK = threading.Lock()
 SKIPPED: Counter = Counter()          # host -> URLs skipped this run
+UNREACHABLE: set = set()              # hosts whose robots.txt could not be reached
 
 
 def enabled() -> bool:
@@ -66,6 +67,7 @@ def reset() -> None:
     with _LOCK:
         _CACHE.clear()
         SKIPPED.clear()
+        UNREACHABLE.clear()
 
 
 def parse(text: str) -> list[tuple[list[str], list[tuple[str, str]]]]:
@@ -126,8 +128,15 @@ def _allowed_for(groups, agent: str, path: str) -> bool:
 
 
 def _fetch_robots(url: str):
-    """The one network call in this module (tests replace it)."""
-    return requests.get(url, headers=FETCH_HEADERS, timeout=_TIMEOUT)
+    """The one network call in this module (tests replace it). A timeout or
+    connection error is retried once, more patiently, so a passing network
+    blip does not count as 'unreachable' and cost the host a whole run."""
+    try:
+        return requests.get(url, headers=FETCH_HEADERS, timeout=_TIMEOUT)
+    except Exception:
+        import time
+        time.sleep(2)
+        return requests.get(url, headers=FETCH_HEADERS, timeout=2 * _TIMEOUT)
 
 
 def _load(scheme: str, host: str) -> tuple[str, list]:
@@ -153,6 +162,8 @@ def _load(scheme: str, host: str) -> tuple[str, list]:
             entry = ("unreachable", [])  # RFC 9309: assume complete disallow
     with _LOCK:
         _CACHE[host] = entry
+        if entry[0] == "unreachable":
+            UNREACHABLE.add(host)
     return entry
 
 
@@ -194,4 +205,7 @@ def summary_line() -> str:
         if not SKIPPED:
             return ""
         top = ", ".join(f"{h} {n}" for h, n in SKIPPED.most_common(8))
-        return f"robots.txt: skipped {sum(SKIPPED.values())} URLs ({top})"
+        down = sorted(UNREACHABLE)
+        return (f"robots.txt: skipped {sum(SKIPPED.values())} URLs ({top})"
+                + (f"; robots.txt unreachable (5xx or network), treated as disallowed per RFC 9309: "
+                   f"{', '.join(down[:8])}" if down else ""))

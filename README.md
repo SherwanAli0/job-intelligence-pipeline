@@ -178,7 +178,8 @@ cut student roles before they were read.
 | [liveness.py](liveness.py) | Drops postings an employer's own API reports as closed |
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
-| [tests/](tests/) | 1,317 offline tests (`pytest --collect-only -q`, 2026-11-03), run on every push to `main` and every pull request |
+| [robots.py](robots.py) / [robots_audit.py](robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
+| [tests/](tests/) | 1,504 offline tests (`pytest --collect-only -q`, 2026-11-13), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -290,6 +291,47 @@ The digest also names sources that usually deliver but were empty in that run.
 `JOBHUNTER_INTERNSHIP_LANE=off` restores the previous location and freshness rules. This shows
 that the listed sources were read on a given day; it does not show that every internship in
 Germany was found.
+
+## Fix list (13 November 2026)
+
+A research pass, rechecked by four independent reviews, produced a list of fixes. All of them
+are in this release:
+
+- **Workday labelled foreign jobs as German.** Nine tenants accept the Germany country facet
+  and ignore it; in three days 395 foreign postings were labelled ", Germany" and two scored
+  above the send threshold. A reply now counts as German only if it carries a `locationCountry`
+  facet, and a place the filters know is foreign is never relabelled. Workday's
+  "US - City - ST" form is recognised as foreign.
+- **robots.txt for every non-API source.** All requests in `scrapers.py` go through a guard
+  that checks the host's robots.txt (RFC 9309, including rules aimed at script clients by
+  name). Documented public job APIs are governed by their own terms and exempt; LinkedIn and
+  Indeed are owner-accepted exceptions listed in `robots.OWNER_EXCEPTIONS`. The audit found:
+  - the CSB feed path `/services/rss/job/` is disallowed on all 13 CSB employer sites; the
+    allowed sitemap replaces it,
+  - XING disallows its GraphQL search; the source now reads XING's job sitemaps and each
+    page's JSON-LD,
+  - service.bund.de disallows its job search; that source switches itself off,
+  - Bosch's job page is disallowed (Bosch stays covered through SmartRecruiters).
+  `py -3.11 robots_audit.py` prints every source address robots.txt does not allow.
+- **E.ON** moved from careers.eon.com (Cloudflare challenge, empty since 5 November) to the
+  jobs.eon.com sitemap and JSON-LD.
+- **LinkedIn guest search** no longer fetches descriptions for postings seen on earlier days,
+  and keeps its partial results when it runs into the time limit.
+- **New sources:** 30 employers on Workable, Teamtailor and Breezy; the Helmholtz job XML; the
+  Max Planck RSS; KIT and DKFZ through the d.vinci adapter; the Jülich watchlist reads the
+  full RSS feed (97 jobs instead of 25).
+- **python-jobspy 1.4.1** (from 1.1.82). A lane that returns no rows now becomes a health
+  warning in the digest instead of a silent zero.
+- **Smaller fixes:** the JSON-LD reader accepts any script-tag attributes, `@graph` and a
+  list `@type`; body-fetch failures are logged per host; PDF ads are not read as text; the
+  dedup records every source a job was seen on; the skill radar counts Go the language, not
+  the word; `track.py` writes outcomes where the AWS run can read them, and `track.py eval`
+  reports the interview rate by score band.
+
+StepStone and Glassdoor stay out. StepStone's terms forbid scraping its content for reuse and
+its robots.txt disallows its alert and API paths. Glassdoor merged into Indeed, Inc. on
+1 July 2026, its robots.txt disallows the endpoint python-jobspy uses, and Indeed is already
+a source.
 
 ## Evidence retrieval (RAG)
 
