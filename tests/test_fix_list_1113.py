@@ -431,3 +431,31 @@ class TestEmployerFeeds:
         assert "scrape_employer_feeds" in inspect.getsource(scrapers.scrape_all)
         assert len(scrapers._WORKABLE_ACCOUNTS) >= 18 and len(scrapers._TEAMTAILOR_SITES) >= 7
         assert {"Workable", "Teamtailor", "Breezy"} <= main._EMPLOYER_ATS_SOURCES
+
+
+# ---------------------------------------------------------------- items 10 and 11
+class TestDedupSourcesAndGoRadar:
+    def test_the_kept_copy_records_every_source(self, monkeypatch):
+        import main
+        monkeypatch.setattr(main, "_in_focus", lambda j: True)
+        rows = [{"title": "Werkstudent Data", "company": "Acme GmbH", "source": "linkedin", "description": "a"},
+                {"title": "Werkstudent Data", "company": "Acme GmbH", "source": "Greenhouse", "description": "ab"},
+                {"title": "Werkstudent Data", "company": "Acme GmbH", "source": "indeed", "description": "a"}]
+        (kept,) = main._dedup_cross_source(rows)
+        assert kept["source"] == "Greenhouse"
+        assert kept["_seen_on"] == ["Greenhouse", "indeed", "linkedin"]
+        assert main._audit_row(kept, "score")["seen_on"] == "Greenhouse,indeed,linkedin"
+
+    def test_a_single_copy_reports_its_own_source(self):
+        import main
+        assert main._audit_row({"source": "XING"}, "filter")["seen_on"] == "XING"
+
+    def test_go_means_the_language(self, capsys):
+        import main
+        jobs = [{"title": "Werkstudent", "description": "We go the extra mile on go-live and go-to-market."},
+                {"title": "Backend", "description": "Python, Go or Rust"},
+                {"title": "Golang Developer", "description": ""}]
+        main._skill_radar(jobs)
+        out = capsys.readouterr().out
+        line = next(l for l in out.splitlines() if l.strip().startswith("go "))
+        assert "67%" in line          # 2 of 3, the English "go" sentence does not count

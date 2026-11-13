@@ -47,7 +47,7 @@ _RADAR_SKILLS = (
     "terraform", "aws", "gcp", "azure", "mlflow", "langchain", "langgraph",
     "llm", "rag", "vector database", "hugging face", "fastapi", "git",
     "ci/cd", "statistics", "a/b test", "nlp", "computer vision", "transformers",
-    "java", "scala", "go ", "rust", "javascript", "typescript", "react",
+    "java", "scala", "go", "rust", "javascript", "typescript", "react",
     "mlops", "vertex ai", "bedrock", "sagemaker", "observability",
 )
 # Skills already on the CV (so the radar can flag GAPS specifically).
@@ -252,20 +252,27 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
         if prior is None:
             best[key] = j
             continue
+        # Every source the job was seen on survives on the kept copy
+        # (2026-11-13): until then only the winner's source was recorded, so
+        # per-source yield credited company boards with jobs LinkedIn and
+        # Indeed had found too (both have priority 0 and lose every tie).
+        seen_on = sorted(set(prior.get("_seen_on") or [prior.get("source", "")])
+                         | set(j.get("_seen_on") or [j.get("source", "")]))
         cur_focus, prv_focus = _in_focus(j), _in_focus(prior)
         if cur_focus != prv_focus:
             if cur_focus:
                 best[key] = j
-            continue
-        cur_pri = _SOURCE_PRIORITY.get(j.get("source", ""), 0)
-        prv_pri = _SOURCE_PRIORITY.get(prior.get("source", ""), 0)
-        if cur_pri > prv_pri:
-            # New source wins; preserve URL from kept row (which is the new one).
-            best[key] = j
-        elif cur_pri == prv_pri:
-            # Tie-break: prefer the row with the longer description (more signal)
-            if len(j.get("description", "")) > len(prior.get("description", "")):
+        else:
+            cur_pri = _SOURCE_PRIORITY.get(j.get("source", ""), 0)
+            prv_pri = _SOURCE_PRIORITY.get(prior.get("source", ""), 0)
+            if cur_pri > prv_pri:
+                # New source wins; preserve URL from kept row (which is the new one).
                 best[key] = j
+            elif cur_pri == prv_pri:
+                # Tie-break: prefer the row with the longer description (more signal)
+                if len(j.get("description", "")) > len(prior.get("description", "")):
+                    best[key] = j
+        best[key]["_seen_on"] = seen_on
     return list(best.values())
 
 # German words anywhere in the title = German-language role
@@ -2143,6 +2150,19 @@ def _apply_ghost_penalty(scored: list[dict]) -> int:
     return n
 
 
+# Go the language, not the English word (2026-11-13: "go" counted 13% of all
+# ads, second only to Python, from "go the extra mile", "go-live" and
+# "go-to-market"). Case-sensitive on the original text: golang, Go next to a
+# developer word, or Go in a list with another language.
+_GO_LANG_RE = re.compile(
+    r"(?i:\bgolang\b)"
+    r"|\bGo\b(?=\s*(?:\(golang\)|developer|engineer|programmier|programming|backend|microservices?|entwickl))"
+    r"|(?:Python|Java|Rust|C\+\+|C#|Kotlin|Scala|TypeScript|JavaScript|Node(?:\.js)?|Ruby|PHP)"
+    r"\s*(?:,|/|\bor\b|\band\b|\bund\b|\boder\b)\s*Go\b"
+    r"|\bGo\s*(?:,|/|\bor\b|\band\b|\bund\b|\boder\b)\s*"
+    r"(?:Python|Java|Rust|C\+\+|C#|Kotlin|Scala|TypeScript|JavaScript|Node|Ruby|PHP)\b")
+
+
 def _skill_pattern(skill: str):
     """Whole-token match. Plain substring counted "rag" inside "Vertrag",
     "git" inside "digital", "rust" inside "trust" and "scala" inside
@@ -2170,13 +2190,15 @@ def _skill_radar(jobs: list[dict], top_n: int = 15) -> None:
     counts = Counter()
     patterns = {skill.strip(): _skill_pattern(skill) for skill in _RADAR_SKILLS}
     for j in jobs:
-        blob = ((j.get("title") or "") + " " + (j.get("description") or "")).lower()
+        raw = (j.get("title") or "") + " " + (j.get("description") or "")
+        blob = raw.lower()
         for skill, pat in patterns.items():
-            if pat.search(blob):
+            if (_GO_LANG_RE.search(raw) if skill == "go" else pat.search(blob)):
                 counts[skill] += 1
     profile_text = _profile_skill_text()
     on_cv = {s for s in patterns if s in _CV_SKILLS
-             or (profile_text and patterns[s].search(profile_text))}
+             or (profile_text and (re.search(r"\bgolang\b", profile_text) if s == "go"
+                                   else patterns[s].search(profile_text)))}
     if not counts:
         return
     total = len(jobs)
@@ -2292,7 +2314,8 @@ def _audit_row(j: dict, stage: str, **extra) -> dict:
     row = {"stage": stage, "id": j.get("id", ""), "title": (j.get("title") or "")[:160],
            "company": (j.get("company") or "")[:80], "location": (j.get("location") or "")[:80],
            "source": j.get("source", ""), "form": j.get("_form", ""),
-           "where": j.get("_where", ""), "url": j.get("url", "")}
+           "where": j.get("_where", ""), "url": j.get("url", ""),
+           "seen_on": ",".join(j.get("_seen_on") or [j.get("source", "")])}
     row.update(extra)
     return row
 
