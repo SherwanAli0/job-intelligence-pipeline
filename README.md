@@ -179,7 +179,7 @@ cut student roles before they were read.
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](robots.py) / [robots_audit.py](robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,511 offline tests (`pytest --collect-only -q`, 2026-11-13), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,622 offline tests (`pytest --collect-only -q`, 2026-11-15), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -333,6 +333,36 @@ StepStone and Glassdoor stay out. StepStone's terms forbid scraping its content 
 its robots.txt disallows its alert and API paths. Glassdoor merged into Indeed, Inc. on
 1 July 2026, its robots.txt disallows the endpoint python-jobspy uses, and Indeed is already
 a source.
+
+## German-level gate (15 November 2026)
+
+The runs of 11 to 13 November scored ads as strong matches although they demand German far
+above the candidate's level. Of 32 ads scored 45 or more that could be fetched again,
+13 ask for German above B1; one of them had scored 82. Three holes let them through,
+and all three are closed:
+
+- **The pre-screen matched fixed phrases.** It missed inflected forms ("fließende
+  Deutschkenntnisse"), other word orders ("Du sprichst verhandlungssicher Deutsch"), other
+  nouns ("sehr gute Ausdrucksweise in Deutsch und Englisch") and markdown-escaped hyphens
+  (`Deutsch\- und Englischkenntnisse`, as python-jobspy delivers them).
+  `evidence.language_demands` now reads the level stated at every mention of a language,
+  lets coordinated languages share one level, and ignores a demand the ad calls a plus,
+  optional or not required.
+- **Nothing compared levels.** `scorer._requires_fluent_german` now drops an ad when the
+  German level it demands outright is above `german_level` in the private profile. The gate
+  follows the profile: at B1, ads asking for good German (B2) are dropped; once the profile
+  says B2, they pass.
+- **The evidence matcher called long lines met.** A requirement line longer than six tokens
+  went to BM25, where "Sehr gute Deutsch- und gute Englischkenntnisse" overlapped with the
+  candidate's own language line. A line that states a language level is now judged on that
+  level, whatever its length.
+
+Not changed: the phrase list and its 50-character softening window, ads that name German
+without a level (a German-language student ad still arrives with the "German ad" mark), and
+the scoring prompt. One golden case (g09, "Deutsch verhandlungssicher") moved from the low
+band to the pre-screen, which is what its note already said. The tests in
+[tests/test_german_level_gate.py](tests/test_german_level_gate.py) are built from the
+wordings of the real ads.
 
 ## Evidence retrieval (RAG)
 

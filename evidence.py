@@ -350,6 +350,232 @@ def language_requirements(text: str) -> list[tuple[str, int, str]]:
     return [(lang, rank, disp) for lang, (rank, disp) in found.items()]
 
 
+# -- Language demands: every mention, softening and shared levels (2026-11-15) ------
+# language_requirements() above reads the FIRST levelled mention of a language and
+# was written for short requirement lines. The German gate needs more: the audit
+# of 11-13 Nov 2026 found ads scored up to 82 that demand German far above the
+# candidate's level, in wordings the phrase list in scorer.py never matched:
+#   "fließende Deutsch\- und gute Englischkenntnisse"   (markdown-escaped hyphen)
+#   "fließende Deutschkenntnisse und gute Englischkenntnisse"      (inflection)
+#   "Du sprichst verhandlungssicher Deutsch und gut Englisch"      (word order)
+#   "sehr gute Ausdrucksweise in Deutsch und Englisch"             (other noun)
+#   "sichere Deutschkenntnisse runden dein Profil ab"              (other word)
+# language_demands() reads every mention, lets coordinated languages share one
+# level ("sehr gute Englisch- und Deutschkenntnisse", "Deutsch und Englisch
+# fließend"), and marks a demand soft when the ad calls it a plus.
+_DEMAND_FORMS = dict(_LANG_FORMS)
+_DEMAND_FORMS.update({
+    "deutschkenntnissen": "german", "deutsche sprache": "german", "deutschen sprache": "german",
+    "deutscher sprache": "german", "deutschniveau": "german", "deutschsprachig": "german",
+    "englischkenntnissen": "english", "englische sprache": "english", "englischen sprache": "english",
+    "englischer sprache": "english",
+})
+_DEMAND_ALT = "|".join(sorted(_DEMAND_FORMS, key=len, reverse=True))
+_RE_DEMAND_MENTION = re.compile(r"\b(" + _DEMAND_ALT + r")\b")
+# Level words as whole adjectives: "gut" must not fire inside "Gutachten", nor
+# "native" inside "cloud-native", nor "sicher" inside "Sicherheit".
+_DEMAND_LEVEL_WORDS = (
+    (r"native[- ]level|near[- ]native|mother tongue|muttersprach\w*|native|bilingual", 6),
+    (r"professional working proficiency|full professional proficiency|full professional|"
+     r"verhandlungssicher\w*|business[- ]fluent|business[- ]level|professional[- ]level|"
+     r"fliessend\w*|fluently|fluent|fluency|proficient|sehr gut(?:e[mnrs]?)?(?![a-z])|very good|"
+     r"excellent|ausgezeichnet\w*|hervorragend\w*|perfekt\w*|exzellent\w*|souveran\w*|"
+     r"einwandfrei\w*|sicher(?:e[mnrs]?)?(?![a-z])|advanced|strong|professional proficiency|"
+     r"perfect|flawless|impeccable|outstanding", 5),
+    (r"gut(?:e[mnrs]?)?(?![a-z])|good|solide[mnrs]?(?![a-z])|solid|fundiert\w*|fortgeschritten\w*|"
+     r"upper[- ]intermediate", 4),
+    (r"conversational|intermediate", 3),
+    (r"grundkenntnisse\w*|grundlegend\w*|basic", 2),
+)
+_NOT_INSIDE = r"(?<![\w\-])"
+_RE_DEMAND_LEVEL = [(re.compile(_NOT_INSIDE + r"(?:" + pat + r")"), rank) for pat, rank in _DEMAND_LEVEL_WORDS]
+_DEMAND_LEVEL_ALT = "|".join("(?:%s)" % pat for pat, _ in _DEMAND_LEVEL_WORDS)
+_RE_DEMAND_END_LEVEL = re.compile(
+    _NOT_INSIDE + r"(?:[abc][12]|" + _DEMAND_LEVEL_ALT + r")(?:[- ]niveau|[- ]level)?[ :(\-]*$")
+# Level right after the language name: "Deutsch fließend", "German (fluent)",
+# "Deutsch: Muttersprache", "German skills: fluent", "Deutsch auf muttersprachlichem Niveau".
+_RE_DEMAND_START_LEVEL = re.compile(
+    r"^[ :(\-]*(?:(?:auf|at|on|is|are|ist|sind|a|an|einem|dem|skills?|kenntnisse\w*|sprachkenntnisse\w*|"
+    r"language|niveau|level|proficiency|als|as)[ :(\-]+)*" + _NOT_INSIDE + r"(?:[abc][12]\b|" + _DEMAND_LEVEL_ALT + r")")
+_RE_MD_ESCAPE = re.compile(r"\\([\-*_.()#+!\[\]&>~|`])")       # markdownify writes "Deutsch\- und"
+_RE_HARD_BREAK = re.compile(r"[.;!?\n]")
+_COORD = r"(?:und|and|&|sowie|oder|or|bzw|as well as)"
+_RE_COORD_SPLIT = re.compile(r"\s" + _COORD + r"\s|\s*/\s*")
+# What may stand between two languages that share one level: "Deutsch- und
+# Englisch", "German and English", "Deutsch/Englisch", "Deutsch, Englisch und".
+_RE_SHARE_GAP = re.compile(r"^\s*(?:kenntnisse\w*)?\s*-?\s*(?:,|/|" + _COORD + r")?\s*(?:in |der |auf )?$")
+# "German" is also a nationality ("a solid German company"). A level standing
+# BEFORE the bare word counts only when what follows reads as a language skill.
+_RE_SKILL_AFTER = re.compile(
+    r"^\s*(?:$|[),.;:!?\n(/+]|-?\s*(?:skills?|language|knowledge|speak\w*|proficien\w*|level|fluen\w*|"
+    r"kenntnisse\w*|sprach\w*|niveau|is|are|required|needed|mandatory|must|as|" + _COORD + r")\b)")
+_SOFT = (
+    r"von vorteil|vorteilhaft|wunschenswert|erwunscht|gerne? gesehen|\bplus\b|pluspunkt\w*|"
+    r"nice[- ]to[- ]have|\boptional\w*|idealerweise|im idealfall|ideally|kein muss|keine voraussetzung|"
+    r"keine pflicht|nicht (?:zwingend |unbedingt )?(?:erforderlich|notwendig|notig|vorausgesetzt)|"
+    r"not (?:strictly )?(?:required|necessary|needed|mandatory|essential)|not a (?:must|requirement)|"
+    r"\bbeneficial|\badvantage(?:ous)?\b|\bprefer(?:red|able|ably)\b|\bdesirable|\bbonus\b|"
+    r"hilfreich|\bhelpful|\bappreciated|willkommen|\bwelcome\b|\basset\b|\bbenefit\b|\bdesired\b|"
+    r"would be (?:great|nice|good)|ware (?:schon|toll|super|hilfreich)"
+)
+_RE_SOFT = re.compile(_SOFT)
+_RE_SOFT_START = re.compile(r"^\W*(?:" + _SOFT + r")")
+_RE_SOFT_END = re.compile(r"(?:" + _SOFT + r")\W*$")
+# "keine Deutschkenntnisse", "no German", "you don't need fluent German".
+_RE_NEGATED = re.compile(r"(?:\b(?:kein\w*|no|ohne|without|not|nicht|never)|n['’]t)\s+(?:[\w\-]+\s+){0,3}$")
+_RE_COORD_LANG = re.compile(
+    r"^\s*(?:kenntnisse\w*)?\s*-?\s*(?:/|" + _COORD + r")\s*(?:(?:[abc][12]|" + _DEMAND_LEVEL_ALT
+    + r")\s+)?(?:" + _DEMAND_ALT + r")\w*")
+
+
+def _demand_text(text: str) -> str:
+    """Folded ad text with markdown escapes and emphasis removed and blanks
+    collapsed, so a wording matches however the source formatted it."""
+    t = _RE_MD_ESCAPE.sub(r"\1", _fold(text))
+    for odd in (0x2010, 0x2011, 0x2012):                   # hyphen variants
+        t = t.replace(chr(odd), "-")
+    for hidden in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x00AD):  # zero-width and soft hyphen
+        t = t.replace(chr(hidden), "")
+    t = re.sub(r"[*_#`]+", " ", t)
+    t = re.sub(r"\b(mind|min|ca|bzw|inkl)\.", r"\1", t)
+    # Fixed pairs that are no new item: "in Wort und Schrift", "written and spoken".
+    t = re.sub(r"\b(?:in )?wort und schrift\b", " ", t)
+    t = re.sub(r"\b(?:schriftlich\w*|mundlich\w*) (?:und|sowie|wie) (?:schriftlich\w*|mundlich\w*)\b", " ", t)
+    t = re.sub(r"\b(?:written|verbal|oral|spoken) (?:and|&) (?:written|verbal|oral|spoken)\b", " ", t)
+    t = re.sub(r"[^\S\n]+", " ", t)
+    return re.sub(r" ?\n ?", "\n", t)
+
+
+def _demand_level_in(window: str):
+    """(rank, label) of the highest CEFR code or level word in a window, or None."""
+    codes = [(_LEVEL_RANK[m.group(1)], m.group(1).upper()) for m in _RE_CEFR.finditer(window)]
+    if codes:
+        return max(codes)
+    hits = []
+    for rx, rank in _RE_DEMAND_LEVEL:
+        hits.extend((rank, m.group(0)) for m in rx.finditer(window))
+    return max(hits) if hits else None
+
+
+def language_demands(text: str) -> list[dict]:
+    """Every levelled mention of a language in an ad or a requirement line:
+    [{lang, rank, label, soft, quote, side}], in text order.
+
+    `rank` is the CEFR rank (B1 = 3, B2 = 4, C1 = 5, C2 = 6). `soft` is true when
+    the ad calls the demand a plus, optional or not required. `side` says where
+    the level stood relative to the language name ("before" or "after"); a
+    language that only shares its neighbour's level carries that neighbour's side.
+    Deterministic, no network."""
+    t = _demand_text(text)
+    mentions = list(_RE_DEMAND_MENTION.finditer(t))
+    if not mentions:
+        return []
+    n = len(mentions)
+    levels: list = [None] * n          # (rank, label, side)
+    spans: list = [None] * n           # (start, end) of the wording that carries the demand
+
+    def lvl(window: str, side: str):
+        hit = _demand_level_in(window)
+        return hit + (side,) if hit else None
+
+    for i, m in enumerate(mentions):
+        prev_end = mentions[i - 1].end() if i else 0
+        next_start = mentions[i + 1].start() if i + 1 < n else len(t)
+        floor = max(prev_end, m.start() - 70)
+        breaks = [b.end() for b in _RE_HARD_BREAK.finditer(t, floor, m.start())]
+        lo = max([floor] + breaks)
+        comma = t.rfind(",", lo, m.start())
+        before = t[(comma + 1) if comma != -1 else lo:m.start()]
+        limit = min(next_start, m.end() + 45)
+        stop = _RE_HARD_BREAK.search(t, m.end(), limit)
+        hi = stop.start() if stop else limit
+        parts = t[m.end():hi].split(",")
+        after = _RE_COORD_SPLIT.split(parts[0])[0]
+        # A bare "german" with the level in front needs a skill reading behind it.
+        front_ok = m.group(1) != "german" or bool(_RE_SKILL_AFTER.match(t[m.end():m.end() + 30]))
+        found = lvl(after, "after") if _RE_CEFR.search(after) else None
+        if found is None and front_ok and _RE_DEMAND_END_LEVEL.search(before):
+            found = lvl(before.rstrip(" :(-")[-45:], "before")               # "fluent German"
+        if found is None and _RE_DEMAND_START_LEVEL.search(after):
+            found = lvl(after, "after")                                         # "Deutsch fließend"
+        if found is None and front_ok:
+            found = lvl(_RE_COORD_SPLIT.split(before)[-1], "before")           # "sehr gute Kenntnisse in Deutsch"
+        if found is None and len(parts) > 1 and _RE_DEMAND_START_LEVEL.search(parts[1]):
+            found = lvl(_RE_COORD_SPLIT.split(parts[1])[0], "after")           # "Deutsch, verhandlungssicher"
+        if found is None and t[hi:hi + 1] == "\n" and not before.strip(" -:(") and not parts[0].strip(" -:("):
+            end = t.find("\n", hi + 1)                                          # a list: "Deutsch" / "fließend"
+            below = t[hi + 1:end if end != -1 else len(t)][:40]
+            if _RE_DEMAND_START_LEVEL.search(below) and not _RE_DEMAND_MENTION.search(below):
+                found = lvl(_RE_COORD_SPLIT.split(below)[0], "after")
+        levels[i] = found
+        spans[i] = (m.start() - len(before), hi)
+    # Shared levels. Left to right: "sehr gute Englisch- und Deutschkenntnisse",
+    # "fluent in English and German". Right to left: "Deutsch und Englisch fließend".
+    for i in range(1, n):
+        if levels[i] is None and levels[i - 1] and levels[i - 1][2] == "before" \
+                and _RE_SHARE_GAP.match(t[mentions[i - 1].end():mentions[i].start()]):
+            levels[i] = levels[i - 1]
+            spans[i] = (spans[i - 1][0], spans[i][1])
+    for i in range(n - 2, -1, -1):
+        if levels[i] is None and levels[i + 1] and levels[i + 1][2] == "after" \
+                and _RE_SHARE_GAP.match(t[mentions[i].end():mentions[i + 1].start()]):
+            levels[i] = levels[i + 1]
+            spans[i] = (spans[i][0], spans[i + 1][1])
+    out = []
+    for i, m in enumerate(mentions):
+        if not levels[i]:
+            continue
+        rank, label, side = levels[i]
+        out.append({"lang": _DEMAND_FORMS[m.group(1)], "rank": rank, "label": label, "side": side,
+                    "soft": _demand_is_soft(t, m),
+                    "quote": re.sub(r"\s+", " ", t[max(0, spans[i][0]):spans[i][1]]).strip(" ,:-(")[:110]})
+    return out
+
+
+def _demand_is_soft(t: str, m) -> bool:
+    """True when the ad presents this language demand as a plus, optional or not
+    required. Softeners count only inside the demand's own comma-clause; behind a
+    new item ("... Deutschkenntnisse und idealerweise SAP-Erfahrung") they do not."""
+    floor = max(0, m.start() - 90)
+    breaks = [b.end() for b in _RE_HARD_BREAK.finditer(t, floor, m.start())]
+    lo = max([floor] + breaks)
+    stop = _RE_HARD_BREAK.search(t, m.end(), m.end() + 120)
+    hi = stop.start() if stop else min(len(t), m.end() + 120)
+    comma = t.rfind(",", lo, m.start())
+    head = t[(comma + 1) if comma != -1 else lo:m.start()]
+    tail = t[m.end():hi].split(",")[0]
+    if _RE_NEGATED.search(head):
+        return True                                   # "keine Deutschkenntnisse", "no German"
+    if _RE_SOFT_START.search(head):
+        return True                                   # "Idealerweise ...", "Nice to have: ..."
+    if _RE_SOFT.search(_RE_COORD_SPLIT.split(head)[-1]):
+        return True                                   # "... und idealerweise gute Deutschkenntnisse"
+    if _RE_SOFT_END.search(tail):
+        return True                                   # "... und Englischkenntnisse sind von Vorteil"
+    # Skip the languages coordinated with this one, then look only up to the
+    # next coordinator: what follows it is a new item.
+    rest = tail
+    while True:
+        nxt = _RE_COORD_LANG.match(rest)
+        if not nxt:
+            break
+        rest = rest[nxt.end():]
+    return bool(_RE_SOFT.search(_RE_COORD_SPLIT.split(rest)[0]))
+
+
+def required_level(text: str, lang: str = "german") -> tuple[int, str]:
+    """(highest CEFR rank the text demands outright for `lang`, the wording);
+    (0, "") when it states none. Demands the ad calls a plus are ignored."""
+    low = str(text or "").lower()
+    if lang == "german" and "deutsch" not in low and "german" not in low:
+        return 0, ""                                   # most ads: nothing to parse
+    hard = [d for d in language_demands(text) if d["lang"] == lang and not d["soft"]]
+    if not hard:
+        return 0, ""
+    best = max(hard, key=lambda d: d["rank"])
+    return best["rank"], best["quote"]
+
+
 def _clean_line(line: str) -> str:
     line = _RE_BULLET.sub("", line).strip(" \t-*:;,.")
     line = re.sub(r"\s+", " ", line)
@@ -532,6 +758,19 @@ def _match_language(lang: str, required: int, corpus: list[dict]) -> dict:
 
 def match_requirement(requirement: str, retriever, corpus: list[dict], k: int = TOP_K) -> dict:
     gap = {"requirement": requirement, "status": "gap", "evidence": [], "score": 0.0}
+    # A line that states a language level is judged on that level, whatever its
+    # length. Retrieval used to mark "Sehr gute Deutsch- und gute
+    # Englischkenntnisse" as met, because its words overlap with the candidate's
+    # own language line (seen in the runs of 11 to 13 November 2026).
+    demanded: dict[str, int] = {}
+    for d in language_demands(requirement):
+        if not d["soft"]:
+            demanded[d["lang"]] = max(demanded.get(d["lang"], 0), d["rank"])
+    missed = [m for m in (_match_language(lang, rank, corpus) for lang, rank in sorted(demanded.items()))
+              if m["status"] == "gap"]
+    if missed:
+        m = max(missed, key=lambda x: len(x["evidence"]))
+        return {"requirement": requirement, "status": "gap", "evidence": m["evidence"], "score": 0.0}
     langs = language_requirements(requirement)
     if langs and len(tokenize(requirement)) <= 6:
         lang, rank, _ = langs[0]
