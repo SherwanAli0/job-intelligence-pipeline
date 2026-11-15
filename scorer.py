@@ -517,13 +517,37 @@ _GERMAN_SOFTENING = (
 )
 
 
+# "Good German" is a B2 demand: it blocks a candidate below B2 and nobody else.
+_GERMAN_B2_PHRASES = ("gute deutschkenntnisse",)
+
+
+def _candidate_german_rank() -> int:
+    """CEFR rank of the candidate's German from the private facts (B1 = 3,
+    B2 = 4). An unreadable level counts as B2, so only C1 and above blocks."""
+    m = re.search(r"\b([abc][12])\b", str(CANDIDATE_FACTS.get("german_level", "")).lower())
+    return evidence._LEVEL_RANK[m.group(1)] if m else 4
+
+
 def _requires_fluent_german(d_low: str) -> bool:
     """
-    True if the description requires fluent/native/business German AND no
-    softening qualifier appears nearby. Surgical: catches Mandatory:
-    English-and-German style phrasing that the existing prompt missed.
+    True if the description demands German above the candidate's level and no
+    softening qualifier applies. Two tests:
+
+    1. The phrase list above (fluent, native and C1 wordings, and the "German
+       next to English" forms), spared by a softener within 50 characters.
+    2. Since 2026-11-15: the level ANY wording states for German
+       (evidence.required_level), compared with the candidate's own level.
+       The phrase list missed inflected, reordered and markdown-escaped forms
+       ("fließende Deutsch- und gute Englischkenntnisse" with an escaped
+       hyphen, "Du sprichst verhandlungssicher Deutsch"), and ads demanding C1
+       German were scored up to 82 in the runs of 11 to 13 November 2026.
+       The level test follows the profile: once german_level says B2, ads
+       asking for good German pass.
     """
+    candidate = _candidate_german_rank()
     for phrase in _GERMAN_FLUENCY_PHRASES:
+        if phrase in _GERMAN_B2_PHRASES and candidate >= 4:
+            continue
         idx = d_low.find(phrase)
         if idx == -1:
             continue
@@ -534,7 +558,7 @@ def _requires_fluent_german(d_low: str) -> bool:
         if any(soft in window for soft in _GERMAN_SOFTENING):
             continue  # soft requirement - don't disqualify on this match
         return True
-    return False
+    return evidence.required_level(d_low, "german")[0] > candidate
 
 
 def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
@@ -582,7 +606,10 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
 
     # -- Check 2: Fluent German required (English JDs that bury the German req)
     if _requires_fluent_german(d_low):
-        return True, f"Requires fluent/native German \u2014 candidate is {CANDIDATE_FACTS['german_level']}", "german_required"
+        rank, wording = evidence.required_level(d_low, "german")
+        what = (f"German above the candidate's level ('{wording}')"
+                if rank > _candidate_german_rank() else "fluent/native German")
+        return True, f"Requires {what} \u2014 candidate is {CANDIDATE_FACTS['german_level']}", "german_required"
 
     # -- Check 3: Non-Python primary language ----------------------------------
     if _RE_NONPY_TITLE.search(title) and "python" not in combined:
