@@ -180,3 +180,52 @@ class TestCasesFromTheIndependentCheck:
     ])
     def test_demand(self, text, rank):
         assert evidence.required_level(text, "german")[0] == rank
+
+
+class TestHeadingsAndTheSecondCheck:
+    """The second independent check (16 November 2026), and a consequence of keeping the page
+    text's lines: a softener heading now stands on its own line above the items it softens."""
+
+    @pytest.mark.parametrize("text", [
+        "Nice to have\nFluent German",
+        "Requirements:\nPython\nNice to have:\nGerman (B2)\nFrench",
+        "Von Vorteil:\nSehr gute Deutschkenntnisse",
+        "Bonus points\nGerman C1",
+        "Das wäre ein Plus\nVerhandlungssicheres Deutsch",
+        "Preferred qualifications\nExperience with SAP\nFluent German",
+    ])
+    def test_a_line_under_a_softener_heading_is_a_plus(self, text):
+        assert evidence.required_level(text, "german") == (0, "")
+
+    @pytest.mark.parametrize("text,rank", [
+        ("Nice to have:\nSAP\nRequirements:\nFluent German", 5),        # the nearest heading decides
+        ("Your profile\nFluent German\nNice to have\nFrench", 5),
+        ("Deine Vorteile\nDeutschkurse\nDein Profil\nSehr gute Deutschkenntnisse", 5),
+    ])
+    def test_a_line_under_another_heading_is_a_demand(self, text, rank):
+        assert evidence.required_level(text, "german")[0] == rank
+
+    @pytest.mark.parametrize("text,rank", [
+        ("Sehr gute Deutschkenntnisse idealerweise", 0),                     # behind the language, nothing follows
+        ("Deutsch fliessend im Idealfall", 0),
+        ("Sehr gute Deutschkenntnisse Idealerweise Auslandserfahrung", 5),   # opens the next item
+        ("German fluent English good", 5),                                   # lower case: stays with German
+        ("German Fluent English", 0),                                        # capital: the next item
+        ("Sicherheit auf Deutsch", 0),
+        ("Schulungen zur Sicherheit in Deutsch und Englisch", 0),
+        ("Sicherheit in der deutschen Sprache", 5),
+        ("Sicherheit im Umgang mit der deutschen Sprache", 5),
+    ])
+    def test_cases_of_the_second_check(self, text, rank):
+        assert evidence.required_level(text, "german")[0] == rank
+
+    @pytest.mark.parametrize("text", [
+        # In a list that arrived as ONE line these read like "A good German Employer". The gate
+        # lets them pass to the scorer instead of guessing: a wrong pass costs one scored ad, a
+        # wrong drop loses a job without a trace.
+        "Good German Team player",
+        "Good German Strong analytical skills",
+        "German English fluent",
+    ])
+    def test_known_limit_ambiguous_one_line_lists_pass(self, text):
+        assert evidence.required_level(text, "german") == (0, "")

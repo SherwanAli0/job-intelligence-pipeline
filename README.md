@@ -195,7 +195,7 @@ cut student roles before they were read.
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](robots.py) / [robots_audit.py](robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,717 offline tests (`pytest --collect-only -q`, 2026-11-16), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,738 offline tests (`pytest --collect-only -q`, 2026-11-16), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -404,16 +404,24 @@ Three things followed.
 Measured on the LinkedIn ads from the 11 to 13 November audit that were still online (25
 before the change, 23 after it): before, the production text and the full text gave a
 different verdict for six of them (four demands lost to the cut, one excused by the next
-item's softener, one ad with German as a plus dropped); afterwards for none, and twelve
-of the 23 are dropped in both forms. Of the 13 ads sent on 16 November, only the
+item's softener, one ad with German as a plus dropped); afterwards for none (ten to
+twelve of the ads that could be fetched are dropped in both forms). Of the 13 ads sent on 16 November, only the
 internship ad above is now dropped.
 
-An independent check before the merge ran 334 further inputs. It found 14 false demands
-from a first version of the capital-letter rule ("Strong German Presence in the DACH
-region") and a bug in `_block_text` that dropped the text behind mixed `<br>` tags. Both
-are fixed; the cases are in the test files named below. Wordings it found that are still
+An independent check before the merge ran 334 inputs, then 93 more on the fixes. It found
+14 false demands from a first version of the capital-letter rule ("Strong German Presence
+in the DACH region"), a bug in `_block_text` that dropped the text behind mixed `<br>`
+tags, and softeners that no longer counted behind a language. All are fixed and the cases
+are in the test files named below. One consequence of keeping the lines came out of it
+too: a softener that stands alone on a line ("Nice to have", "Von Vorteil:") is a
+heading, and the lines under it are a plus until the next heading.
+
+Known limits, on purpose. Where a list still arrives as one line, "Good German Team
+player" has the same shape as "A good German Employer", so the gate lets it pass to the
+scorer: a wrong pass costs one scored ad, a wrong drop loses a job without a trace. Still
 read wrongly: "Strong analytical skills in German and English" counts as a demand, and a
-range such as "B2/C1" behind the language name is read as B2.
+range such as "B2/C1" behind the language name is read as B2. The third round of fixes
+was covered by tests and by the real ads, not by a third independent pass.
 [tests/test_german_level_flattened.py](tests/test_german_level_flattened.py) and
 [tests/test_page_text.py](tests/test_page_text.py) pin these cases, and
 [tests/test_german_level_properties.py](tests/test_german_level_properties.py) states the
@@ -487,7 +495,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,717 collected, run in CI on every push | 2026-11-16 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,738 collected, run in CI on every push | 2026-11-16 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](seen_jobs.json) |
