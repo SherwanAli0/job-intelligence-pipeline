@@ -24,6 +24,22 @@ are under [Measured figures](#measured-figures).
 
 ---
 
+## Quick start
+
+The test suite needs no API key and no network (Python 3.11):
+
+```bash
+git clone https://github.com/SherwanAli0/job-intelligence-pipeline.git
+cd job-intelligence-pipeline
+pip install -r requirements.txt -c constraints.txt pytest hypothesis
+pytest tests/ -q
+```
+
+Everything else needs your own profile file and keys and costs money: a real run, also
+with `--dry-run`, scrapes live sources and calls the Claude API. The steps are under
+[Run your own](#run-your-own); what the code does is under
+[What makes it interesting](#what-makes-it-interesting) and in the [repo tour](#repo-tour).
+
 ## Architecture
 
 ```mermaid
@@ -179,7 +195,7 @@ cut student roles before they were read.
 | [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](robots.py) / [robots_audit.py](robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,622 offline tests (`pytest --collect-only -q`, 2026-11-15), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,686 offline tests (`pytest --collect-only -q`, 2026-11-16), run on every push to `main` and every pull request |
 
 ## Run your own
 
@@ -212,7 +228,7 @@ Local run (Python 3.11, the version CI and the Docker image use; the pins in
 `constraints.txt` were resolved for it):
 
 ```bash
-pip install -r requirements.txt -c constraints.txt pytest
+pip install -r requirements.txt -c constraints.txt pytest hypothesis
 pytest tests/ -q           # offline test suite, no API keys or network needed
 export ANTHROPIC_API_KEY=sk-ant-...
 export JOBHUNTER_PROFILE_FILE="$PWD/personal/scoring-profiles.json"  # your real private JSON
@@ -364,6 +380,39 @@ band to the pre-screen, which is what its note already said. The tests in
 [tests/test_german_level_gate.py](tests/test_german_level_gate.py) are built from the
 wordings of the real ads.
 
+**First production run (16 November 2026).** The gate dropped seven ads for German, and all
+seven do demand it. The run also showed what the check of 15 November had not: that check
+read the ads as markdown with their list breaks, while production reads the page text.
+Three things followed.
+
+- **A level in a noun.** An internship ad asking for "Kommunikations- und
+  Präsentationssicherheit in Deutsch und Englisch" was sent with score 48. Nouns about
+  speaking and writing that end in "-sicherheit" now state a level; "IT-Sicherheit" and
+  the like do not.
+- **One-line page text.** `scrapers._fetch_full_description` joined a job page into a
+  single line, so "... Excellent English and German skills Strong analytical skills ..."
+  gave no sign where a list item ended. The gate took the "strong" of the next item for
+  the level of German, a softener of the next item excused a hard demand, and a plus
+  behind "or other languages" was not seen. The page text now keeps one line per block
+  element (`_block_text`), and the gate no longer lends a level word to a neighbouring
+  item when a list does arrive flattened.
+- **The cut removed the language line.** Page text is cut at 3,000 characters, and job
+  pages state the language requirement near the end. Up to three lines that name a
+  language are now kept behind a `[...]` line, inside the same limit
+  (`_cut_keeping_language_lines`).
+
+Measured on the 22 LinkedIn ads from the 11 to 13 November audit that were still online:
+before these changes the production text and the full text gave a different verdict for
+six of them (four demands lost to the cut, one excused by the next item's softener, one
+ad with German as a plus dropped); afterwards for none. Of the 13 ads sent on 16
+November, only the internship ad above is now dropped.
+[tests/test_german_level_flattened.py](tests/test_german_level_flattened.py) and
+[tests/test_page_text.py](tests/test_page_text.py) pin these cases, and
+[tests/test_german_level_properties.py](tests/test_german_level_properties.py) states the
+rule itself with Hypothesis: the level a list demands for German is the level of its
+language item, whether the list arrives with line breaks, with bullets or as one line.
+Not measured: a pipeline run with these changes.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -430,7 +479,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,317 collected and passing | 2026-11-03 | `pytest tests/ -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,686 collected, run in CI on every push | 2026-11-16 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](seen_jobs.json) |

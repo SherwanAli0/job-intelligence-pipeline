@@ -396,14 +396,18 @@ _RE_DEMAND_END_LEVEL = re.compile(
 # "Deutsch: Muttersprache", "German skills: fluent", "Deutsch auf muttersprachlichem Niveau".
 _RE_DEMAND_START_LEVEL = re.compile(
     r"^[ :(\-]*(?:(?:auf|at|on|is|are|ist|sind|a|an|einem|dem|skills?|kenntnisse\w*|sprachkenntnisse\w*|"
-    r"language|niveau|level|proficiency|als|as)[ :(\-]+)*" + _NOT_INSIDE + r"(?:[abc][12]\b|" + _DEMAND_LEVEL_ALT + r")")
+    r"language|niveau|level|proficiency|als|as)[ :(\-]+)*" + _NOT_INSIDE
+    + r"(?P<level>[abc][12]\b|" + _DEMAND_LEVEL_ALT + r")")
 _RE_MD_ESCAPE = re.compile(r"\\([\-*_.()#+!\[\]&>~|`])")       # markdownify writes "Deutsch\- und"
 _RE_HARD_BREAK = re.compile(r"[.;!?\n]")
 _COORD = r"(?:und|and|&|sowie|oder|or|bzw|as well as)"
 _RE_COORD_SPLIT = re.compile(r"\s" + _COORD + r"\s|\s*/\s*")
 # What may stand between two languages that share one level: "Deutsch- und
 # Englisch", "German and English", "Deutsch/Englisch", "Deutsch, Englisch und".
-_RE_SHARE_GAP = re.compile(r"^\s*(?:kenntnisse\w*)?\s*-?\s*(?:,|/|" + _COORD + r")?\s*(?:in |der |auf )?$")
+# Never across a line break: "Sehr gute Englischkenntnisse" and "Deutschkenntnisse"
+# on two lines are two list items, and the second one states no level.
+_RE_SHARE_GAP = re.compile(
+    r"^[^\S\n]*(?:kenntnisse\w*)?[^\S\n]*-?[^\S\n]*(?:,|/|" + _COORD + r")?[^\S\n]*(?:in |der |auf )?\Z")
 # "German" is also a nationality ("a solid German company"). A level standing
 # BEFORE the bare word counts only when what follows reads as a language skill.
 _RE_SKILL_AFTER = re.compile(
@@ -425,7 +429,140 @@ _RE_SOFT_END = re.compile(r"(?:" + _SOFT + r")\W*$")
 _RE_NEGATED = re.compile(r"(?:\b(?:kein\w*|no|ohne|without|not|nicht|never)|n['’]t)\s+(?:[\w\-]+\s+){0,3}$")
 _RE_COORD_LANG = re.compile(
     r"^\s*(?:kenntnisse\w*)?\s*-?\s*(?:/|" + _COORD + r")\s*(?:(?:[abc][12]|" + _DEMAND_LEVEL_ALT
-    + r")\s+)?(?:" + _DEMAND_ALT + r")\w*")
+    + r")\s+)?(?:(?:" + _DEMAND_ALT + r")\w*"
+    r"|(?:(?:an)?other|further|additional|weitere[nr]?|andere[nr]?) (?:languages?|sprachen|fremdsprachen))")
+
+
+# -- Flattened lists and levels in nouns (2026-11-16) --------------------------------
+# The first production run with the level gate showed two weak spots.
+#
+# 1. LinkedIn descriptions arrive as ONE line: the page-body fetch joins the text
+#    with spaces, so list items lose their breaks. In
+#      "... Excellent English and German skills Strong analytical skills ..."
+#    the "strong" of the next item was read as the level of German. The outcome
+#    was right that day (the ad does ask for excellent German), but the same
+#    reading drops an ad that says only "English and German skills".
+# 2. "Kommunikations- und Praesentationssicherheit in Deutsch und Englisch"
+#    (an internship ad, sent with score 48) states the level in a noun, which a
+#    list of adjectives cannot see.
+_RE_ITEM_BULLET = re.compile(r"(?:(?<=\s)|^)\*(?=\s)|[•·▪●◦‣∙]")
+# Only nouns about speaking and writing, and the bare word. "IT-Sicherheit in ..."
+# and "Datensicherheit" are something else.
+_NOUN_LEVEL_HEADS = (r"kommunikations|prasentations|verhandlungs|sprach|ausdrucks|stil|formulierungs|"
+                     r"gesprachs|korrespondenz|text|rede|schreib|schrift")
+_RE_DEMAND_NOUN_LEVEL = re.compile(
+    _NOT_INSIDE + r"(?:(?:" + _NOUN_LEVEL_HEADS + r")-? ?(?:und|sowie|oder|&|/) ?)*"
+    r"(?:" + _NOUN_LEVEL_HEADS + r")?sicherheit (?:im umgang mit|in|im) (?:der |dem |den )?$")
+# A level word right behind the language name can also be the first word of the
+# next item. German shows the difference in the ending: "Deutsch fliessend"
+# (belongs to the language) against "fliessende ..." (attribute of the noun
+# that follows). English words that mean nothing but language skill ("fluent",
+# "native") stay with the language; general adjectives ("strong", "excellent",
+# "good") count only when the demand ends right there.
+_RE_LEVEL_INFLECTED = re.compile(
+    r"(?:fliessend|verhandlungssicher|sicher|gut|perfekt|ausgezeichnet|hervorragend|exzellent|einwandfrei|"
+    r"muttersprachlich|fortgeschritten|solid|fundiert|souveran|grundlegend)(?:e|er|es|en|em)$")
+_RE_LEVEL_GENERAL = re.compile(
+    r"^(?:very good|good|excellent|strong|advanced|solid|solide|perfect|flawless|impeccable|outstanding|basic|"
+    r"professional[- ]level|business[- ]level)$")
+_OWN_NOUN = (r"(?:sprach|fremdsprachen)?kenntnisse\w*|sprachniveau|niveau|level|skills?|knowledge|proficiency|"
+             r"command|sprache|language(?: skills)?")
+_DEMAND_ENDS = (r"$|[),.;:!?/\n+]|" + _COORD + r"\b|bis\b|to\b|[abc][12]\b|(?:" + _DEMAND_ALT + r")\b|"
+                r"speaker|sprecher\w*|sprechen|sprichst|spricht|speak\w*|spoken|beherrsch\w*|is\b|are\b|ist\b|"
+                r"sind\b|required|needed|mandatory|necessary|essential|expected|erforderlich|notwendig|notig|"
+                r"vorausgesetzt|voraussetzung|zwingend|unabdingbar|erwartet|pflicht|a must|ein muss|"
+                r"in (?:speaking|writing|speech|wort|schrift)|(?:" + _SOFT + r")")
+_RE_DEMAND_ENDS = re.compile(r"^\s*(?:" + _DEMAND_ENDS + r")")
+_RE_OWN_NOUN_THEN_END = re.compile(r"^\s*(?:" + _OWN_NOUN + r")\b\s*(?:" + _DEMAND_ENDS + r")")
+_RE_IN_OTHER_SUBJECT = re.compile(
+    r"^\s*(?:in|im)\b(?!\s+(?:der |den |dem |the |both )?(?:" + _DEMAND_ALT + r")\b)")
+# Words that may stand between a level and the language name it belongs to:
+# nothing but modifiers ("strong written German"), or a phrase that leads to the
+# name ("sehr gute Kenntnisse in", "good command of", "sehr gute Sprachkenntnisse").
+_RE_GAP_MODIFIERS = re.compile(
+    r"^(?:[\s:(\-]*(?:written|spoken|verbal|oral|schriftlich\w*|mundlich\w*|sehr|very|both|sowohl|niveau|level|"
+    + _COORD + r")\b)*[\s:(\-]*$")
+_RE_GAP_LINK = re.compile(
+    r"(?:\b(?:in|im|of|der|des|auf|at|mit|with|fur|for)(?:\s+(?:the|der|den|dem|both|beiden|sowohl))?"
+    r"|\b(?:(?:sprach|fremdsprachen)?kenntnisse\w*|sprachniveau|sprachen?|languages?|language skills))[\s:(\-]*$")
+
+
+# The bare word "German" is also a nationality, so a level in front of it counts
+# only when a language skill follows ("fluent German skills", "good German and
+# English"). In a flattened list nothing follows but the next item:
+#   "... fluent German Strong analytical skills ..."
+# The capital letter of that item is the one sign left, so the original spelling
+# is read for it. Title-case names ("the German Market", "German Aerospace
+# Center") are no item start; the list is short on purpose, because words such
+# as "Team", "Data" or "Business" open list items far more often than names.
+_RE_BARE_GERMAN = re.compile(r"\bgerman\b", re.I)
+_RE_CAPITAL_NEXT = re.compile(
+    r"[*_`\\]*[ \t]+[*_`\\]*(?!(?:Market|Law|Company|Companies|Mittelstand|Economy|Government|Federal|"
+    r"Aerospace|Cancer|Institute|Universit\w+|Society|Association|Bank|Railway|Embassy|Cent(?:er|re)|"
+    r"Chamber|Ministry|Army|Armed|Red|National|Foreign|Headquarters|Subsidiar\w+|Speaking)\b)"
+    r"[A-Z][a-z]")
+
+
+def _german_item_ends(text: str, wanted: int):
+    """For every bare word "German" of the original text, in order: does a
+    capitalised word follow, the start of the next list item? None when the
+    count differs from the mentions found in the folded text (then the
+    spelling cannot be matched to them and is not used)."""
+    flags = [bool(_RE_CAPITAL_NEXT.match(text, m.end())) for m in _RE_BARE_GERMAN.finditer(text)]
+    return flags if len(flags) == wanted else None
+
+
+def _opens_next_item(label: str, rest: str) -> bool:
+    """True when a level word found right behind a language name belongs to the
+    list item that follows, not to the language: "German skills Strong
+    analytical skills", "Deutsch Sehr gute Kenntnisse in SQL", "German
+    Proficient in MS Office"."""
+    if _RE_CEFR.fullmatch(label) or _RE_DEMAND_ENDS.match(rest) or _RE_OWN_NOUN_THEN_END.match(rest):
+        return False
+    if _RE_LEVEL_INFLECTED.search(label) or _RE_LEVEL_GENERAL.match(label):
+        return True                                   # an attribute of what follows
+    return bool(_RE_IN_OTHER_SUBJECT.match(rest))     # "sicher im Umgang mit ...", "proficient in Excel"
+
+
+_RE_RANGE_JOIN = re.compile(r"\s*(?:or|oder|to|bis|/|-|" + chr(0x2013) + r")\s*$")
+
+
+def _closest_level(segment: str):
+    """(rank, label, end) of the level nearest to the end of `segment`, the text
+    in front of a language name. A range ("good to very good", "B2/C1", "native
+    or fluent") counts with its upper end. The nearest level, not the highest
+    one in the window: in a flattened list an earlier item may open with a
+    stronger word ("Strong analytical skills Good German skills")."""
+    hits = [(m.start(), m.end(), _LEVEL_RANK[m.group(1)], m.group(1).upper()) for m in _RE_CEFR.finditer(segment)]
+    for rx, rank in _RE_DEMAND_LEVEL:
+        hits.extend((m.start(), m.end(), rank, m.group(0)) for m in rx.finditer(segment))
+    if not hits:
+        return None
+    start, end, rank, label = max(hits, key=lambda h: (h[1], h[2], h[1] - h[0]))
+    while True:                                            # walk a range to its other end
+        joined = _RE_RANGE_JOIN.search(segment[:start])
+        earlier = [h for h in hits if joined and h[1] == joined.start()]
+        if not earlier:
+            break
+        other = max(earlier, key=lambda h: (h[2], h[1] - h[0]))
+        if other[2] > rank:
+            rank, label = other[2], other[3]
+        start = other[0]
+    return rank, label, end
+
+
+def _level_before(segment: str):
+    """(rank, label) of the level nearest to the language name that follows
+    `segment`, when the words in between lead to that name. In a flattened list
+    the level word of an earlier item ("Strong communication skills German and
+    English ...") does not, and nothing is returned."""
+    near = _closest_level(segment)
+    if near is None:
+        return None
+    gap = segment[near[2]:]
+    if _RE_GAP_MODIFIERS.match(gap) or _RE_GAP_LINK.search(gap):
+        return near[0], near[1]
+    return None
 
 
 def _demand_text(text: str) -> str:
@@ -436,6 +573,7 @@ def _demand_text(text: str) -> str:
         t = t.replace(chr(odd), "-")
     for hidden in (0x200B, 0x200C, 0x200D, 0xFEFF, 0x00AD):  # zero-width and soft hyphen
         t = t.replace(chr(hidden), "")
+    t = _RE_ITEM_BULLET.sub("\n", t)                       # a bullet starts a new item
     t = re.sub(r"[*_#`]+", " ", t)
     t = re.sub(r"\b(mind|min|ca|bzw|inkl)\.", r"\1", t)
     # Fixed pairs that are no new item: "in Wort und Schrift", "written and spoken".
@@ -471,12 +609,23 @@ def language_demands(text: str) -> list[dict]:
     if not mentions:
         return []
     n = len(mentions)
+    bare = [i for i, m in enumerate(mentions) if m.group(1) == "german"]
+    ends = _german_item_ends(str(text or ""), len(bare))
+    item_end = {i: ends[k] for k, i in enumerate(bare)} if ends else {}
     levels: list = [None] * n          # (rank, label, side)
     spans: list = [None] * n           # (start, end) of the wording that carries the demand
 
     def lvl(window: str, side: str):
         hit = _demand_level_in(window)
         return hit + (side,) if hit else None
+
+    def behind(window: str):
+        """The level at the start of `window`, the text right behind a language
+        name, unless that word opens the next item of a flattened list."""
+        start = _RE_DEMAND_START_LEVEL.search(window)
+        if not start or _opens_next_item(start.group("level"), window[start.end():]):
+            return None
+        return lvl(window, "after")
 
     for i, m in enumerate(mentions):
         prev_end = mentions[i - 1].end() if i else 0
@@ -492,21 +641,29 @@ def language_demands(text: str) -> list[dict]:
         parts = t[m.end():hi].split(",")
         after = _RE_COORD_SPLIT.split(parts[0])[0]
         # A bare "german" with the level in front needs a skill reading behind it.
-        front_ok = m.group(1) != "german" or bool(_RE_SKILL_AFTER.match(t[m.end():m.end() + 30]))
+        front_ok = (m.group(1) != "german" or item_end.get(i, False)
+                    or bool(_RE_SKILL_AFTER.match(t[m.end():m.end() + 30])))
         found = lvl(after, "after") if _RE_CEFR.search(after) else None
         if found is None and front_ok and _RE_DEMAND_END_LEVEL.search(before):
-            found = lvl(before.rstrip(" :(-")[-45:], "before")               # "fluent German"
-        if found is None and _RE_DEMAND_START_LEVEL.search(after):
-            found = lvl(after, "after")                                         # "Deutsch fließend"
+            near = _closest_level(before.rstrip(" :(-"))                       # "fluent German"
+            found = near[:2] + ("before",) if near else None
+        if found is None:
+            found = behind(after)                                               # "Deutsch fließend"
         if found is None and front_ok:
-            found = lvl(_RE_COORD_SPLIT.split(before)[-1], "before")           # "sehr gute Kenntnisse in Deutsch"
-        if found is None and len(parts) > 1 and _RE_DEMAND_START_LEVEL.search(parts[1]):
-            found = lvl(_RE_COORD_SPLIT.split(parts[1])[0], "after")           # "Deutsch, verhandlungssicher"
+            linked = _level_before(_RE_COORD_SPLIT.split(before)[-1])          # "sehr gute Kenntnisse in Deutsch"
+            if linked:
+                found = linked + ("before",)
+        if found is None and front_ok:
+            noun = _RE_DEMAND_NOUN_LEVEL.search(before)                         # "...sicherheit in Deutsch"
+            if noun:
+                found = (5, noun.group(0).strip(), "before")
+        if found is None and len(parts) > 1:
+            found = behind(_RE_COORD_SPLIT.split(parts[1])[0])                  # "Deutsch, verhandlungssicher"
         if found is None and t[hi:hi + 1] == "\n" and not before.strip(" -:(") and not parts[0].strip(" -:("):
             end = t.find("\n", hi + 1)                                          # a list: "Deutsch" / "fließend"
             below = t[hi + 1:end if end != -1 else len(t)][:40]
-            if _RE_DEMAND_START_LEVEL.search(below) and not _RE_DEMAND_MENTION.search(below):
-                found = lvl(_RE_COORD_SPLIT.split(below)[0], "after")
+            if not _RE_DEMAND_MENTION.search(below):
+                found = behind(_RE_COORD_SPLIT.split(below)[0])
         levels[i] = found
         spans[i] = (m.start() - len(before), hi)
     # Shared levels. Left to right: "sehr gute Englisch- und Deutschkenntnisse",

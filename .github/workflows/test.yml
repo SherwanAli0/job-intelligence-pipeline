@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt -c constraints.txt
-          pip install pytest
+          pip install pytest hypothesis==6.170.15
 
       - name: Run test suite (offline - no secrets needed)
         run: pytest tests/ -q
