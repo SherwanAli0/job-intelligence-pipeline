@@ -31,6 +31,8 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
+import evidence as _evidence
+
 # -- Concurrent board fetching ------------------------------------------------
 # The ATS scrapers fetch 300+ company boards, and almost all of that time is
 # spent waiting on the network rather than doing work: sequentially, one full
@@ -1944,6 +1946,63 @@ def _extract_location_hint(text: str) -> str:
     return ""
 
 
+# -- Page text with its lines, and a cut that keeps the language lines (2026-11-16) --
+# get_text(" ") joined a job page into ONE line, so a requirements list read
+# "... English and German skills Strong analytical skills ..." and nothing told
+# where an item ended. The German-level gate then took the "strong" of the next
+# item for the level of German, and a softener of the next item ("Idealerweise
+# Auslandserfahrung") excused a hard demand. get_text("\n") is no answer either:
+# it breaks at every inline tag, also inside "<b>fluent</b> German".
+_BLOCK_TAGS = ("p", "div", "li", "ul", "ol", "tr", "table", "section", "article", "h1", "h2", "h3",
+               "h4", "h5", "h6", "dt", "dd", "blockquote", "pre", "hr")
+_LANGUAGE_LINES_KEPT = 3
+
+
+def _block_text(node) -> str:
+    """Text of an HTML node: a line break at block elements and <br>, a space
+    between inline pieces, no empty lines."""
+    for br in node.find_all("br"):
+        br.insert_before("\n")
+        br.unwrap()            # not replace_with: html.parser may nest the following text in the <br>
+    for tag in node.find_all(_BLOCK_TAGS):
+        tag.insert_before("\n")
+        tag.insert_after("\n")
+    lines = (" ".join(line.split()) for line in node.get_text(" ").split("\n"))
+    return "\n".join(line for line in lines if line)
+
+
+def _cut_keeping_language_lines(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters without losing what the ad says about
+    languages. Job pages often state the language requirement near the end: on
+    2026-11-16, four of 25 ads read again in full demanded fluent German in a
+    line the 3,000-character cut had removed, so neither the pre-screen nor the
+    scorer ever saw it. Up to three such lines from the removed part are kept
+    behind a "[...]" line, and the total stays within `limit`."""
+    if len(text) <= limit:
+        return text
+    cut = text.rfind("\n", 0, limit)
+    if cut < limit * 0.6:
+        cut = limit                                    # no line end near the cut: flattened text
+    kept = []
+    for line in text[cut:].split("\n"):
+        line = line.strip()
+        found = _evidence._RE_DEMAND_MENTION.search(_evidence._fold(line)) if line else None
+        if not found:
+            continue
+        if len(line) > 300:                            # no line structure: a window around the mention
+            start = max(0, found.start() - 150)
+            line = line[start:start + 300].strip()
+        kept.append(line)
+        if len(kept) == _LANGUAGE_LINES_KEPT:
+            break
+    if not kept:
+        return text[:limit]
+    tail = "\n[...]\n" + "\n".join(kept)
+    if len(tail) >= limit:
+        return text[:limit]                            # a limit too small to hold the lines
+    return text[:max(0, min(cut, limit - len(tail)))].rstrip() + tail
+
+
 def _fetch_full_description(url: str) -> str:
     """Visit a URL and extract meaningful text from the page."""
     # SmartRecruiters: the public posting-detail API returns the ad as
@@ -1981,11 +2040,10 @@ def _fetch_full_description(url: str) -> str:
         try:
             ld = _parse_jsonld_jobposting(r.text)
             if ld and ld.get("description"):
-                ld_text = BeautifulSoup(str(ld["description"]), "html.parser").get_text(
-                    separator=" ", strip=True)
+                ld_text = _block_text(BeautifulSoup(str(ld["description"]), "html.parser"))
                 if len(ld_text) > 200:
                     _body_note(url, "ok")
-                    return ld_text[:5000]
+                    return _cut_keeping_language_lines(ld_text, 5000)
         except Exception:
             pass
         soup = BeautifulSoup(r.text, "html.parser")
@@ -2002,13 +2060,13 @@ def _fetch_full_description(url: str) -> str:
         ]:
             el = soup.select_one(selector)
             if el:
-                text = el.get_text(separator=" ", strip=True)
+                text = _block_text(el)
                 if len(text) > 200:
                     _body_note(url, "ok")
-                    return text[:3000]
+                    return _cut_keeping_language_lines(text, 3000)
 
         # Fallback: full page text
-        text = soup.get_text(separator=" ", strip=True)[:3000]
+        text = _cut_keeping_language_lines(_block_text(soup), 3000)
         _body_note(url, "ok" if len(text) > 200 else "no text")
         return text
     except Exception as e:

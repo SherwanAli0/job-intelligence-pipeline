@@ -528,7 +528,7 @@ def _candidate_german_rank() -> int:
     return evidence._LEVEL_RANK[m.group(1)] if m else 4
 
 
-def _requires_fluent_german(d_low: str) -> bool:
+def _requires_fluent_german(d_low: str, text: str | None = None) -> bool:
     """
     True if the description demands German above the candidate's level and no
     softening qualifier applies. Two tests:
@@ -558,7 +558,10 @@ def _requires_fluent_german(d_low: str) -> bool:
         if any(soft in window for soft in _GERMAN_SOFTENING):
             continue  # soft requirement - don't disqualify on this match
         return True
-    return evidence.required_level(d_low, "german")[0] > candidate
+    # `text` is the description in its original spelling: in a description that
+    # arrives as one line, the capital letter of the next list item is the only
+    # sign that a language item ended (evidence._german_item_ends).
+    return evidence.required_level(d_low if text is None else text, "german")[0] > candidate
 
 
 def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
@@ -605,8 +608,8 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
             return True, "Senior/Lead title with no junior qualifier", "senior_title"
 
     # -- Check 2: Fluent German required (English JDs that bury the German req)
-    if _requires_fluent_german(d_low):
-        rank, wording = evidence.required_level(d_low, "german")
+    if _requires_fluent_german(d_low, desc):
+        rank, wording = evidence.required_level(desc, "german")
         what = (f"German above the candidate's level ('{wording}')"
                 if rank > _candidate_german_rank() else "fluent/native German")
         return True, f"Requires {what} \u2014 candidate is {CANDIDATE_FACTS['german_level']}", "german_required"

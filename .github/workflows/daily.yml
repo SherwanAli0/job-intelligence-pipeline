@@ -42,12 +42,14 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4.2.2
+        # The rollback path commits seen_jobs.json back to the repository, so this
+        # checkout keeps its credential on purpose.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2 # zizmor: ignore[artipacked]
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5.4.0
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -76,7 +78,7 @@ jobs:
       # between runs via the Actions cache; the application tracker arrives via
       # a repo secret (track.py syncs it up with `gh secret set` locally).
       - name: Restore answer bank (private, cached - never committed)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: answers.json
           key: answers-bank-${{ github.run_id }}
