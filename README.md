@@ -68,7 +68,7 @@ role. Pushes that only change Markdown files, `cv/` or the state files do not de
 
 The stages (scrape, filter, score, rank, notify, persist) are wired together as a small
 [LangGraph](https://github.com/langchain-ai/langgraph) state machine in
-[graph.py](graph.py); the nodes call the plain functions in [main.py](main.py), and the
+[graph.py](src/graph.py); the nodes call the plain functions in [main.py](src/main.py), and the
 graph's only branch skips scoring when nothing new was found.
 
 Two concurrent runs would each see the same jobs as unseen and both send a digest, so
@@ -80,10 +80,10 @@ read stops the run: carrying on with empty history would re-send old jobs.
 **Sources** (public endpoints; some are unofficial scrapes of public pages): Greenhouse,
 Lever, Ashby, Personio, Recruitee, SmartRecruiters and Workday endpoints across 300+
 company boards (358 distinct board slugs plus 21 Workday tenants in
-[config.py](config.py), counted 2026-11-03); the official **Bundesagentur für Arbeit**
+[config.py](src/config.py), counted 2026-11-03); the official **Bundesagentur für Arbeit**
 job-search API; the **Adzuna** API; the **Brave Search** API; the JobSpy library
 (`scrape_jobspy`), further job-board scrapers (see `scrape_all` in
-[scrapers.py](scrapers.py)) and DuckDuckGo web search; and public feeds
+[scrapers.py](src/scrapers.py)) and DuckDuckGo web search; and public feeds
 (Arbeitnow, Remotive, WorkingNomads, WeWorkRemotely RSS) plus other public job boards. A
 monthly health-check workflow probes the configured
 Greenhouse, Lever, Ashby, Personio, Recruitee and SmartRecruiters boards and fails CI
@@ -106,13 +106,13 @@ freshness filter included.
 
 **A measured scoring pipeline, not vibes.** A hand-labeled golden set
 ([golden/](golden/golden_set.jsonl)) gates the deterministic pre-screen in CI on
-every push, and [calibrate.py](calibrate.py) measures LLM band accuracy on demand
+every push, and [calibrate.py](src/calibrate.py) measures LLM band accuracy on demand
 before any prompt edit ships. The calibration set caught a real filter bug on its
 first run ("ideally 2-3 years" being read as a 3-year wall).
 
 **Recall-then-precision filtering.** The pre-scorer filter chain is deliberately
 recall-friendly (unknown location is kept), while the scorer's disqualifier is the
-precision stage. Both share one source of truth ([filters.py](filters.py)) so the
+precision stage. Both share one source of truth ([filters.py](src/filters.py)) so the
 two stages can't drift apart. The filter chain is covered by regression tests seeded
 with real incidents that once killed good jobs.
 
@@ -158,7 +158,7 @@ cut student roles before they were read.
   English-language ads only: remote or hybrid anywhere
   in Germany, on-site only in North Rhine-Westphalia or the Bonn belt.
   That pivot touched the CV profiles and query lists in
-  [config.py](config.py), one required-employment-form filter, one location-ranking rule,
+  [config.py](src/config.py), one required-employment-form filter, one location-ranking rule,
   and the labels on the calibration set. The regression suite is what made it
   safe: it caught the spots where the old assumption had leaked into unrelated
   code, including a language filter that treated the word "Werkstudent" itself
@@ -179,23 +179,29 @@ cut student roles before they were read.
 
 ## Repo tour
 
+The code is in [src/](src/). Every command in this README is run from the top folder of
+the repository.
+
 | File | Role |
 |---|---|
-| [main.py](main.py) | Orchestrator: scrape → dedup → filter → score → rank → notify |
-| [scrapers.py](scrapers.py) | All source integrations |
-| [scorer.py](scorer.py) | Pre-screen + Claude Haiku scoring, Batches API layer |
-| [graph.py](graph.py) | LangGraph state machine that sequences the stages in `main.py` |
-| [filters.py](filters.py) | Shared Germany-eligibility term lists (single source of truth) |
-| [notifier.py](notifier.py) | HTML digest email (+ optional Notion) |
-| [application_kit.py](application_kit.py) | Fetches real screening questions, drafts answers |
-| [track.py](track.py) | Application tracker: funnel stats + follow-up nudges |
-| [calibrate.py](calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
-| [health_check.py](health_check.py) | Monthly board-rot detector |
-| [liveness.py](liveness.py) | Drops postings an employer's own API reports as closed |
-| [handler.py](handler.py) / [storage.py](storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
-| [secrets_loader.py](secrets_loader.py) / [metrics.py](metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
-| [robots.py](robots.py) / [robots_audit.py](robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,738 offline tests (`pytest --collect-only -q`, 2026-11-16), run on every push to `main` and every pull request |
+| [main.py](src/main.py) | Orchestrator: scrape → dedup → filter → score → rank → notify |
+| [scrapers.py](src/scrapers.py) | All source integrations |
+| [scorer.py](src/scorer.py) | Pre-screen + Claude Haiku scoring, Batches API layer |
+| [graph.py](src/graph.py) | LangGraph state machine that sequences the stages in `main.py` |
+| [filters.py](src/filters.py) | Shared Germany-eligibility term lists (single source of truth) |
+| [notifier.py](src/notifier.py) | HTML digest email (+ optional Notion) |
+| [application_kit.py](src/application_kit.py) | Fetches real screening questions, drafts answers |
+| [track.py](src/track.py) | Application tracker: funnel stats + follow-up nudges |
+| [calibrate.py](src/calibrate.py) / [golden/](golden/) | Scoring calibration harness + labeled set |
+| [health_check.py](src/health_check.py) | Monthly board-rot detector |
+| [liveness.py](src/liveness.py) | Drops postings an employer's own API reports as closed |
+| [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
+| [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
+| [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
+| [tests/](tests/) | 1,754 offline tests (`pytest --collect-only -q`, 2026-11-16), run on every push to `main` and every pull request |
+| [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
+| [examples/](examples/) | Fictional profile file that shows the schema of the private one |
+| [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
 
 ## Run your own
 
@@ -206,7 +212,7 @@ IAM definitions. The simplest way to run your own copy is the GitHub Actions wor
 workflow file still carries its cron lines; whether it is enabled is a GitHub repository
 setting, not something visible in the file.
 
-1. **Fork the repo**, edit search queries and target boards in [config.py](config.py), and create your private profile JSON from [the fictional schema](scoring_profiles.example.json). Keep real facts in private storage, not in source.
+1. **Fork the repo**, edit search queries and target boards in [config.py](src/config.py), and create your private profile JSON from [the fictional schema](examples/scoring_profiles.example.json). Keep real facts in private storage, not in source.
 2. **Add repository secrets** (Settings → Secrets and variables → Actions):
 
    | Secret | Purpose |
@@ -232,7 +238,7 @@ pip install -r requirements.txt -c constraints.txt pytest hypothesis
 pytest tests/ -q           # offline test suite, no API keys or network needed
 export ANTHROPIC_API_KEY=sk-ant-...
 export JOBHUNTER_PROFILE_FILE="$PWD/personal/scoring-profiles.json"  # your real private JSON
-python main.py --dry-run   # NOT offline and NOT free, see below
+python src/main.py --dry-run   # NOT offline and NOT free, see below
 ```
 
 **What `--dry-run` does.** It runs the real pipeline, not a simulation. It still scrapes
@@ -243,12 +249,12 @@ attached in memory and not saved). It skips the email, the Notion mirror, every 
 write (`seen_jobs.json`, digest memory, source registry, run stats, the answer bank
 `answers.json`) and the overlap claim. Use `pytest tests/ -q` for an offline check. The
 same applies to the `DRY_RUN` input of the "Run job hunt now" workflow, the `DRY_RUN`
-container override and `run-now.ps1 -DryRun`.
+container override and `aws/run-now.ps1 -DryRun`.
 
 A local run without `--dry-run` sends a real digest through Gmail and rewrites
-`seen_jobs.json`, `run_stats.jsonl` and the other state files in the working directory.
-The `seen_jobs.json` and `run_stats.jsonl` committed in this repo are a snapshot from the
-July 2026 move to AWS; production state now lives in S3.
+`data/seen_jobs.json`, `data/run_stats.jsonl` and the other state files in the working
+directory. The two files committed in [data/](data/) are a snapshot from the July 2026
+move to AWS; production state now lives in S3.
 
 ## Recall audit (11 November 2026)
 
@@ -329,7 +335,7 @@ are in this release:
     page's JSON-LD,
   - service.bund.de disallows its job search; that source switches itself off,
   - Bosch's job page is disallowed (Bosch stays covered through SmartRecruiters).
-  `py -3.11 robots_audit.py` prints every source address robots.txt does not allow.
+  `py -3.11 src/robots_audit.py` prints every source address robots.txt does not allow.
 - **E.ON** moved from careers.eon.com (Cloudflare challenge, empty since 5 November) to the
   jobs.eon.com sitemap and JSON-LD.
 - **LinkedIn guest search** no longer fetches descriptions for postings seen on earlier days,
@@ -438,7 +444,7 @@ matching chunks of the candidate's private evidence, and labels each requirement
 that evidence and to cite the evidence ids in its reason, and the HTML digest shows a
 compact "Requirements vs evidence" table per job (status and source ids).
 
-- **Corpus** ([evidence.py](evidence.py)): the private candidate facts (one chunk each, ids such
+- **Corpus** ([evidence.py](src/evidence.py)): the private candidate facts (one chunk each, ids such
   as `fact:german_level`), the private track profiles, and optional CV or project text files.
   Free text is split into small chunks with stable ids like `cv:03`.
 - **Requirements**: deterministic, no LLM call. Lines in a requirements or qualifications
@@ -464,7 +470,7 @@ dicts and are not written to `seen_jobs.json`, the postings archive, run stats o
 digest shows requirement text from the ad and evidence ids, not the evidence text. Requirement
 text comes from the ad and is HTML-escaped before it reaches the digest.
 
-**Measured retrieval** (`python eval_retrieval.py`, BM25, run 2026-11-11, thresholds frozen).
+**Measured retrieval** (`python src/eval_retrieval.py`, BM25, run 2026-11-11, thresholds frozen).
 Two sets of fictional labelled requirement and corpus pairs:
 [golden/evidence_eval_tuning.jsonl](golden/evidence_eval_tuning.jsonl) (33 pairs, three
 candidates) is what the stop list, stemmer, aliases and thresholds were adjusted on, so its
@@ -495,10 +501,10 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,738 collected, run in CI on every push | 2026-11-16 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
-| Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](config.py) |
-| Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](run_stats.jsonl) |
-| Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](seen_jobs.json) |
+| Offline tests | 1,754 collected, run in CI on every push | 2026-11-16 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
+| Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
+| Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |
 | Postings sent to Claude | 252 (20 reached the digest) | 2026-09-04 | commit `005f8a1` message |
 | LLM bill for that run | about 20 cents, about 7 of them the removed Sonnet re-score | 2026-09-04 | commit `005f8a1` message |
 | Expected bill after the cuts | about 7 cents (an estimate, not re-measured here) | 2026-09-04 | commit `005f8a1` message |
@@ -513,4 +519,4 @@ MIT, see [LICENSE.md](LICENSE.md).
 
 ## Private scoring profiles
 
-Candidate facts, including the `candidate_facts` values used inside scoring prompts, are loaded from private S3 or an explicitly selected private local file; they are not embedded in the source. See [private profile setup and rollback](aws/private-profiles.md) and the [fictional example schema](scoring_profiles.example.json). Tests use the fictional example. Normal scoring requires real private profiles and stops startup if they are missing. CV files and rendered AWS configuration stay local and ignored. Existing Git history and old images retain historical public data; this cleanup changes current source only. The private object must be updated before the code that requires it is deployed; the order is in the setup guide.
+Candidate facts, including the `candidate_facts` values used inside scoring prompts, are loaded from private S3 or an explicitly selected private local file; they are not embedded in the source. See [private profile setup and rollback](aws/private-profiles.md) and the [fictional example schema](examples/scoring_profiles.example.json). Tests use the fictional example. Normal scoring requires real private profiles and stops startup if they are missing. CV files and rendered AWS configuration stay local and ignored. Existing Git history and old images retain historical public data; this cleanup changes current source only. The private object must be updated before the code that requires it is deployed; the order is in the setup guide.

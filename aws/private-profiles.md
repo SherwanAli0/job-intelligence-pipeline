@@ -28,13 +28,13 @@ Older images read only `schema_version`, `profiles` and `prompt_context` and ign
 
 ## Local use
 
-Use `scoring_profiles.example.json` as the JSON schema. It contains fictional test text, not the owner's facts. Supply complete AI, ML and DS profiles and their shared facts under schema version 1, plus `prompt_context.intro`, `prompt_context.work_match` and every `candidate_facts` key; the loader preserves every character and does not add shared text automatically.
+Use `examples/scoring_profiles.example.json` as the JSON schema. It contains fictional test text, not the owner's facts. Supply complete AI, ML and DS profiles and their shared facts under schema version 1, plus `prompt_context.intro`, `prompt_context.work_match` and every `candidate_facts` key; the loader preserves every character and does not add shared text automatically.
 
 Keep real JSON under ignored `personal/` and select it before running the application:
 
 ```powershell
 $env:JOBHUNTER_PROFILE_FILE = (Resolve-Path personal/scoring-profiles.json).Path
-python main.py --dry-run
+python src/main.py --dry-run
 ```
 
 A dry run still scrapes live sources and pays for scoring. The offline regression command is `python -m pytest tests/ -q`; its conftest explicitly selects the fictional example, without reading the owner's private profile.

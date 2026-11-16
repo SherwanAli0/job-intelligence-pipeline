@@ -16,7 +16,7 @@ import scorer
 from profile_loader import FACT_NAMES, LoadedProfiles, ProfilesUnavailable, load_profiles
 
 ROOT = Path(__file__).resolve().parent.parent
-EXAMPLE = ROOT / "scoring_profiles.example.json"
+EXAMPLE = ROOT / "examples" / "scoring_profiles.example.json"
 TRACKS = ("AI", "ML", "DS", "DA")
 
 
@@ -100,7 +100,7 @@ def test_malformed_facts_do_not_fall_back_silently_in_final_stage():
 def _run_config(profile_path):
     env = {k: v for k, v in os.environ.items() if not k.startswith("JOBHUNTER_")}
     env["JOBHUNTER_PROFILE_FILE"] = str(profile_path)
-    code = "import sys; sys.path.insert(0, %r); import config" % str(ROOT)
+    code = "import sys; sys.path.insert(0, %r); import config" % str(ROOT / "src")
     return subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True,
                           env=env, cwd=str(ROOT), timeout=60)
 
@@ -181,9 +181,10 @@ def test_disqualify_reasons_are_rendered_from_facts(tokens):
 
 
 # -- the public tree carries no candidate-specific text ----------------------------
-SCANNED_CODE = ("scorer.py", "main.py", "filters.py", "config.py", "profile_loader.py",
-                "application_kit.py", "aws/private-profiles.md")
-SCANNED_DOCS = ("README.md", "aws/README.md", "aws/private-profiles.md", "scoring_profiles.example.json")
+SCANNED_CODE = ("src/scorer.py", "src/main.py", "src/filters.py", "src/config.py",
+                "src/profile_loader.py", "src/application_kit.py", "aws/private-profiles.md")
+SCANNED_DOCS = ("README.md", "aws/README.md", "aws/private-profiles.md",
+                "examples/scoring_profiles.example.json")
 
 
 def _private_scan_profile():
@@ -236,14 +237,14 @@ def test_source_and_docs_contain_no_candidate_specific_text():
 def test_scanner_reports_planted_fictional_facts_without_echoing_them():
     facts = {"candidate_name": "Zed Fictional",
              "ml_match_note": "(Matches a fictional record-linkage project line one,\n    line two of it.)"}
-    files = {"scorer.py": "x = 1  # Zed Fictional wrote this\n",
-             "main.py": "# (Matches a fictional record-linkage project line one,\n",
+    files = {"src/scorer.py": "x = 1  # Zed Fictional wrote this\n",
+             "src/main.py": "# (Matches a fictional record-linkage project line one,\n",
              "README.md": "Zed Fictional appears in docs but the name is only checked in code\n",
-             "filters.py": "# a Fictionalville mention\n",
-             "config.py": "clean = True\n"}
+             "src/filters.py": "# a Fictionalville mention\n",
+             "src/config.py": "clean = True\n"}
     problems = _find_problems(files, facts, ["Fictionalville"])
-    assert problems == ["filters.py: forbidden term #0",
-                        "main.py: private fact fragment #0",
-                        "scorer.py: candidate name"]
+    assert problems == ["src/filters.py: forbidden term #0",
+                        "src/main.py: private fact fragment #0",
+                        "src/scorer.py: candidate name"]
     assert not any("Zed" in p or "Fictionalville" in p for p in problems)
-    assert _find_problems({"scorer.py": "clean\n"}, facts, ["Fictionalville"]) == []
+    assert _find_problems({"src/scorer.py": "clean\n"}, facts, ["Fictionalville"]) == []

@@ -10,7 +10,7 @@ Two layers:
   FREE  - expect_dq cases go through scorer._hard_disqualify (deterministic,
           no API). Also run in CI by tests/test_golden.py on every push.
   PAID  - expect_band cases go through the real Haiku scorer per track
-          (~EUR 0.07/run). Manual only:  py -3.11 calibrate.py
+          (~EUR 0.07/run). Manual only:  py -3.11 src/calibrate.py
           or the 'Calibrate scorer' workflow_dispatch action.
 
 Band definitions (score ranges the label maps to):

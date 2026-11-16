@@ -45,4 +45,4 @@ jobs:
       - name: Run calibration (pre-screen + LLM band accuracy)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: python calibrate.py
+        run: python src/calibrate.py

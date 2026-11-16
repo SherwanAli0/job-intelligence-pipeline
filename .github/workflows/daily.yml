@@ -108,13 +108,13 @@ jobs:
           # Personal fact sheet for screening-answer drafting (repo is public,
           # so the facts live only in this secret / a gitignored local file).
           APPKIT_FACTS: ${{ secrets.APPKIT_FACTS }}
-        run: python main.py
+        run: python src/main.py
 
       - name: Commit updated seen_jobs.json
         run: |
           git config user.email "169561155+SherwanAli0@users.noreply.github.com"
           git config user.name "SherwanAli0"
-          git add seen_jobs.json run_stats.jsonl
+          git add data/seen_jobs.json data/run_stats.jsonl
           git diff --cached --quiet || {
             git commit -m "chore: update seen jobs [skip ci]"
             # Every historical red ❌ on this workflow died right here, AFTER
