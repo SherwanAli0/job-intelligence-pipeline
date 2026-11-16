@@ -98,3 +98,16 @@ class TestFetchFullDescription:
         monkeypatch.setattr(scrapers, "_guarded_get", lambda url, **kw: _Response(page))
         text = scrapers._fetch_full_description("https://example.org/jobs/analyst")
         assert "English and German skills\nStrong analytical skills" in text
+
+
+class TestCasesFromTheIndependentCheck:
+    def test_text_behind_mixed_br_tags_is_kept(self):
+        # html.parser nests the text behind "<br>" inside that tag when a "<br/>" follows;
+        # replacing the tag deleted the text, here the language requirement itself.
+        assert _text("<p>intro<br>x<br/>fluent German required</p>") == "intro\nx\nfluent German required"
+        assert _text("a<br>b<br/>c") == "a\nb\nc"
+
+    def test_a_very_small_limit_is_never_exceeded(self):
+        text = "\n".join("Line %03d about the work" % i for i in range(60)) + "\nDeutsch C1 erforderlich"
+        for limit in (0, 10, 50, 100, 300, 320, 1000):
+            assert len(scrapers._cut_keeping_language_lines(text, limit)) <= limit
