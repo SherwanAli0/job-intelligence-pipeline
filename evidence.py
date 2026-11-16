@@ -423,7 +423,9 @@ _SOFT = (
     r"would be (?:great|nice|good)|ware (?:schon|toll|super|hilfreich)"
 )
 _RE_SOFT = re.compile(_SOFT)
-_SOFT_BEHIND = _SOFT.replace("idealerweise|im idealfall|ideally|", "")
+_SOFT_BEHIND = _SOFT.replace(
+    "idealerweise|im idealfall|ideally|",
+    r"(?:idealerweise|im idealfall|ideally)(?=\W*(?:$|[abc][12]\b))|")
 assert _SOFT_BEHIND != _SOFT
 _RE_SOFT_BEHIND = re.compile(_SOFT_BEHIND)
 _RE_SOFT_START = re.compile(r"^\W*(?:" + _SOFT + r")")
@@ -455,7 +457,11 @@ _NOUN_LEVEL_HEADS = (r"kommunikations|prasentations|verhandlungs|sprach|ausdruck
                      r"gesprachs|korrespondenz|text|rede|schreib|schrift")
 _RE_DEMAND_NOUN_LEVEL = re.compile(
     _NOT_INSIDE + r"(?:(?:" + _NOUN_LEVEL_HEADS + r")-? ?(?:und|sowie|oder|&|/) ?)*"
-    r"(?:" + _NOUN_LEVEL_HEADS + r")?sicherheit (?:im umgang mit|in|im|auf) (?:der |dem |den )?$")
+    r"(?:(?:" + _NOUN_LEVEL_HEADS + r")sicherheit (?:im umgang mit|in|im|auf)|sicherheit im umgang mit)"
+    r" (?:der |dem |den )?$")
+# The bare word counts in front of "... Sprache" only: "Sicherheit in der deutschen Sprache".
+# "Schulungen zur Sicherheit in Deutsch und Englisch" is about safety.
+_RE_DEMAND_BARE_NOUN = re.compile(_NOT_INSIDE + r"sicherheit in der $")
 # A level word right behind the language name can also be the first word of the
 # next item. German shows the difference in the ending: "Deutsch fliessend"
 # (belongs to the language) against "fliessende ..." (attribute of the noun
@@ -632,7 +638,8 @@ def language_demands(text: str) -> list[dict]:
         return []
     n = len(mentions)
     bare = [i for i, m in enumerate(mentions) if m.group(1) == "german"]
-    ends = _german_item_ends(str(text or ""), len(bare))
+    spelled = str(text or "")
+    ends = _german_item_ends(spelled, len(bare)) if any(ch.isupper() for ch in spelled) else None
     item_end = {i: ends[k] for k, i in enumerate(bare)} if ends else {}
     levels: list = [None] * n          # (rank, label, side)
     spans: list = [None] * n           # (start, end) of the wording that carries the demand
@@ -680,7 +687,9 @@ def language_demands(text: str) -> list[dict]:
             if near and (front_ok or not _RE_LEVEL_GENERAL.match(near[1])):
                 found = near[:2] + ("before",)
         if found is None:
-            found = behind(after, into_next)                                    # "Deutsch fließend"
+            # "German fluent English good": a lower-case level word stays with German.
+            stays = m.group(1) == "german" and item_end.get(i) is False
+            found = behind(after, into_next and not stays)                      # "Deutsch fließend"
         if found is None and (front_ok or by_capital):
             segment = _RE_COORD_SPLIT.split(before)[-1]
             linked = _level_before(segment)                                    # "sehr gute Kenntnisse in Deutsch"
@@ -691,7 +700,8 @@ def language_demands(text: str) -> list[dict]:
             if linked:
                 found = linked + ("before",)
         if found is None and front_ok:
-            noun = _RE_DEMAND_NOUN_LEVEL.search(before)                         # "...sicherheit in Deutsch"
+            noun = _RE_DEMAND_NOUN_LEVEL.search(before) or (                    # "...sicherheit in Deutsch"
+                m.group(1).endswith("sprache") and _RE_DEMAND_BARE_NOUN.search(before))
             if noun:
                 found = (5, noun.group(0).strip(), "before")
         if found is None and len(parts) > 1:
@@ -729,6 +739,37 @@ def language_demands(text: str) -> list[dict]:
     return out
 
 
+# A softener that stands alone on a line is a heading: "Nice to have", "Von Vorteil:",
+# "Bonus points". What follows, up to the next heading, is a plus. Since the page text
+# keeps its lines (2026-11-16) such a heading no longer runs into the item below it.
+_RE_SOFT_HEADING = re.compile(
+    r"^\W*(?:(?:das |this |it |these )?(?:waren?|would be|is|ist|sind|are) )?(?:(?:a|an|ein|eine|von|als) )?"
+    r"(?:nice[- ]to[- ]haves?|good to have|bonus(?: points?| skills?)?|pluspunkte?|(?:(?:a|ein|grosses?) )?plus|"
+    r"vorteil|vorteilhaft|wunschenswert\w*|optional\w*|preferred(?: qualifications| skills| experience)?|"
+    r"desirable\w*|idealerweise(?: bringst du| bringen sie| hast du| haben sie)?(?: (?:auch|ausserdem|zusatzlich))?"
+    r"(?: mit)?|ideally(?:,? you(?: also)? (?:have|bring))?|what would be (?:great|nice|a plus))"
+    r"(?: (?:skills|qualifications|experience|kenntnisse|qualifikationen))?\W*$")
+_RE_COLON_HEADING = re.compile(r"^[^\n]{1,60}:\s*$")
+
+
+def _under_soft_heading(t: str, pos: int) -> bool:
+    """True when the nearest heading above position `pos` is a softener on a line of its own."""
+    start = t.rfind("\n", 0, pos) + 1
+    for _ in range(14):
+        if start <= 0:
+            return False
+        end = start - 1
+        start = t.rfind("\n", 0, end) + 1
+        line = t[start:end].strip()
+        if not line:
+            continue
+        if len(line) <= 60 and _RE_SOFT_HEADING.match(line):
+            return True
+        if _RE_COLON_HEADING.match(line) or _RE_REQ_HEADER.match(line) or _RE_OTHER_HEADER.match(line):
+            return False
+    return False
+
+
 def _demand_is_soft(t: str, m) -> bool:
     """True when the ad presents this language demand as a plus, optional or not
     required. Softeners count only inside the demand's own comma-clause; behind a
@@ -743,6 +784,8 @@ def _demand_is_soft(t: str, m) -> bool:
     tail = t[m.end():hi].split(",")[0]
     if _RE_NEGATED.search(head):
         return True                                   # "keine Deutschkenntnisse", "no German"
+    if _under_soft_heading(t, m.start()):
+        return True                                   # a line under "Nice to have"
     if _RE_SOFT_START.search(head):
         return True                                   # "Idealerweise ...", "Nice to have: ..."
     if _RE_SOFT.search(_RE_COORD_SPLIT.split(head)[-1]):
