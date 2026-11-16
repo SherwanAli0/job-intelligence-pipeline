@@ -1,5 +1,5 @@
 # Exact versions of every package pip installs into the image, taken from the last image
-# that built and ran cleanly (deploy of 16c5bdd, 2026-09-07). requirements.txt
+# that built and ran cleanly (deploy of 51e9424, 2026-09-07). requirements.txt
 # only sets minimums, so without this file every build resolved whatever was
 # newest that day: on 2026-10-05 python-jobspy 1.2.0 pulled pandas 3 and
 # numpy 2.4.6, which has no wheel for the Lambda base image's glibc, and the

@@ -505,10 +505,10 @@ not been re-measured.
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |
-| Postings sent to Claude | 252 (20 reached the digest) | 2026-09-04 | commit `005f8a1` message |
-| LLM bill for that run | about 20 cents, about 7 of them the removed Sonnet re-score | 2026-09-04 | commit `005f8a1` message |
-| Expected bill after the cuts | about 7 cents (an estimate, not re-measured here) | 2026-09-04 | commit `005f8a1` message |
-| Full-run duration | 40.3 min (range 36 to 72); one slow healthy run 2 h 03 min | July and October 2026 | [aws/README.md](aws/README.md), commit `c377268` message |
+| Postings sent to Claude | 252 (20 reached the digest) | 2026-09-04 | commit `7d68eba` message |
+| LLM bill for that run | about 20 cents, about 7 of them the removed Sonnet re-score | 2026-09-04 | commit `7d68eba` message |
+| Expected bill after the cuts | about 7 cents (an estimate, not re-measured here) | 2026-09-04 | commit `7d68eba` message |
+| Full-run duration | 40.3 min (range 36 to 72); one slow healthy run 2 h 03 min | July and October 2026 | [aws/README.md](aws/README.md), commit `bc22fe3` message |
 
 The current per-run LLM cost and run time are in each run's `llm_cost_usd` and `phases`
 fields in `run_stats.jsonl` in the S3 state bucket, which this repo does not contain.
