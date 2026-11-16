@@ -44,3 +44,28 @@ jobs:
       # The version is pinned so that a new release cannot turn main red.
       - name: Scan the workflow files
         run: pipx run zizmor==1.32.0 --offline --no-progress .github/workflows
+
+  image:
+    name: Container image builds and starts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # The deploy workflow builds this image on every push to main. Building it
+      # here too shows a broken Dockerfile or a missing dependency on the pull
+      # request, before anything reaches AWS.
+      - name: Build the image
+        run: docker build -t job-hunter:ci .
+
+      # Same start as on Fargate (`python` in the task root), with the fictional
+      # example profile in place of the private one. Importing the entry points
+      # loads every module and dependency; no source is scraped and no model is called.
+      - name: Import the entry points inside the image
+        run: |
+          docker run --rm --entrypoint python \
+            -e ANTHROPIC_API_KEY=sk-test-dummy \
+            -e JOBHUNTER_PROFILE_FILE=/tmp/profile.json \
+            -v "$PWD/examples/scoring_profiles.example.json:/tmp/profile.json:ro" \
+            job-hunter:ci -c "import handler, main, calibrate, eval_retrieval; assert calibrate.load_golden(); assert eval_retrieval.GOLDEN.is_dir(); print('image ok')"

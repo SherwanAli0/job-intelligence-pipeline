@@ -1,7 +1,7 @@
 """
 main.py - daily job hunt orchestrator.
 
-Run locally:  python main.py
+Run locally:  python src/main.py   (from the top folder of the repository)
 Run on CI:    triggered by GitHub Actions (.github/workflows/daily.yml)
 """
 
@@ -1901,7 +1901,10 @@ def _is_fresh_enough(j: dict) -> bool:
     return age_days * 24 <= max_filter_age_hours()
 
 
-SEEN_FILE = Path("seen_jobs.json")
+# The two state files that are committed (the GitHub Actions fallback keeps them in
+# the repository) live in data/. On AWS only the file name counts: storage.py maps
+# it to the same S3 key as before the files moved.
+SEEN_FILE = Path("data") / "seen_jobs.json"
 # Prune ids not re-seen for this long. Postings that vanished 60+ days ago can
 # only reappear as genuine reposts, which deserve a fresh look anyway (the
 # ghost tag will mark them stale if they carry an old posted_at).
@@ -1941,7 +1944,7 @@ def save_seen(seen: dict[str, str]) -> None:
 # source that historically delivered jobs but has now returned 0 for several
 # consecutive runs raises a warning that lands IN the digest email.
 
-STATS_FILE = Path("run_stats.jsonl")
+STATS_FILE = Path("data") / "run_stats.jsonl"
 _DEAD_RUNS = 3          # consecutive zero-runs (incl. current) that trigger the alarm
 _DEAD_MIN_MEDIAN = 10   # only alarm for sources that historically deliver >= this
 _HISTORY_WINDOW = 30    # runs of history considered for the median

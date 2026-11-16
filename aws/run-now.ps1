@@ -1,9 +1,10 @@
 # Run the same Fargate task as the schedule, using ignored private network settings.
-# .\run-now.ps1 [-DryRun] [-Watch] [-DeploymentConfig personal\aws-deployment.json]
+# .\aws\run-now.ps1 [-DryRun] [-Watch] [-DeploymentConfig personal\aws-deployment.json]
 param(
     [switch]$DryRun,
     [switch]$Watch,
-    [string]$DeploymentConfig = (Join-Path $PSScriptRoot 'personal\aws-deployment.json')
+    # personal\ sits in the top folder of the repository, one level above this script.
+    [string]$DeploymentConfig = (Join-Path (Split-Path -Parent $PSScriptRoot) 'personal\aws-deployment.json')
 )
 
 $ErrorActionPreference = 'Stop'

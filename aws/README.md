@@ -43,7 +43,7 @@ Normally: push to `main`. [deploy.yml](../.github/workflows/deploy.yml) runs the
 builds the image, pushes it to ECR tagged with the commit SHA and `latest`, and registers
 a new task definition revision that points at the SHA-tagged image. The schedules target
 the task definition family, so the next run uses the newest revision. Pushes that only
-change Markdown files, `cv/`, `run_stats.jsonl` or `seen_jobs.json` do not deploy.
+change Markdown files, `cv/` or `data/` do not deploy.
 `task-definition.json` in this folder is the original template (image `:latest`); the
 live revisions are the ones deploy.yml registers.
 
@@ -75,8 +75,8 @@ docker push "${registry}/job-hunter:latest"
 ## Running one manually
 
 ```powershell
-.\run-now.ps1 -DeploymentConfig personal/aws-deployment.json
-.\run-now.ps1 -DryRun -Watch -DeploymentConfig personal/aws-deployment.json
+.\aws\run-now.ps1 -DeploymentConfig personal/aws-deployment.json
+.\aws\run-now.ps1 -DryRun -Watch -DeploymentConfig personal/aws-deployment.json
 ```
 
 A dry run still scrapes live sources and pays for scoring. It sends no email and writes no state. The normal full run sends the digest and updates state. The manual GitHub workflow uses the same private network variable.
