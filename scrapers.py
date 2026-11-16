@@ -1962,7 +1962,8 @@ def _block_text(node) -> str:
     """Text of an HTML node: a line break at block elements and <br>, a space
     between inline pieces, no empty lines."""
     for br in node.find_all("br"):
-        br.replace_with("\n")
+        br.insert_before("\n")
+        br.unwrap()            # not replace_with: html.parser may nest the following text in the <br>
     for tag in node.find_all(_BLOCK_TAGS):
         tag.insert_before("\n")
         tag.insert_after("\n")
@@ -1997,6 +1998,8 @@ def _cut_keeping_language_lines(text: str, limit: int) -> str:
     if not kept:
         return text[:limit]
     tail = "\n[...]\n" + "\n".join(kept)
+    if len(tail) >= limit:
+        return text[:limit]                            # a limit too small to hold the lines
     return text[:max(0, min(cut, limit - len(tail)))].rstrip() + tail
 
 

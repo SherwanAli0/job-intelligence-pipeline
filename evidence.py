@@ -423,8 +423,11 @@ _SOFT = (
     r"would be (?:great|nice|good)|ware (?:schon|toll|super|hilfreich)"
 )
 _RE_SOFT = re.compile(_SOFT)
+_SOFT_BEHIND = _SOFT.replace("idealerweise|im idealfall|ideally|", "")
+assert _SOFT_BEHIND != _SOFT
+_RE_SOFT_BEHIND = re.compile(_SOFT_BEHIND)
 _RE_SOFT_START = re.compile(r"^\W*(?:" + _SOFT + r")")
-_RE_SOFT_END = re.compile(r"(?:" + _SOFT + r")\W*$")
+_RE_SOFT_END = re.compile(r"(?:" + _SOFT_BEHIND + r")\W*$")
 # "keine Deutschkenntnisse", "no German", "you don't need fluent German".
 _RE_NEGATED = re.compile(r"(?:\b(?:kein\w*|no|ohne|without|not|nicht|never)|n['’]t)\s+(?:[\w\-]+\s+){0,3}$")
 _RE_COORD_LANG = re.compile(
@@ -452,7 +455,7 @@ _NOUN_LEVEL_HEADS = (r"kommunikations|prasentations|verhandlungs|sprach|ausdruck
                      r"gesprachs|korrespondenz|text|rede|schreib|schrift")
 _RE_DEMAND_NOUN_LEVEL = re.compile(
     _NOT_INSIDE + r"(?:(?:" + _NOUN_LEVEL_HEADS + r")-? ?(?:und|sowie|oder|&|/) ?)*"
-    r"(?:" + _NOUN_LEVEL_HEADS + r")?sicherheit (?:im umgang mit|in|im) (?:der |dem |den )?$")
+    r"(?:" + _NOUN_LEVEL_HEADS + r")?sicherheit (?:im umgang mit|in|im|auf) (?:der |dem |den )?$")
 # A level word right behind the language name can also be the first word of the
 # next item. German shows the difference in the ending: "Deutsch fliessend"
 # (belongs to the language) against "fliessende ..." (attribute of the noun
@@ -468,7 +471,7 @@ _RE_LEVEL_GENERAL = re.compile(
 _OWN_NOUN = (r"(?:sprach|fremdsprachen)?kenntnisse\w*|sprachniveau|niveau|level|skills?|knowledge|proficiency|"
              r"command|sprache|language(?: skills)?")
 _DEMAND_ENDS = (r"$|[),.;:!?/\n+]|" + _COORD + r"\b|bis\b|to\b|[abc][12]\b|(?:" + _DEMAND_ALT + r")\b|"
-                r"speaker|sprecher\w*|sprechen|sprichst|spricht|speak\w*|spoken|beherrsch\w*|is\b|are\b|ist\b|"
+                r"speaker|sprecher\w*|sprechen|sprichst|spricht|speak\w*|spoken|beherrsch(?:en|st|t|e)\b|is\b|are\b|ist\b|"
                 r"sind\b|required|needed|mandatory|necessary|essential|expected|erforderlich|notwendig|notig|"
                 r"vorausgesetzt|voraussetzung|zwingend|unabdingbar|erwartet|pflicht|a must|ein muss|"
                 r"in (?:speaking|writing|speech|wort|schrift)|(?:" + _SOFT + r")")
@@ -512,12 +515,31 @@ def _german_item_ends(text: str, wanted: int):
     return flags if len(flags) == wanted else None
 
 
+_RE_NEXT_IS_LANGUAGE = re.compile(r"^\s*(?:" + _DEMAND_ALT + r")\b")
+_RE_LEVEL_GERMAN_PLAIN = re.compile(
+    r"^(?:fliessend|verhandlungssicher|sicher|sehr gut|gut|perfekt|ausgezeichnet|hervorragend|exzellent|"
+    r"einwandfrei|muttersprach\w*|fortgeschritten|fundiert|souveran|grundkenntnisse\w*)$")
+# With nothing but a capital letter as the sign that a language item ended behind "German",
+# a general adjective right in front of it is not enough: "Strong German Presence in the DACH
+# region", "Excellent German Engineering", "A good German Employer". A word that means nothing
+# but language skill is ("Fluent German Team player"), and so is a phrase that leads to the
+# name ("Very good knowledge of German Experience with SQL", "Excellent written German ...").
+_RE_GAP_LANGUAGE_WORD = re.compile(r"\b(?:written|spoken|verbal|oral|schriftlich\w*|mundlich\w*)\b")
+
+
 def _opens_next_item(label: str, rest: str) -> bool:
     """True when a level word found right behind a language name belongs to the
     list item that follows, not to the language: "German skills Strong
     analytical skills", "Deutsch Sehr gute Kenntnisse in SQL", "German
     Proficient in MS Office"."""
-    if _RE_CEFR.fullmatch(label) or _RE_DEMAND_ENDS.match(rest) or _RE_OWN_NOUN_THEN_END.match(rest):
+    if _RE_CEFR.fullmatch(label):
+        return False
+    if _RE_NEXT_IS_LANGUAGE.match(rest):
+        # "German Fluent English", "Deutsch fliessende Englischkenntnisse": the level belongs
+        # to the language behind it. Only an uninflected German word stays with the language
+        # in front: "Deutsch sehr gut Englisch gut".
+        return not _RE_LEVEL_GERMAN_PLAIN.match(label)
+    if _RE_DEMAND_ENDS.match(rest) or _RE_OWN_NOUN_THEN_END.match(rest):
         return False
     if _RE_LEVEL_INFLECTED.search(label) or _RE_LEVEL_GENERAL.match(label):
         return True                                   # an attribute of what follows
@@ -619,11 +641,17 @@ def language_demands(text: str) -> list[dict]:
         hit = _demand_level_in(window)
         return hit + (side,) if hit else None
 
-    def behind(window: str):
+    def behind(window: str, then_language: bool = False):
         """The level at the start of `window`, the text right behind a language
-        name, unless that word opens the next item of a flattened list."""
+        name, unless that word opens the next item of a flattened list.
+        `then_language`: the window ends where the next language name starts."""
         start = _RE_DEMAND_START_LEVEL.search(window)
-        if not start or _opens_next_item(start.group("level"), window[start.end():]):
+        if not start:
+            return None
+        rest = window[start.end():]
+        if then_language and not rest.strip():
+            rest = " " + follower                      # "German Fluent English": fluent English
+        if _opens_next_item(start.group("level"), rest):
             return None
         return lvl(window, "after")
 
@@ -640,17 +668,26 @@ def language_demands(text: str) -> list[dict]:
         hi = stop.start() if stop else limit
         parts = t[m.end():hi].split(",")
         after = _RE_COORD_SPLIT.split(parts[0])[0]
+        # Does the text behind this name run straight into the next language name?
+        follower = mentions[i + 1].group(0) if i + 1 < n and hi == next_start else ""
+        into_next = bool(follower) and len(parts) == 1 and after == parts[0]
         # A bare "german" with the level in front needs a skill reading behind it.
-        front_ok = (m.group(1) != "german" or item_end.get(i, False)
-                    or bool(_RE_SKILL_AFTER.match(t[m.end():m.end() + 30])))
+        front_ok = m.group(1) != "german" or bool(_RE_SKILL_AFTER.match(t[m.end():m.end() + 30]))
+        by_capital = not front_ok and item_end.get(i, False)      # only the next item's capital letter
         found = lvl(after, "after") if _RE_CEFR.search(after) else None
-        if found is None and front_ok and _RE_DEMAND_END_LEVEL.search(before):
+        if found is None and (front_ok or by_capital) and _RE_DEMAND_END_LEVEL.search(before):
             near = _closest_level(before.rstrip(" :(-"))                       # "fluent German"
-            found = near[:2] + ("before",) if near else None
+            if near and (front_ok or not _RE_LEVEL_GENERAL.match(near[1])):
+                found = near[:2] + ("before",)
         if found is None:
-            found = behind(after)                                               # "Deutsch fließend"
-        if found is None and front_ok:
-            linked = _level_before(_RE_COORD_SPLIT.split(before)[-1])          # "sehr gute Kenntnisse in Deutsch"
+            found = behind(after, into_next)                                    # "Deutsch fließend"
+        if found is None and (front_ok or by_capital):
+            segment = _RE_COORD_SPLIT.split(before)[-1]
+            linked = _level_before(segment)                                    # "sehr gute Kenntnisse in Deutsch"
+            if linked and not front_ok:
+                gap = segment[_closest_level(segment)[2]:]
+                if not (_RE_GAP_LINK.search(gap) or _RE_GAP_LANGUAGE_WORD.search(gap)):
+                    linked = None
             if linked:
                 found = linked + ("before",)
         if found is None and front_ok:
@@ -658,7 +695,8 @@ def language_demands(text: str) -> list[dict]:
             if noun:
                 found = (5, noun.group(0).strip(), "before")
         if found is None and len(parts) > 1:
-            found = behind(_RE_COORD_SPLIT.split(parts[1])[0])                  # "Deutsch, verhandlungssicher"
+            second = _RE_COORD_SPLIT.split(parts[1])[0]                         # "Deutsch, verhandlungssicher"
+            found = behind(second, bool(follower) and len(parts) == 2 and second == parts[1])
         if found is None and t[hi:hi + 1] == "\n" and not before.strip(" -:(") and not parts[0].strip(" -:("):
             end = t.find("\n", hi + 1)                                          # a list: "Deutsch" / "fließend"
             below = t[hi + 1:end if end != -1 else len(t)][:40]
@@ -670,11 +708,13 @@ def language_demands(text: str) -> list[dict]:
     # "fluent in English and German". Right to left: "Deutsch und Englisch fließend".
     for i in range(1, n):
         if levels[i] is None and levels[i - 1] and levels[i - 1][2] == "before" \
+                and t[mentions[i - 1].end():mentions[i].start()].strip() \
                 and _RE_SHARE_GAP.match(t[mentions[i - 1].end():mentions[i].start()]):
             levels[i] = levels[i - 1]
             spans[i] = (spans[i - 1][0], spans[i][1])
     for i in range(n - 2, -1, -1):
         if levels[i] is None and levels[i + 1] and levels[i + 1][2] == "after" \
+                and t[mentions[i].end():mentions[i + 1].start()].strip() \
                 and _RE_SHARE_GAP.match(t[mentions[i].end():mentions[i + 1].start()]):
             levels[i] = levels[i + 1]
             spans[i] = (spans[i][0], spans[i + 1][1])
@@ -717,7 +757,7 @@ def _demand_is_soft(t: str, m) -> bool:
         if not nxt:
             break
         rest = rest[nxt.end():]
-    return bool(_RE_SOFT.search(_RE_COORD_SPLIT.split(rest)[0]))
+    return bool(_RE_SOFT_BEHIND.search(_RE_COORD_SPLIT.split(rest)[0]))
 
 
 def required_level(text: str, lang: str = "german") -> tuple[int, str]:

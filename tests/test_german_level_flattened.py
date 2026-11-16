@@ -131,3 +131,52 @@ class TestFlattenedLists:
 
     def test_the_ad_of_16_november_is_still_dropped(self, b1):
         assert scorer._requires_fluent_german(ANDERCORE.lower())
+
+
+class TestCasesFromTheIndependentCheck:
+    """An independent check ran 334 inputs against this change before it was merged. These
+    are the ones it got wrong at first."""
+
+    @pytest.mark.parametrize("text", [
+        # only a capital letter says that an item ended behind "German": a general adjective
+        # right in front of the word is then not enough
+        "Strong German Presence in the DACH region.",
+        "Strong German Customers base",
+        "Excellent German Clients",
+        "Strong German Offices and teams",
+        "Our strong German Entity",
+        "Strong German Industry contacts",
+        "Excellent German Brands portfolio",
+        "We are a strong German Family business",
+        "Excellent German Engineering reputation",
+        "Good German Regulations knowledge",
+        "Solid German Tax Law background",
+        "A good German Employer",
+        # the level word belongs to the language name BEHIND it
+        "Sie bringen mit Deutsch fließende Englischkenntnisse",
+        "You bring German Fluent English",
+        "German-speaking team, fluent English",
+        "Your profile German Business-level English",
+        # no level crosses a bare blank between two items
+        "Sehr gute Englischkenntnisse Deutschkenntnisse Sehr gute Excel-Kenntnisse",
+        "Dein Profil Deutsch Sichere Beherrschung von Excel",
+        # a softener in front still softens
+        "Idealerweise sehr gute Deutschkenntnisse",
+    ])
+    def test_no_demand(self, text):
+        assert evidence.required_level(text, "german") == (0, "")
+
+    @pytest.mark.parametrize("text,rank", [
+        ("Fluent German Team player with a hands-on mindset", 5),
+        ("Very good knowledge of German Experience with SQL", 5),
+        ("Excellent written German Strong analytical skills", 5),
+        ("Native-level German Driving licence", 6),
+        ("Deutsch sehr gut Englisch gut", 5),
+        ("German: fluent, English: basic", 5),
+        ("Sehr gute Deutschkenntnisse Idealerweise Auslandserfahrung", 5),   # the softener opens the next item
+        ("Präsentationssicherheit auf Deutsch", 5),
+        ("Sehr gute Englisch- und Deutschkenntnisse", 5),
+        ("Englisch/Deutsch fließend", 5),
+    ])
+    def test_demand(self, text, rank):
+        assert evidence.required_level(text, "german")[0] == rank
