@@ -117,5 +117,5 @@ class TestFargateIsRecognised:
         assert main._detect_platform() == "aws-lambda"
 
     def test_default_target_is_fargate(self):
-        src = open("compare_sources.py", encoding="utf-8").read()
+        src = open(cs.__file__, encoding="utf-8").read()
         assert 'default="aws-fargate"' in src

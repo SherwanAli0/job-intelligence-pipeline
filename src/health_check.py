@@ -9,7 +9,7 @@ HTTP-tests every board in config.py and reports:
   - EMPTY : HTTP 200 but 0 jobs - company just has no openings (fine, kept)
   - OK    : HTTP 200 with jobs
 
-Run:   py -3.11 health_check.py
+Run:   py -3.11 src/health_check.py
 CI:    .github/workflows/health.yml (monthly). Exits 1 only when DEAD boards
        exist, so GitHub emails a failure - EMPTY never fails the build.
 """

@@ -90,7 +90,9 @@ def read_text(name: str) -> str | None:
 
 def write_text(name: str, text: str) -> None:
     if not using_s3():
-        Path(name).write_text(text, encoding="utf-8")
+        p = Path(name)
+        p.parent.mkdir(parents=True, exist_ok=True)   # data/ is missing in a fresh folder
+        p.write_text(text, encoding="utf-8")
         return
     _s3().put_object(
         Bucket=BUCKET, Key=_key(name),
@@ -103,7 +105,9 @@ def append_line(name: str, line: str) -> None:
     """Append one line. S3 objects can't be appended to, so this is a
     read-modify-write; fine for a file that grows by one line per run."""
     if not using_s3():
-        with Path(name).open("a", encoding="utf-8") as f:
+        p = Path(name)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
         return
     existing = read_text(name) or ""

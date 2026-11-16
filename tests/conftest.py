@@ -3,14 +3,14 @@ import os
 import sys
 from pathlib import Path
 
-# Repo root importable regardless of where pytest is invoked from
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# The code in src/ is importable by its module names, wherever pytest is invoked from
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 # scorer.py builds an Anthropic client at import time
 os.environ.setdefault("ANTHROPIC_API_KEY", "sk-test-dummy")
 
 # Tests use explicitly fictional profiles, never the owner's S3 object or CV.
-os.environ["JOBHUNTER_PROFILE_FILE"] = str(Path(__file__).resolve().parent.parent / "scoring_profiles.example.json")
+os.environ["JOBHUNTER_PROFILE_FILE"] = str(Path(__file__).resolve().parent.parent / "examples" / "scoring_profiles.example.json")
 
 
 import pytest

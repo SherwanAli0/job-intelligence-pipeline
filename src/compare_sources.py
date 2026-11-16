@@ -13,9 +13,9 @@ baseline platform and a target platform, and reports which sources moved by
 more than day-to-day noise.
 
 Usage:
-  py -3.11 compare_sources.py                                   # auto: github-actions -> aws-fargate
-  py -3.11 compare_sources.py --baseline github-actions --target aws-fargate
-  py -3.11 compare_sources.py --baseline-runs 5                 # widen the baseline window
+  py -3.11 src/compare_sources.py                                   # auto: github-actions -> aws-fargate
+  py -3.11 src/compare_sources.py --baseline github-actions --target aws-fargate
+  py -3.11 src/compare_sources.py --baseline-runs 5                 # widen the baseline window
 
 Exit code is 1 if any source regressed, so it can gate a migration cutover.
 """
@@ -26,7 +26,7 @@ import statistics
 import sys
 from pathlib import Path
 
-STATS_FILE = Path("run_stats.jsonl")
+STATS_FILE = Path("data") / "run_stats.jsonl"   # the file main.STATS_FILE names
 
 # Degradation is measured against the WORST healthy baseline run, not the
 # median. Small sources are genuinely noisy: `indeed` swung 70 -> 46 (-34%)

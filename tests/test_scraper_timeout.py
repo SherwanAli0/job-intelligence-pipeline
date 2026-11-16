@@ -259,7 +259,7 @@ class TestBackgroundPathSalvage:
         assert len(snap) == 1, "the thread may still be appending; the copy must not grow"
 
     def test_scrape_all_uses_the_salvage_helper(self):
-        src = open("scrapers.py", encoding="utf-8").read()
+        src = open(scrapers.__file__, encoding="utf-8").read()
         collect = src.split("# Collect the background sources")[1].split("_recover_late_scrapers")[0]
         assert "_salvage_background(" in collect, (
             "the background collection loop must salvage, not skip"

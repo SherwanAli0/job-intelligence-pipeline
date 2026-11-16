@@ -16,13 +16,12 @@ name: Deploy to AWS
 on:
   push:
     branches: [main]
-    # Docs and CV text cannot change what runs, so they should not trigger a
-    # five-minute image build.
+    # Docs, CV text and the committed state snapshot in data/ cannot change what
+    # runs, so they should not trigger a five-minute image build.
     paths-ignore:
       - "**.md"
       - "cv/**"
-      - "run_stats.jsonl"
-      - "seen_jobs.json"
+      - "data/**"
   workflow_dispatch:
 
 concurrency:

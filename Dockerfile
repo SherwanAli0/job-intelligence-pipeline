@@ -19,10 +19,13 @@ FROM public.ecr.aws/lambda/python:3.11
 COPY requirements.txt constraints.txt ${LAMBDA_TASK_ROOT}/
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt -c ${LAMBDA_TASK_ROOT}/constraints.txt
 
-# Application code. State and secrets are NOT baked in: state lives in S3 via
-# storage.py and secrets come from SSM via secrets_loader.py, both driven by
-# environment variables set on the function/task.
-COPY *.py ${LAMBDA_TASK_ROOT}/
+# Application code. The modules live in src/ in the repository and sit directly
+# in the task root of the image, next to golden/, so both entry points
+# (handler.lambda_handler and `python handler.py`) keep their names. State and
+# secrets are NOT baked in: state lives in S3 via storage.py and secrets come
+# from SSM via secrets_loader.py, both driven by environment variables set on
+# the function/task.
+COPY src/ ${LAMBDA_TASK_ROOT}/
 COPY golden/ ${LAMBDA_TASK_ROOT}/golden/
 
 CMD [ "handler.lambda_handler" ]

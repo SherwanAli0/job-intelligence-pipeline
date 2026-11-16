@@ -5,7 +5,7 @@ pages, sample ad pages) from the source configuration and, optionally, from
 recent audit_<date>.jsonl files, checks each against the host's robots.txt
 with the same rules the scrapers use (robots.py), and prints a table.
 
-    py -3.11 robots_audit.py [audit_*.jsonl ...] [--json out.json]
+    py -3.11 src/robots_audit.py [audit_*.jsonl ...] [--json out.json]
 
 Rows are tagged by kind:
   page       checked by robots.allowed() in the scrapers
