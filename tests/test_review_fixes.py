@@ -43,7 +43,9 @@ def test_no_source_file_contains_a_control_character():
     """The first version of the change wrote \\b inside a non-raw string: eight
     literal backspace characters ended up in a regex and silently disabled it."""
     bad = {}
-    for p in [*ROOT.glob("*.py"), *ROOT.glob("tests/*.py")]:
+    paths = [*ROOT.glob("src/*.py"), *ROOT.glob("tests/*.py")]
+    assert sum(p.parent.name == "src" for p in paths) >= 20, "the code files were not found"
+    for p in paths:
         text = p.read_text(encoding="utf-8")
         n = sum(1 for ch in text if ord(ch) < 32 and ch not in "\t\n\r")
         if n:

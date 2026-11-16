@@ -15,11 +15,11 @@ GitHub secret were written, and the AWS run never saw them. The old
 `gh secret set` mirror runs only with JOBHUNTER_TRACK_SECRET_SYNC=1.
 
 CLI (run locally; set JOBHUNTER_S3_BUCKET to share state with the AWS run):
-  py -3.11 track.py apply  <job-url-or-id>  ["Job Title"]  ["Company"]
-  py -3.11 track.py status <job-url-or-id>  interview|rejected|offer|awaiting
-  py -3.11 track.py list
-  py -3.11 track.py stats
-  py -3.11 track.py eval     # do high scores get more interviews? (fix list item 14)
+  py -3.11 src/track.py apply  <job-url-or-id>  ["Job Title"]  ["Company"]
+  py -3.11 src/track.py status <job-url-or-id>  interview|rejected|offer|awaiting
+  py -3.11 src/track.py list
+  py -3.11 src/track.py stats
+  py -3.11 src/track.py eval     # do high scores get more interviews? (fix list item 14)
 """
 
 import hashlib

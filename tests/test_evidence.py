@@ -363,10 +363,15 @@ def test_flag_off_digest_is_byte_identical_to_origin_main():
     import pathlib
     import subprocess
     root = pathlib.Path(__file__).resolve().parent.parent
-    try:
-        src = subprocess.run(["git", "show", "origin/main:notifier.py"], cwd=root, check=True,
-                             capture_output=True, timeout=20).stdout.decode("utf-8")
-    except Exception:
+    src = None
+    for path in ("src/notifier.py", "notifier.py"):     # the code moved into src/ on 16 November 2026
+        try:
+            src = subprocess.run(["git", "show", "origin/main:" + path], cwd=root, check=True,
+                                 capture_output=True, timeout=20).stdout.decode("utf-8")
+            break
+        except Exception:
+            continue
+    if src is None:
         pytest.skip("origin/main not available")
     base = {"__name__": "notifier_base"}
     exec(compile(src, "notifier_base.py", "exec"), base)

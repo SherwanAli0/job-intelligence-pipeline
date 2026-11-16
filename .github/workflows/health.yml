@@ -29,5 +29,5 @@ jobs:
 
       - name: Sweep all company boards
         env:
-          JOBHUNTER_PROFILE_FILE: scoring_profiles.example.json
-        run: python health_check.py
+          JOBHUNTER_PROFILE_FILE: examples/scoring_profiles.example.json
+        run: python src/health_check.py

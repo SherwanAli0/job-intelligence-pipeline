@@ -17,8 +17,8 @@ Reports, per backend:
 Free and offline: BM25 needs no network. The embedding backend runs only when
 sentence-transformers is installed (its model loader may download weights).
 
-    python eval_retrieval.py            # BM25, plus embeddings if installed
-    python eval_retrieval.py --verbose  # also list every miss
+    python src/eval_retrieval.py            # BM25, plus embeddings if installed
+    python src/eval_retrieval.py --verbose  # also list every miss
 """
 
 from __future__ import annotations
@@ -29,7 +29,11 @@ from pathlib import Path
 
 import evidence
 
-GOLDEN = Path(__file__).resolve().parent / "golden"
+# golden/ sits next to the code in the container image and one level above src/
+# in the repository.
+_HERE = Path(__file__).resolve().parent
+GOLDEN = next((p for p in (_HERE / "golden", _HERE.parent / "golden") if p.is_dir()),
+              _HERE.parent / "golden")
 # The tuning set is what the stop list, stemmer, aliases and thresholds were
 # adjusted on, so its numbers are in-sample. The held-out set uses corpora that
 # were written afterwards and never used to tune anything: report it first.
