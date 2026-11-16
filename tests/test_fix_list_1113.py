@@ -1,4 +1,4 @@
-"""Fixes from the 13 November 2026 fix list (research rechecked by Opus agents).
+"""Fixes from the 13 November 2026 fix list (research rechecked by four independent reviews).
 
 Each class covers one item of ongoing/JOB-PIPELINE-FIX-LIST.md in the owner's
 portfolio workspace.
@@ -524,7 +524,7 @@ class TestRobotsRetry:
         assert "down.example" in robots.summary_line()
 
 
-# ---------------------------------------------------------------- Fable 5.2 review fixes
+# ---------------------------------------------------------------- final review fixes
 class TestReviewFixes:
     def test_german_places_with_a_code_or_hyphen_stay_german(self):
         for loc in ("be - berlin", "th - erfurt", "it - münchen", "in - ingolstadt", "ma - mannheim",
