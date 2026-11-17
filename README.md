@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,047 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,170 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -556,6 +556,68 @@ wrong drops were scores under 45 whose reason the ad text does not support; 18 p
 the model only the pay note). Not measured: a production run with these changes.
 [tests/test_review_of_dropped_ads.py](tests/test_review_of_dropped_ads.py) covers them.
 
+## Reading every search as far as it has to be read (17 November 2026)
+
+The review above counted 68 wanted ads that were dropped only because they were more than
+48 hours old when the pipeline first saw them. With a run every day that should not
+happen, so the question was why the pipeline saw them late. Three causes, measured:
+
+- **Boards read for the first time.** 40 of the 68 came from Workable, Teamtailor and
+  Breezy (added on 13 November) and from Absolventa (readable again from that day). On
+  their first run, 642 ads were dropped for age: what already stood on those boards was
+  older than two days before the pipeline ever read them.
+- **LinkedIn was read only in part.** Two lanes asked its public job search at once
+  (python-jobspy with 84 queries, the first 50 results of each, and a second lane with 16).
+  In the 10:00 run of 17 November LinkedIn refused 48 of the 84 queries (HTTP 429) and the
+  second lane at its second request. Measured the same day, one request every four
+  seconds: one query ("Werkstudent Data Science") had 379 results for the last seven
+  hours, in an order that is not by date, and the wanted titles were spread over the whole
+  list (the first 50 held about four in ten of the ones found in the first 280).
+  "Werkstudent" alone had more than 410 for those seven hours.
+- **Printed dates.** Some boards print a date older than the day the ad appears there. The
+  audit line of an age drop held no date, so the share could not be counted.
+
+XING was checked as well and reads every new ad: of 1,809 wanted postings in its sitemaps,
+53 had an id within about two days of the newest, and a run reads the 60 newest.
+
+What changed:
+
+- **One LinkedIn lane** (`scrape_linkedin`) replaces both. One request at a time, four
+  seconds apart; after a refusal it waits (60, 120, 240 seconds) and goes on more slowly
+  instead of dropping the query, and after four waits in a row without an answer it
+  stops. It spends its requests in an order. First, two lists for North Rhine-Westphalia read
+  to the end: the words Werkstudent and Praktikum with the state as location, the region
+  where on-site work counts. Then the keyword searches, page by page across all of them,
+  three pages each (it was five, on the days the query got through at all; five for
+  every search do not fit into one paced lane). A list keeps only the cards whose title
+  names tech work; the rest would each cost a description fetch to be dropped. Measured
+  on LinkedIn before choosing: such a list has about 270 to 340 results for six evening
+  hours, under half of them student or intern titles, and those stand anywhere in it;
+  "Working Student" and "Internship" bring the same postings as the German words;
+  "Trainee" brings 600 apprenticeships and "Junior" hardly a junior title.
+- **How far each search was read** ([sweep.py](src/sweep.py)). A search that was cut short
+  (a refusal, the lane's time) keeps its place: the next run asks it for everything since
+  it was last read as far as planned, and asks it first. The marks are saved only by a run
+  that delivered its digest. The digest says in one sentence how many searches were read
+  as planned, and warns once a search has gone unread for more than 48 hours.
+- **Indeed**: python-jobspy now runs for Indeed alone, with up to 300 results per query
+  (three pages; it was one page of 100, sorted by relevance). The run log names the
+  queries that still came back full.
+- **An age drop keeps its date**: the audit line says "dated 2026-11-09, 8.2 days old
+  when first seen".
+
+`JOBHUNTER_LINKEDIN_LANE=legacy` brings the two old lanes back.
+
+Not possible with this address: reading LinkedIn completely for all of Germany.
+"Werkstudent" alone is about a thousand postings a day, the first 1,000 results are all a
+search serves, and the filter that would cut a list down to remote and hybrid work
+(`f_WT`) is ignored (with 1, 2, 3 and without it the same 140 postings came back). The
+lane reports requests, refusals and the size of every list in the run statistics, so that
+is decided with numbers. Not changed: the freshness rule, and what happens to the ads
+already on a board when the pipeline reads it for the first time. Not measured: how many
+requests LinkedIn answers from the production address with this pacing.
+[tests/test_full_daily_sweep.py](tests/test_full_daily_sweep.py) covers the lane and the marks.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -622,7 +684,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,047 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,170 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

@@ -2060,6 +2060,21 @@ def _is_fresh_enough(j: dict) -> bool:
     return age_days * 24 <= max_filter_age_hours()
 
 
+def _fresh_or_noted(j: dict) -> bool:
+    """_is_fresh_enough, and for a drop the date the ad carried.
+
+    The audit line of an age drop held no date until 2026-11-17, so nobody
+    could say afterwards how old a dropped ad had been, or whether the ad was
+    old or the pipeline had found it late."""
+    if _is_fresh_enough(j):
+        return True
+    age = _job_age_days(j)
+    if age is not None:
+        j["_drop_note"] = (f"dated {str(j.get('posted_at') or '').strip()[:10]}, "
+                           f"{age:.1f} days old when first seen")
+    return False
+
+
 # The two state files that are committed (the GitHub Actions fallback keeps them in
 # the repository) live in data/. On AWS only the file name counts: storage.py maps
 # it to the same S3 key as before the files moved.
@@ -2186,6 +2201,15 @@ def _source_hours():
         return _cfg.max_posting_age_hours()
     except Exception:
         return None
+
+
+def _linkedin_lane_stats() -> dict:
+    """The LinkedIn lane's report of this run (run stats); empty when it did not run."""
+    try:
+        import scrapers as _scrapers
+        return dict(_scrapers.LINKEDIN_REPORT)
+    except Exception:
+        return {}
 
 
 def _detect_platform() -> str:
@@ -2502,6 +2526,14 @@ def node_scrape(state: dict) -> dict:
     import scrapers as _scrapers
     _scrapers.KNOWN_JOB_IDS = set(seen)
 
+    # The LinkedIn lane remembers how far each search has been read (sweep.py)
+    # and keeps, from its lists of every student or junior posting, only the
+    # cards whose title names tech work: the tech gate, asked of the title.
+    import sweep as _sweep
+    _sweep.begin()
+    _scrapers.TITLE_IS_TECH = lambda title: _is_tech_relevant({"title": title, "description": ""})
+    _scrapers.LINKEDIN_REPORT.clear()
+
     # A second run on the same day asks the boards only for what was published
     # since the previous run started (config.since_last_run_requested).
     import config as _cfg
@@ -2536,6 +2568,12 @@ def node_scrape(state: dict) -> dict:
         health_warnings.extend(_scrapers.jobspy_lane_warnings())
     except Exception:
         pass
+    # A LinkedIn search that has gone unread for longer than the freshness
+    # rule allows is said in the digest: what it finds later is dropped as old.
+    try:
+        health_warnings.extend(_scrapers.linkedin_lane_warnings())
+    except Exception:
+        pass
     _flagged = {w.split("'")[1] for w in health_warnings if "'" in w}
     for w in _absent_source_warnings_from(_load_source_registry(), src_counts):
         if "'" in w and w.split("'")[1] in _flagged:
@@ -2561,6 +2599,12 @@ def node_scrape(state: dict) -> dict:
     if _cfg.source_window_narrowed():
         run_notes.append("Second run of the day: the job boards were asked only for postings "
                          f"of the last {_cfg.max_posting_age_hours()} hours.")
+    try:
+        lane_note = _scrapers.linkedin_lane_note()
+        if lane_note:
+            run_notes.append(lane_note)
+    except Exception:
+        pass
     for n in run_notes:
         print(f"NOTE: {n}")
     for w in health_warnings:
@@ -2663,7 +2707,7 @@ def node_filter(state: dict) -> dict:
     # Stale postings never reach the digest; the whole point is applying fast.
     # Ads carried over for a body retry were fresh when first found.
     retrying = _body_retry_ids()
-    new_jobs = _apply_filter(new_jobs, lambda j: j["id"] in retrying or _is_fresh_enough(j),
+    new_jobs = _apply_filter(new_jobs, lambda j: j["id"] in retrying or _fresh_or_noted(j),
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
                              "Employment-form filter (any form except thesis, Ausbildung, PhD, freelance)")
@@ -2878,6 +2922,10 @@ def node_persist(state: dict) -> dict:
         _archive_postings(state.get("top", []), state.get("near", []))
         _archive_scored(state.get("scored", []), skip_ids=retry)
         _write_audit()
+        # How far each search was read (sweep.py). Saved here and nowhere
+        # else: a run that did not deliver has, for the next one, read nothing.
+        import sweep as _sweep
+        _sweep.save()
         # Source-health long-term memory (see _update_source_registry).
         _update_source_registry(state.get("src_counts", {}))
         print("\nDone. seen_jobs.json + digested_keys.json updated.")
@@ -2913,6 +2961,9 @@ def node_persist(state: dict) -> dict:
             # Hours the time-range sources were asked for: 24 on a normal run,
             # fewer on a second run of the day (config.since_last_run_requested).
             "source_hours": _source_hours(),
+            # What the LinkedIn lane read: searches done and cut short,
+            # requests, refusals, and the size of every full list.
+            "linkedin_lane": _linkedin_lane_stats(),
             "scrapers": dict(sorted(_scraper_timings().items(), key=lambda x: -x[1])[:10]),
             "llm_cost_usd": round(llm_cost, 4),
             "batch_means": getattr(_sc, "SCORE_BATCH_MEANS", []),
