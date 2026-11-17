@@ -3776,14 +3776,27 @@ def scrape_xing() -> list[dict]:
         before = int(sweep.mark_value("board|xing|all", "top_id") or 0)
     except (TypeError, ValueError):
         before = 0
-    new = [u for u in cands if before and _xing_id(u) > before][:_XING_NEW_CAP]
+    # The new ones oldest first, so that when there are more than the cap the
+    # number kept below can move on and the rest is read by the next run.
+    new = sorted((u for u in cands if before and _xing_id(u) > before), key=_xing_id)[:_XING_NEW_CAP]
     taken = set(new)
     rest = [u for u in cands if u not in taken]
     picked = new + rest[:max(0, _XING_DESC_CAP - len(new))]
     results = _parallel_collect(picked, _xing_page, "XING", workers=4)
     for row in results:
         row["_board_new"] = bool(before) and _xing_id(row.get("url", "")) > before
-    top = max((_xing_id(u) for u in cands), default=0)
+    # The newest id up to which every new posting was really read. A page
+    # that could not be read stops it there: kept as "read", that posting
+    # and the ones after it would never count as new again.
+    read = {_xing_id(row.get("url", "")) for row in results}
+    if before:
+        top = before
+        for u in new:
+            if _xing_id(u) not in read:
+                break
+            top = _xing_id(u)
+    else:
+        top = max(read, default=0)
     if top:
         _board_read("scrape_xing", "XING", "all", results, top_id=top)
     print(f"  [XING] {len(results)} jobs from {len(picked)} of {len(cands)} recent student/junior "
