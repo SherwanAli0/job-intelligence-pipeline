@@ -348,7 +348,9 @@ class TestASiteThatRefusesItsPages:
         monkeypatch.setattr(scrapers, "SCRAPE_WORKERS", 8)
         rows = scrapers.scrape_research_institutes()
         assert len(rows) == 12 and not any(r.get("_by_hand") for r in rows)
-        assert all(r.get("_student") for r in rows)
+        # a "Werkstudent" address was picked before: its title says what it is
+        assert not any("_student" in r for r in rows)
+        assert all(main._job_form(r) == "student" for r in rows)
 
     def test_a_site_that_only_fails_does_not_stay_in_single_file(self, monkeypatch):
         # Three attempts go one by one, whatever comes back. After that the
@@ -746,7 +748,14 @@ class TestThePageRowSaysStudentOnlyForDlrsOwnSpellings:
     @pytest.mark.parametrize("slug", ["Sankt-Augustin-Studentische-Hilfskraft-Datenmanagement",
                                       "Sankt-Augustin-Praktikum-Datenmanagement",
                                       "Sankt-Augustin-Internship-Data-Management",
-                                      "Sankt-Augustin-Wissenschaftliche-Hilfskraft-Datenmanagement"])
+                                      "Sankt-Augustin-Wissenschaftliche-Hilfskraft-Datenmanagement",
+                                      # the same letters as DLR's spelling, inside an address
+                                      # that was picked before that spelling was added
+                                      "Sankt-Augustin-Werkstudent-%28wmd%29-Datenmanagement",
+                                      "Sankt-Augustin-Werkstudentin-Datenmanagement",
+                                      "Sankt-Augustin-Praktikum-fuer-Studierende-Datenmanagement",
+                                      "Sankt-Augustin-Hilfskraft-Studentin-Datenmanagement",
+                                      "Sankt-Augustin-Studentische-Hilfskraft-fuer-Studierende"])
     def test_the_other_addresses_leave_the_form_to_the_title(self, monkeypatch, slug):
         # the title was changed after the address was made: the title decides, as before
         url = f"https://jobs.fraunhofer.de/job/{slug}/2/"
@@ -754,6 +763,16 @@ class TestThePageRowSaysStudentOnlyForDlrsOwnSpellings:
         row = self._row(monkeypatch, url, "Projektmitarbeiter (w/m/d) Datenmanagement")
         assert "_student" not in row
         assert main._job_form(row) != "student"
+
+    @pytest.mark.parametrize("url,alone", [
+        (f"{DLR}/job/K%C3%B6ln-Studentin-%28wmd%29-Datenanalyse/1/", True),
+        (f"{DLR}/job/Bonn-Masterstudent-%28fmx%29-Robotik/1/", True),
+        (f"{DLR}/job/Bonn-Werkstudent-%28wmd%29-Data/1/", False),
+        (f"{DLR}/job/Bonn-Referentin-%28wmd%29-Innovation/1/", False),      # not picked at all
+        ("", False), (None, False),
+    ])
+    def test_which_addresses_are_picked_by_the_spelling_alone(self, url, alone):
+        assert scrapers._rmk_picked_by_spelling(url) is alone
 
     def test_the_picker_takes_the_same_addresses_as_before(self):
         import re

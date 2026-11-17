@@ -4815,17 +4815,27 @@ _RMK_REGION = re.compile(
     r"|Br%C3%BChl|Euskirchen|Leverkusen|Remagen|Koblenz|D%C3%BCsseldorf)",
     re.IGNORECASE,
 )
+# The words a student role's address carries. The title of such a role holds
+# the same word, and the title rules read it.
+_RMK_STUDENT_WORDS = (r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr"
+                      r"|Praktik|Internship|Praxissemester")
 # DLR titles its student roles "Studentin (w/m/d) ..." and "Student (f/m/x) ..."
-# (2026-11-17: the words below picked 41 of its job addresses). No title rule
-# reads these as student work, so a row picked by them says so itself.
+# (2026-11-17: the words above picked 41 of its job addresses). No title rule
+# reads these as student work, so a row picked by them alone says so itself
+# (_rmk_picked_by_spelling).
 _RMK_STUDENT_SPELLED = r"Studentin\b|Student(?:in)?-%28|Studierende"
-_RMK_STUDENT = re.compile(
-    r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr"
-    r"|Praktik|Internship|Praxissemester"
-    r"|" + _RMK_STUDENT_SPELLED,
-    re.IGNORECASE,
-)
+_RMK_STUDENT = re.compile(_RMK_STUDENT_WORDS + r"|" + _RMK_STUDENT_SPELLED, re.IGNORECASE)
+_RMK_STUDENT_WORDS_RE = re.compile(_RMK_STUDENT_WORDS, re.IGNORECASE)
 _RMK_STUDENT_SPELLED_RE = re.compile(_RMK_STUDENT_SPELLED, re.IGNORECASE)
+
+
+def _rmk_picked_by_spelling(url: str) -> bool:
+    """An address the picker takes for DLR's own spelling and for nothing
+    else. "Werkstudent-(wmd)", "Werkstudentin" and "Praktikum fuer
+    Studierende" hold the same letters, but they were picked before that
+    spelling was added, and their rows stay exactly what they were."""
+    url = url or ""
+    return bool(_RMK_STUDENT_SPELLED_RE.search(url)) and not _RMK_STUDENT_WORDS_RE.search(url)
 # Match the city by NAME. Splitting the URL path on dashes instead produced
 # locations like "Wachtberg STUDENTISCHE", because the title follows the city
 # in the same path segment with no separator to key on.
@@ -4960,7 +4970,7 @@ def _rmk_page(url: str, source: str) -> list[dict]:
             source=source,
             description=desc,
         )
-        if _RMK_STUDENT_SPELLED_RE.search(url):
+        if _rmk_picked_by_spelling(url):
             # The source says so: DLR titles a student role "Studentin (w/m/d)
             # ...", which no title rule reads as student work. Not for the
             # other addresses the picker takes: their words (Werkstudent,
