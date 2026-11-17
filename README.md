@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,806 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,820 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -449,10 +449,11 @@ run whose digest could not be sent is skipped, because its postings still count 
 unseen, and the window never grows past the normal 24 hours, which is also what a run
 gets when the history names no completed run. Internship queries, which otherwise look
 back a week, use the same short window in this run: the morning run has made the long
-sweep. The Bundesagentur API and Adzuna take whole days and keep their smallest window.
-Employer boards and feeds have no time range and are read in full as before;
-`seen_jobs.json` keeps what the morning run saw out of the second one. The freshness
-filter is unchanged. Each stats line records the window as `source_hours`.
+sweep. The Bundesagentur API and Adzuna take whole days and stay at one day and three
+days, as on a normal run. Employer boards and feeds have no time range and are read in
+full as before; `seen_jobs.json` keeps what the morning run saw out of the second one.
+The freshness filter is unchanged. Each stats line records the window as `source_hours`.
+If the window cannot be worked out, the run goes on with the normal one.
 
 **Every judged posting is kept with its text.** Up to 16 November the pipeline had sent
 9,266 ads to the scorer and kept the text of 346, all of them emailed ones scored 45 or
@@ -462,10 +463,11 @@ hand labels beyond the small calibration set. Each delivered run now appends eve
 posting that reached the scoring stage to `scored_<date>.jsonl` in the state store: the
 text (up to 8,000 characters), the score, the score the model returned before the
 stale-posting penalty, the reason, the model, how many characters of the text the model
-was shown, and the pre-screen rule for a posting that a rule dropped. A job the model
-returned no score for is left out and kept when the retry scores it. The files are
-private state like the postings archive: git ignores them and they are never part of
-this repository.
+was shown, and the pre-screen rule for a posting that a rule dropped. A job that stays
+unseen for another try (its ad body could not be fetched, or the model returned no score)
+is left out and kept when the retry judges it, so each posting is stored once, with the
+text its verdict was based on. The files are private state like the postings archive:
+git ignores them and they are never part of this repository.
 
 Not measured: a production run with either change.
 [tests/test_scored_archive_and_second_run.py](tests/test_scored_archive_and_second_run.py)
@@ -537,7 +539,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,806 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,820 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

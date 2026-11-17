@@ -105,6 +105,11 @@ class TestScoredArchive:
         main._archive_scored([failed, _job(id="ok")])
         assert [r["id"] for r in _rows(files)] == ["ok"]
 
+    def test_a_job_left_unseen_for_another_try_is_left_out(self, monkeypatch):
+        files = _store(monkeypatch)
+        main._archive_scored([_job(id="stub"), _job(id="ok")], skip_ids={"stub"})
+        assert [r["id"] for r in _rows(files)] == ["ok"]
+
     def test_only_unscored_jobs_writes_nothing(self, monkeypatch):
         files = _store(monkeypatch)
         main._archive_scored([_job(reason=f"{scorer.SCORER_FAILED_PREFIX} no score returned")])
@@ -139,11 +144,13 @@ class TestScoredArchive:
         assert "Künstliche" in text
 
     def test_the_files_are_gitignored(self):
-        assert "scored_*.jsonl" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+        ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        assert "scored_*.jsonl" in ignored
+        assert "audit_*.jsonl" in ignored      # a local run writes these next to it
 
 
 class TestPersistWritesTheArchive:
-    def _run(self, monkeypatch, tmp_path, email_ok, dry_run):
+    def _run(self, monkeypatch, tmp_path, email_ok, dry_run, **state_kw):
         files = _store(monkeypatch)
         stats = []
         monkeypatch.setattr(main, "_BODY_RETRY_FILE", tmp_path / "body_retry.json")
@@ -157,8 +164,10 @@ class TestPersistWritesTheArchive:
         import metrics
         monkeypatch.setattr(metrics, "publish", lambda **kw: None)
         low, high = _job(id="low", score=10, _model_score=10), _job(id="high", score=80, _model_score=80)
-        main.node_persist({"dry_run": dry_run, "seen": {}, "email_ok": email_ok,
-                           "all_jobs": [low, high], "scored": [low, high], "top": [high], "near": []})
+        state = {"dry_run": dry_run, "seen": {}, "email_ok": email_ok,
+                 "all_jobs": [low, high], "scored": [low, high], "top": [high], "near": []}
+        state.update(state_kw)
+        main.node_persist(state)
         kept = {n: t for n, t in files.items() if n.startswith("scored_")}
         return kept, stats
 
@@ -166,6 +175,14 @@ class TestPersistWritesTheArchive:
         kept, _ = self._run(monkeypatch, tmp_path, True, False)
         (text,) = kept.values()
         assert [json.loads(l)["id"] for l in text.strip().splitlines()] == ["low", "high"]
+
+    def test_an_ad_whose_body_is_fetched_again_next_run_is_kept_then_not_now(self, monkeypatch,
+                                                                              tmp_path):
+        # "low" was judged on a stub body and stays unseen for a retry. Keeping it
+        # now would store it twice, the first time with a text nobody should learn from.
+        kept, _ = self._run(monkeypatch, tmp_path, True, False, body_unresolved=["low"])
+        (text,) = kept.values()
+        assert [json.loads(l)["id"] for l in text.strip().splitlines()] == ["high"]
 
     @pytest.mark.parametrize("email_ok,dry_run", [(False, False), (True, True)])
     def test_a_dry_run_or_an_undelivered_digest_keeps_nothing(self, monkeypatch, tmp_path,
@@ -326,6 +343,17 @@ class TestSinceLastRun:
         ahead = _line(NOW + timedelta(hours=3))
         assert main._since_last_run_hours([ahead], now=NOW) is None
 
+    @pytest.mark.parametrize("phases", [
+        ["scrape", 2400], "2400", 2400, None,
+        {"scrape": float("nan")}, {"scrape": float("inf")}, {"scrape": -5.0},
+        {"scrape": True}, {"scrape": "2400"}, {"scrape": 10 ** 9}])
+    def test_phase_times_that_are_not_seconds_count_as_none(self, phases):
+        line = {"ts": MORNING_END.isoformat(), "email_ok": True, "phases": phases}
+        assert main._previous_run_start([line]) == MORNING_END          # and no exception
+
+    def test_a_history_entry_that_is_not_a_record_is_passed_over(self):
+        assert main._since_last_run_hours([_line(MORNING_END), "junk", 7, None], now=NOW) == 8
+
 
 class TestScrapeAppliesTheWindow:
     def _scrape(self, monkeypatch, history, env=None):
@@ -365,6 +393,15 @@ class TestScrapeAppliesTheWindow:
         assert (window, internship) == (24, config.INTERNSHIP_SOURCE_HOURS)
         assert not any("Second run" in n for n in notes)
         assert "normal window" in capsys.readouterr().out
+
+    def test_a_failure_while_working_out_the_window_does_not_stop_the_run(self, monkeypatch, capsys):
+        def broken(history, now=None):
+            raise OverflowError("date value out of range")
+        monkeypatch.setattr(main, "_since_last_run_hours", broken)
+        (window, internship), notes = self._scrape(monkeypatch, self._morning(), "since_last_run")
+        assert (window, internship) == (24, config.INTERNSHIP_SOURCE_HOURS)
+        assert not any("Second run" in n for n in notes)
+        assert "OverflowError" in capsys.readouterr().out
 
     def test_a_window_left_over_from_an_earlier_run_is_cleared(self, monkeypatch):
         config.set_source_window_hours(3)
