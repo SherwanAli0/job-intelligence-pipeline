@@ -385,11 +385,50 @@ class TestXingKnowsWhatIsNew:
         new = [r for r in rows if r["_board_new"]]
         assert sorted(scrapers._xing_id(r["url"]) for r in new) == [1095, 1096, 1097, 1098, 1099]
 
-    def test_a_flood_of_new_ids_is_capped(self, tmp_path, monkeypatch):
+    def test_a_flood_of_new_ids_is_read_oldest_first_and_the_rest_next_time(self, tmp_path, monkeypatch):
         _read_before(tmp_path, board__xing__all={"hours": 24, "top_id": 10})
         fetched = self._xing(monkeypatch, range(1000, 1400))
         scrapers.scrape_xing()
         assert len(fetched) == scrapers._XING_NEW_CAP == 200
+        assert sorted(scrapers._xing_id(u) for u in fetched) == list(range(1000, 1200))
+        # the number kept moves on to where the reading stopped, not to the newest of all
+        assert scrapers._BOARDS_READ["scrape_xing"]["board|xing|all"] == {"top_id": 1199}
+
+    def test_a_page_that_could_not_be_read_keeps_its_posting_new(self, tmp_path, monkeypatch):
+        # Kept as "read up to the newest", the posting whose page failed and
+        # every one after it would never count as new again.
+        _read_before(tmp_path, board__xing__all={"hours": 24, "top_id": 100})
+        urls = [f"https://www.xing.com/jobs/koeln-werkstudent-data-{i}" for i in (130, 120, 110, 90)]
+
+        def page(url):
+            if url.endswith("-120"):
+                return []                                         # this page failed
+            return [scrapers.job("Werkstudent Data", "Acme", "Köln, Germany", url, "XING", "x")]
+        monkeypatch.setattr(scrapers, "_xing_candidates", lambda: urls)
+        monkeypatch.setattr(scrapers, "_xing_page", page)
+        rows = scrapers.scrape_xing()
+        assert sorted(scrapers._xing_id(r["url"]) for r in rows if r["_board_new"]) == [110, 130]
+        assert scrapers._BOARDS_READ["scrape_xing"]["board|xing|all"] == {"top_id": 110}
+
+    def test_when_no_page_could_be_read_the_number_stays(self, tmp_path, monkeypatch):
+        _read_before(tmp_path, board__xing__all={"hours": 24, "top_id": 100})
+        urls = [f"https://www.xing.com/jobs/koeln-werkstudent-data-{i}" for i in (130, 120, 110, 90)]
+        monkeypatch.setattr(scrapers, "_xing_candidates", lambda: urls)
+        monkeypatch.setattr(scrapers, "_xing_page", lambda url: [])
+        assert scrapers.scrape_xing() == []
+        assert scrapers._BOARDS_READ["scrape_xing"]["board|xing|all"] == {"top_id": 100}
+
+    def test_a_first_run_keeps_the_newest_id_it_really_read(self, monkeypatch):
+        urls = [f"https://www.xing.com/jobs/koeln-werkstudent-data-{i}" for i in (130, 120, 110)]
+
+        def page(url):
+            if url.endswith("-130"):
+                return []
+            return [scrapers.job("Werkstudent Data", "Acme", "Köln, Germany", url, "XING", "x")]
+        monkeypatch.setattr(scrapers, "_xing_candidates", lambda: urls)
+        monkeypatch.setattr(scrapers, "_xing_page", page)
+        scrapers.scrape_xing()
+        assert scrapers._BOARDS_READ["scrape_xing"]["board|xing|all"] == {"top_id": 120}
 
     def test_the_newest_id_is_kept_by_a_delivered_run_only(self, tmp_path, monkeypatch):
         self._xing(monkeypatch, range(1000, 1010))
