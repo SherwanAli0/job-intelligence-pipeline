@@ -45,6 +45,13 @@ def _parse(value) -> datetime | None:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
+def _aware(when: datetime | None) -> datetime | None:
+    """A time without a zone is taken as UTC."""
+    if when is not None and when.tzinfo is None:
+        return when.replace(tzinfo=timezone.utc)
+    return when
+
+
 def begin(now: datetime | None = None) -> None:
     """Start of a run: read the marks and forget the last run's outcomes.
     Never raises: without the file every search is asked for its normal
@@ -62,7 +69,7 @@ def begin(now: datetime | None = None) -> None:
         _marks.clear()
         _marks.update(marks)
         _outcomes.clear()
-        _run_start = now or _now()
+        _run_start = _aware(now) or _now()
 
 
 def run_start() -> datetime:
@@ -82,7 +89,7 @@ def hours_unread(key: str, now: datetime | None = None) -> float:
     covered = covered_until(key)
     if covered is None:
         return 0.0
-    hours = ((now or run_start()) - covered).total_seconds() / 3600.0
+    hours = ((_aware(now) or run_start()) - covered).total_seconds() / 3600.0
     return round(hours, 2) if math.isfinite(hours) and hours > 0 else 0.0
 
 
@@ -92,7 +99,7 @@ def window_hours(key: str, default_hours: int, now: datetime | None = None) -> i
     covered = covered_until(key)
     if covered is None:
         return _hours(default_hours)
-    hours = ((now or run_start()) - covered).total_seconds() / 3600.0
+    hours = ((_aware(now) or run_start()) - covered).total_seconds() / 3600.0
     if not math.isfinite(hours) or hours <= 0:
         return max(1, SLACK_HOURS)
     return int(min(MAX_HOURS, max(1, math.ceil(hours) + SLACK_HOURS)))
@@ -134,7 +141,7 @@ def overdue(hours: float, prefix: str = "", now: datetime | None = None) -> list
     """Searches of this run that were cut short and whose last complete read
     lies more than `hours` back: (key, hours since), longest first. From then
     on the freshness rule can drop what they find late."""
-    now = now or run_start()
+    now = _aware(now) or run_start()
     out = []
     for key, row in outcomes(prefix).items():
         if row["complete"]:
