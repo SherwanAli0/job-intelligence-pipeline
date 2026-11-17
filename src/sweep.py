@@ -82,6 +82,16 @@ def covered_until(key: str) -> datetime | None:
         return _parse((_marks.get(key) or {}).get("covered"))
 
 
+# Numbers a scraper keeps with a mark (XING: the newest posting id it saw).
+KEPT_NUMBERS = ("top_id",)
+
+
+def mark_value(key: str, name: str):
+    """A number kept with the mark of `key` by an earlier delivered run, or None."""
+    with _lock:
+        return (_marks.get(key) or {}).get(name)
+
+
 def hours_unread(key: str, now: datetime | None = None) -> float:
     """Hours since `key` was last read completely; 0 for a search without a
     mark. Searches read in the same run share one mark, so they compare equal
@@ -179,6 +189,10 @@ def _save() -> None:
                 # starts where its window started.
                 mark["covered"] = (start - timedelta(hours=row["hours"])).isoformat(timespec="seconds")
             mark["asked"] = stamp
+            if row["complete"]:
+                for name in KEPT_NUMBERS:
+                    if isinstance(row.get(name), int) and not isinstance(row.get(name), bool):
+                        mark[name] = row[name]
         limit = start - timedelta(days=FORGET_DAYS)
         kept = {k: v for k, v in _marks.items() if (_parse(v.get("asked")) or start) >= limit}
         text = json.dumps(dict(sorted(kept.items())), indent=1)

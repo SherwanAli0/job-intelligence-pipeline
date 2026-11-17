@@ -185,6 +185,7 @@ def _recover_late_scrapers(grace_seconds: int = 300) -> list[dict]:
         if not t.is_alive() and box["jobs"]:
             print(f"  [{name}] finished late \u2014 recovering {len(box['jobs'])} jobs")
             recovered.extend(box["jobs"])
+            _boards_done(name)
             SCRAPER_TIMINGS[name + " (late)"] = took
         else:
             # Hung, or died with an exception after the timeout: whatever it
@@ -369,6 +370,44 @@ def body_fetch_report(top: int = 8) -> str:
                 rows.append((failed, f"{host} {failed}/{sum(c.values())} ({why})"))
     rows.sort(key=lambda r: -r[0])
     return "; ".join(r for _, r in rows[:top])
+
+
+# -- Boards that were read as a whole (2026-11-17) -------------------------------
+# Greenhouse, Lever, Ashby, Personio and Recruitee hand over a company's whole
+# list of open jobs in one answer. A job this run sees for the first time on
+# such a board, when an earlier run has read the board, is new THERE, whatever
+# date it prints (a re-opened ad keeps its first date, some boards print the
+# day the requisition was created). The freshness rule used to drop it for
+# that date (owner, 2026-11-17, on such ads: "keep them").
+#
+# A scraper names each board it read and tags the board's rows with it; when
+# the scraper's result has been taken, scrape_all passes the boards on to
+# sweep.py, which keeps the time of the read. main._new_on_a_read_board does
+# the rest. A board whose answer held no job at all is not named: an answer
+# with nothing in it does not show that the board was read.
+_BOARDS_READ: dict = {}          # scraper name -> {board key: numbers to keep with the mark}
+_BOARDS_LOCK = threading.Lock()
+
+
+def _board_read(scraper: str, source: str, board: str, rows: list[dict], **numbers) -> list[dict]:
+    """Note that `board` was read by `scraper`, and tag its rows. Returns the rows."""
+    key = f"board|{source}|{board}".lower()
+    for row in rows:
+        row["_board"] = key
+    with _BOARDS_LOCK:
+        _BOARDS_READ.setdefault(scraper, {})[key] = numbers
+    return rows
+
+
+def _boards_done(scraper: str) -> None:
+    """The scraper's result has been taken: its boards count as read in this run."""
+    with _BOARDS_LOCK:
+        boards = _BOARDS_READ.pop(scraper, {})
+    if not boards:
+        return
+    import sweep
+    for key, numbers in boards.items():
+        sweep.record(key, True, 24, "read", **numbers)
 
 
 # -- helpers --------------------------------------------------------------------
@@ -1148,6 +1187,8 @@ def _greenhouse_board(slug: str) -> list[dict]:
             out.append(job(title, slug.title(), location, url, "Greenhouse", description, posted_at))
         except Exception:
             continue
+    if getattr(r, "status_code", 200) == 200 and data.get("jobs"):
+        _board_read("scrape_greenhouse", "Greenhouse", slug, out)
     return out
 
 
@@ -1208,6 +1249,8 @@ def _lever_board(slug: str) -> list[dict]:
             out.append(job(title, slug.title(), location, url, "Lever", description, posted_at))
         except Exception:
             continue
+    if getattr(r, "status_code", 200) == 200 and isinstance(postings, list) and postings:
+        _board_read("scrape_lever", "Lever", slug, out)
     return out
 
 
@@ -2337,6 +2380,7 @@ def scrape_personio() -> list[dict]:
             soup = BeautifulSoup(r.text, "xml")
             positions = soup.find_all("position")
             company_name = slug.replace("-", " ").title()
+            rows: list[dict] = []
 
             for pos in positions:
                 title = _personio_text(pos, "name") or _personio_text(pos, "title")
@@ -2377,7 +2421,7 @@ def scrape_personio() -> list[dict]:
 
                 posted = _personio_text(pos, "createdAt") or _personio_text(pos, "createdDate")
 
-                results.append(job(
+                row = job(
                     title=title,
                     company=company_name,
                     location=location,
@@ -2385,7 +2429,11 @@ def scrape_personio() -> list[dict]:
                     source="Personio",
                     description=desc,
                     posted_at=posted,
-                ))
+                )
+                rows.append(row)
+                results.append(row)
+            if positions:
+                _board_read("scrape_personio", "Personio", slug, rows)
             time.sleep(0.4)
         except Exception as e:
             print(f"  [Personio/{slug}] failed: {e}")
@@ -3086,6 +3134,7 @@ def scrape_ashby() -> list[dict]:
                 continue
             data = r.json()
             per_slug = 0
+            rows: list[dict] = []
             for jp in data.get("jobs", []) or []:
                 if not jp.get("isListed", True):
                     continue
@@ -3128,7 +3177,7 @@ def scrape_ashby() -> list[dict]:
                 url = jp.get("jobUrl") or jp.get("applyUrl") or ""
                 posted = jp.get("publishedAt") or jp.get("updatedAt") or ""
 
-                results.append(job(
+                row = job(
                     title=title,
                     company=slug,
                     location=location or "Unknown",
@@ -3136,8 +3185,12 @@ def scrape_ashby() -> list[dict]:
                     source="Ashby",
                     description=desc,
                     posted_at=posted,
-                ))
+                )
+                rows.append(row)
+                results.append(row)
                 per_slug += 1
+            if data.get("jobs"):
+                _board_read("scrape_ashby", "Ashby", slug, rows)
             if per_slug:
                 print(f"  [Ashby/{slug}] {per_slug} jobs")
             time.sleep(0.3)
@@ -3174,6 +3227,7 @@ def scrape_recruitee() -> list[dict]:
                 continue
             data = r.json()
             per_slug = 0
+            rows: list[dict] = []
             for offer in data.get("offers", []) or []:
                 title = (offer.get("title") or "").strip()
                 if not title:
@@ -3201,7 +3255,7 @@ def scrape_recruitee() -> list[dict]:
                 url = offer.get("careers_url") or offer.get("careers_apply_url") or ""
                 posted = offer.get("created_at") or offer.get("published_at") or ""
 
-                results.append(job(
+                row = job(
                     title=title,
                     company=slug,
                     location=location or "Unknown",
@@ -3209,8 +3263,12 @@ def scrape_recruitee() -> list[dict]:
                     source="Recruitee",
                     description=desc,
                     posted_at=posted,
-                ))
+                )
+                rows.append(row)
+                results.append(row)
                 per_slug += 1
+            if data.get("offers"):
+                _board_read("scrape_recruitee", "Recruitee", slug, rows)
             if per_slug:
                 print(f"  [Recruitee/{slug}] {per_slug} jobs")
             time.sleep(0.3)
@@ -3691,17 +3749,46 @@ def _xing_page(url: str) -> list[dict]:
         return []
 
 
+_XING_NEW_CAP = 200   # postings newer than the last run's newest: all of them, up to this many
+
+
+def _xing_id(url: str) -> int:
+    m = re.search(r"-(\d+)$", (url or "").strip())
+    return int(m.group(1)) if m else 0
+
+
 def scrape_xing() -> list[dict]:
-    """XING via its job sitemaps and each page's JSON-LD (see _XING_SITEMAP_INDEX)."""
+    """XING via its job sitemaps and each page's JSON-LD (see _XING_SITEMAP_INDEX).
+
+    The sitemaps name every posting, and an id only grows with new postings,
+    so this source can tell what is new: an id above the newest one the last
+    delivered run saw (sweep.py keeps that number). All of those are read,
+    then the list is filled up to _XING_DESC_CAP with the newest of the rest,
+    as before. A row with a new id says so (_board_new): it is new on XING
+    whatever date it prints, the filler is not."""
     try:
         cands = _xing_candidates()
     except Exception as e:
         print(f"  [XING] sitemap read failed: {e}")
         return []
-    picked = cands[:_XING_DESC_CAP]
+    import sweep
+    try:
+        before = int(sweep.mark_value("board|xing|all", "top_id") or 0)
+    except (TypeError, ValueError):
+        before = 0
+    new = [u for u in cands if before and _xing_id(u) > before][:_XING_NEW_CAP]
+    taken = set(new)
+    rest = [u for u in cands if u not in taken]
+    picked = new + rest[:max(0, _XING_DESC_CAP - len(new))]
     results = _parallel_collect(picked, _xing_page, "XING", workers=4)
+    for row in results:
+        row["_board_new"] = bool(before) and _xing_id(row.get("url", "")) > before
+    top = max((_xing_id(u) for u in cands), default=0)
+    if top:
+        _board_read("scrape_xing", "XING", "all", results, top_id=top)
     print(f"  [XING] {len(results)} jobs from {len(picked)} of {len(cands)} recent student/junior "
-          f"tech postings in the sitemaps")
+          f"tech postings in the sitemaps"
+          + (f" ({len(new)} newer than the last run's newest)" if before else ""))
     return results
 
 
@@ -4488,9 +4575,13 @@ def scrape_linkedin() -> list[dict]:
             seen_urls.add(c["url"])
             # source "linkedin" as before: the dead-source alarm and the
             # parity check track LinkedIn as a whole.
-            batch.append(job(title=c["title"], company=c["company"], location=c["location"],
-                             url=c["url"], source="linkedin", description="",
-                             posted_at=c["posted_at"]))
+            row = job(title=c["title"], company=c["company"], location=c["location"],
+                      url=c["url"], source="linkedin", description="", posted_at=c["posted_at"])
+            if s["pool"]:
+                # From a list that is read to its end: when it was read as
+                # planned before, a card not seen yet is new on it.
+                row["_board"] = s["key"]
+            batch.append(row)
         if not new or n_cards < _LI_PAGE_SIZE:
             s["status"] = "end"
         elif s["depth"] and s["offset"] >= s["depth"]:
@@ -6046,6 +6137,8 @@ def scrape_all() -> list[dict]:
     else:
         scrapers_in_order = [s for s in scrapers_in_order if s is not scrape_linkedin]
     _ABANDONED.clear()
+    with _BOARDS_LOCK:
+        _BOARDS_READ.clear()
 
     # Start the deliberately-slow, self-throttling sources first so their wait
     # overlaps the sequential ATS scraping instead of adding to it.
@@ -6058,6 +6151,8 @@ def scrape_all() -> list[dict]:
     for scraper in [s for s in scrapers_in_order if s.__name__ not in _BACKGROUND_SCRAPERS]:
         t0 = time.time()
         jobs, timed_out = _run_scraper_guarded(scraper)
+        if not timed_out:
+            _boards_done(scraper.__name__)       # its result is taken: its boards were read
         if timed_out:
             print(f"  [{scraper.__name__}] TIMED OUT after {SCRAPER_TIMEOUT_SECONDS}s "
                   f"\u2014 abandoned, continuing with the other sources")

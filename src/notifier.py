@@ -255,6 +255,14 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None,
             'border-radius:8px;font-size:10px;margin-left:6px;">👻 stale</span>'
         ) if j.get("ghost") else ""
 
+        # Kept although the date it prints is old: it is new on a board that
+        # was read before (main._mark_new_on_read_boards). Said in the email,
+        # so an old date next to a new ad does not look like a mistake.
+        ghost_html += (
+            '<span style="background:#ecfdf5;color:#047857;padding:1px 6px;'
+            'border-radius:8px;font-size:10px;margin-left:6px;">new on this board</span>'
+        ) if j.get("_new_on_board") else ""
+
         # Evidence table rides on tailor_html so the flag-off HTML is byte-identical.
         tailor_html += _evidence_html(j)
 

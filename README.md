@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,171 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,226 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -618,6 +618,39 @@ already on a board when the pipeline reads it for the first time. Not measured: 
 requests LinkedIn answers from the production address with this pacing.
 [tests/test_full_daily_sweep.py](tests/test_full_daily_sweep.py) covers the lane and the marks.
 
+## An ad that is new on a board the pipeline already reads (17 November 2026)
+
+The freshness rule reads the date an ad prints. That date is not always the day the ad
+appeared: a re-opened posting keeps its first date, some boards print the day the
+requisition was created, and XING postings with a brand-new id carried dates days back.
+Such an ad was dropped as old on the day it showed up, although the pipeline could not
+have seen it earlier.
+
+Where the pipeline can tell that an ad is new, the printed date no longer decides:
+
+- **Boards read as a whole.** Greenhouse, Lever, Ashby, Personio and Recruitee hand over
+  a company's whole list in one answer, and the LinkedIn lists for NRW are read to their
+  end. Each scraper names the boards it read. An ad the pipeline has not seen, on a board
+  that an earlier delivered run read within the last 48 hours, is new there.
+- **XING.** The sitemaps name every posting, and an id only grows with new ones. Every
+  posting above the newest id of the last delivered run is read (up to 200; before, the
+  newest 60 of everything) and counts as new. The rest of the 60 keeps the date rule.
+
+Unchanged: a board read for the first time has no earlier read, so what already stands on
+it is still judged by its date. Keyword searches, Indeed and Adzuna keep the date rule:
+there the pipeline sees a part of the results, and an ad it has not seen may be old.
+Workable, Teamtailor, Breezy, SmartRecruiters and Workday are not included.
+
+Two safeguards. Every copy of a job that is merged into another one across sources is now
+marked as seen with it; until then a losing copy stayed unseen, and when it turned up
+alone on a later day it looked new. And at most 60 ads a run get past the age rule this
+way: if the memory of seen ads were ever emptied, every old ad on a known board would
+look new. Past the limit the printed date decides again and the digest carries a warning.
+
+The email marks such an ad "new on this board", the audit line of its score says so, and
+the run log counts them. Not measured: how many ads a day this keeps.
+[tests/test_new_on_a_read_board.py](tests/test_new_on_a_read_board.py) covers it.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -684,7 +717,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,171 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,226 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |
