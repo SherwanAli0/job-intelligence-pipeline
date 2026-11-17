@@ -605,3 +605,134 @@ def junior_qualifier_in_title(title: str) -> bool:
 def junior_qualifier_in_text(text: str) -> bool:
     """Same idea for the opening of an ad body (whole words only)."""
     return bool(_RE_JUNIOR_IN_BODY.search(text or ""))
+
+
+# -- Years that describe the employer, not the applicant ----------------------
+# Shared by main._no_experience_overload and scorer._hard_disqualify.
+#
+# C&A opens every ad with "We are building on more than 180 years of experience
+# in the fashion industry". The bare "N years of ... experience" pattern read
+# that as a requirement of 180 years, and a working-student ad the owner later
+# received from LinkedIn's own email was dropped before scoring (2026-11-17).
+#
+# A mention is the employer's own history only on positive evidence:
+#   1. the number is 15 or more ("more than 180 years of experience"), or
+#   2. the words right before the number say that the employer HAS the
+#      experience ("we have", "our team has", "building on", "thanks to our",
+#      "our", "we are a team with", "wir verfügen über", "dank unserer"), or
+#   3. the employer names itself right after the mention ("With 10 years of
+#      experience, we know the market").
+# and never when the sentence speaks to or about the applicant up to the end
+# of the mention ("you", "candidate", "we want", "wir suchen", "mindestens"),
+# when a requirement word follows ("... required", "... vorausgesetzt"), or
+# when the clause after the mention does ("..., we expect").
+# "We" alone is not evidence: "We want 4 years of experience" is a requirement.
+# A statement in the third person with a number under 15 ("Acme has 12 years
+# of experience") is still read as a requirement.
+EXP_IMPLAUSIBLE_YEARS = 15
+_EXP_LEAD_CHARS = 90
+_EXP_TAIL_CHARS = 60
+# Where a sentence ends: punctuation, a line break, a bullet, or a dash set off
+# by spaces ("flexible hours - 3 years of experience required").
+_RE_EXP_BREAK = re.compile(r"[.!?\n;:•|]|\s[-–—]\s")
+_EXP_QUANTIFIER = (r"(?:(?:well\s+)?over|more\s+than|nearly|almost|around|about|some|[üu]ber|mehr\s+als"
+                   r"|rund|fast|bereits|inzwischen|knapp)")
+_RE_EXP_EMPLOYER_HAS = re.compile(
+    r"(?:"
+    # we have / our team has / we are building on / wir verfügen über ...
+    r"\b(?:we|wir|our\s+\w+(?:\s+\w+)?|unser\w*\s+\w+)\s+(?:can\s+)?"
+    r"(?:have|has|bring|brings|combine|combines|boast|boasts|possess|possesses"
+    r"|draw\s+on|draws\s+on|look\s+back\s+on|looks\s+back\s+on|rely\s+on|build\s+on|builds\s+on"
+    r"|are\s+building\s+on|is\s+building\s+on"
+    r"|haben|hat|bringen|bringt|besitzen|besitzt|verf[üu]gen\s+[üu]ber|verf[üu]gt\s+[üu]ber"
+    r"|blicken\s+auf|blickt\s+auf)"
+    # building on / thanks to our / with our / our ...
+    r"|\b(?:building|built|drawing|based)\s+on"
+    r"|\b(?:with|thanks\s+to|backed\s+by|through|dank|mit|aufgrund|durch)\s+(?:our|unser\w*)"
+    r"|\b(?:our|unser\w*)"
+    # we are a team with ...
+    r"|\b(?:we\s+are|wir\s+sind)\s+(?:an?|ein\w*)\s+[\w\s-]{1,40}?\s+(?:with|mit)"
+    r")\s+(?:" + _EXP_QUANTIFIER + r"\s+)?(?:combined\s+|collective\s+|gemeinsam\w*\s+)?$",
+    re.IGNORECASE,
+)
+_RE_EXP_EMPLOYER_AFTER = re.compile(r"^[^.!?\n;:•|]{0,60}?,\s+(?:we|our|wir|unser\w*)\b", re.IGNORECASE)
+_RE_EXP_APPLICANT_VOICE = re.compile(
+    r"\b(?:you|your|yours|candidates?|applicants?|someone|person|people|colleagues?|team\s?members?"
+    r"|new|next|future|hir(?:e|ing)"
+    r"|requir\w*|must|should|need\w*|want\w*|wish\w*|ask\w*|look\w*\s+for|valu\w*|prefer\w*|desir\w*"
+    r"|looking\s+for|seek\w*|search\w*|expect\w*|ideal\w*|successful|minimum|at\s+least|profile|qualif\w*"
+    r"|du|dir|dich|dein\w*|sie|ihnen|ihr\w*|euch|bewerber\w*|kolleg\w*|mitarbeiter\w*|teammitglied\w*"
+    r"|neue\w*|k[üu]nftig\w*|zuk[üu]nftig\w*|mindestens|erforderlich\w*"
+    r"|voraus\w*|such\w*|gesucht|erwart\w*|w[üu]nsch\w*|gew[üu]nscht|erw[üu]nscht|brauch\w*|verlang\w*"
+    r"|forder\w*|gefordert|ben[öo]tig\w*|mitbring\w*|bringst|freu\w*|profil)\b",
+    re.IGNORECASE,
+)
+_RE_EXP_AFTER_ASKS = re.compile(
+    r"^\s*(?:would\s+|also\s+|therefore\s+|thus\s+|daher\s+|deshalb\s+)?"
+    r"(?:expect|require|ask|look|need|want|seek|wish|prefer|hire"
+    r"|erwarten|suchen|w[üu]nschen|verlangen|brauchen|fordern|ben[öo]tigen|setzen)\w*\b"
+    r"|\b(?:you|your|du|dir|dich|dein\w*|sie|ihnen|ihr\w*)\b",
+    re.IGNORECASE,
+)
+_RE_EXP_REQUIRED_AFTER = re.compile(
+    r"\b(?:required|requirement|mandatory|necessary|needed|preferred|desired|is\s+a\s+must"
+    r"|erforderlich|gew[üu]nscht|erw[üu]nscht|voraus\w*|notwendig|zwingend)\b",
+    re.IGNORECASE,
+)
+
+
+def employer_history(text: str, start: int, end: int, years: int | None = None) -> bool:
+    """Is the experience mentioned at text[start:end] the employer's own
+    history rather than something asked of the applicant? `start` is where
+    the number (or the German word for "several years") begins."""
+    lead_from = max(0, start - _EXP_LEAD_CHARS)
+    for m in _RE_EXP_BREAK.finditer(text, lead_from, max(lead_from, start)):
+        lead_from = m.end()
+    if _RE_EXP_APPLICANT_VOICE.search(text[lead_from:end]):
+        return False
+    tail = text[end:end + _EXP_TAIL_CHARS]
+    cut = _RE_EXP_BREAK.search(tail)
+    if _RE_EXP_REQUIRED_AFTER.search(tail[:cut.start()] if cut else tail):
+        return False
+    if years is not None and years >= EXP_IMPLAUSIBLE_YEARS:
+        return True
+    if _RE_EXP_EMPLOYER_HAS.search(text[lead_from:start]):
+        return True
+    after = text[end:end + 130]
+    named = _RE_EXP_EMPLOYER_AFTER.search(after)
+    if not named:
+        return False
+    # "..., we expect" asks; "..., we know what clients need" does not. Only
+    # the rest of that clause counts, not the sentence after it.
+    clause = after[named.end():named.end() + 60]
+    stop = _RE_EXP_BREAK.search(clause)
+    return not _RE_EXP_AFTER_ASKS.search(clause[:stop.start()] if stop else clause)
+
+
+def number_start(match: "re.Match") -> int:
+    """Where the number of years begins inside a match of an experience
+    pattern: the first group that holds digits or a number word."""
+    for index, group in enumerate(match.groups(), 1):
+        if group and (group.isdigit() or group.lower() in _NUMBER_WORDS):
+            return match.start(index)
+    return match.start()
+
+
+_NUMBER_WORDS = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+
+
+# Titles that mark a role as designed for fresh graduates. Such postings
+# often still boilerplate "X years experience" in the body (e.g. Airbus VIE
+# programmes) - the title-level intent wins, so they skip the experience
+# checks. "Postgraduate Program" and compounds like "Traineeprogramm" count
+# too: the pattern used to want the bare words (2026-11-17, a postgraduate
+# programme in Aachen dropped for experience).
+_RE_GRADUATE_TITLE = re.compile(
+    r"\b(?:post[\s\-]?graduates?|graduates?|trainee\w*|vie|interns?|internships?|"
+    r"praktikum\w*|praktikant\w*|absolvent\w*|entry[\s\-]?level|junior)\b",
+    re.IGNORECASE,
+)
+
+
+def graduate_designed_title(title: str) -> bool:
+    return bool(_RE_GRADUATE_TITLE.search(title or ""))
