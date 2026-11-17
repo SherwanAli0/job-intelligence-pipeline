@@ -76,13 +76,15 @@ class TestNewOnABoardReadBefore:
         assert main._mark_new_on_read_boards([j]) == (1, 0)
         assert j["_new_on_board"] is True and main._is_fresh_enough(j)
 
-    def test_a_board_read_for_the_first_time_keeps_the_date_rule(self, tmp_path):
-        # what already stands on a new board is still judged by its date
+    def test_a_board_whose_last_read_is_too_long_ago_keeps_the_date_rule(self, tmp_path):
+        # read four days ago and not since: the ad may have stood there for days
+        _read_before(tmp_path, board__personio__acme=100)
         j = _job()
         assert main._mark_new_on_read_boards([j]) == (0, 0)
         assert not main._is_fresh_enough(j) and "_new_on_board" not in j
 
     def test_the_read_of_this_very_run_does_not_count(self, tmp_path):
+        _read_before(tmp_path, board__personio__acme=100)
         sweep.record("board|personio|acme", True, 24, "read")      # this run read it
         j = _job()
         assert main._mark_new_on_read_boards([j]) == (0, 0)
@@ -158,14 +160,15 @@ class TestNewOnABoardReadBefore:
 
 # -- a limit per run ---------------------------------------------------------------
 class TestALimitPerRun:
-    def test_past_the_limit_the_printed_date_decides_again(self, tmp_path):
+    def test_past_the_limit_an_ad_waits_for_a_later_run(self, tmp_path):
         _read_before(tmp_path, board__personio__acme=24)
         jobs = [_job(id=f"j{i}") for i in range(main._NEW_ON_BOARD_CAP + 10)]
         assert main._mark_new_on_read_boards(jobs) == (main._NEW_ON_BOARD_CAP, 10)
         assert sum(1 for j in jobs if main._is_fresh_enough(j)) == main._NEW_ON_BOARD_CAP
         last = jobs[-1]
         assert not main._fresh_or_noted(last)
-        assert last["_drop_note"].endswith("new on a board read before, but past the run's limit")
+        assert "waits for a later run" in last["_drop_note"]
+        assert last["_new_on_board_over"] is True                # node_filter reads this
 
     def test_the_limit_is_sixty(self):
         assert main._NEW_ON_BOARD_CAP == 60
@@ -186,25 +189,28 @@ class TestThroughTheFilterStep:
 
     def test_the_ad_reaches_the_model_and_the_old_copy_of_the_rule_would_have_dropped_it(self, tmp_path,
                                                                                          monkeypatch, capsys):
-        _read_before(tmp_path, board__personio__acme=24)
+        _read_before(tmp_path, board__personio__acme=24, board__personio__other=100)
         known = _job(id="known")
-        first_time = _job(id="first", board="board|personio|other", company="Other",
-                          title="Working Student Data Engineering")
-        out, audit = self._run(monkeypatch, [known, first_time])
+        long_unread = _job(id="stale", board="board|personio|other", company="Other",
+                           title="Working Student Data Engineering")
+        out, audit = self._run(monkeypatch, [known, long_unread])
         assert [j["id"] for j in out["new_jobs"]] == ["known"]
-        assert audit["first"]["filter"] == "Freshness filter"
-        assert audit["first"]["why"].startswith(f"dated {_old(9)}, ")
-        assert "health_warnings" not in out
+        assert audit["stale"]["filter"] == "Freshness filter"
+        assert audit["stale"]["why"].startswith(f"dated {_old(9)}, ")
+        assert "health_warnings" not in out and out["held_over"] == []
         assert "1 ads kept although the date they print is older" in capsys.readouterr().out
 
     def test_far_too_many_new_ads_is_a_warning_in_the_digest(self, tmp_path, monkeypatch):
         _read_before(tmp_path, board__personio__acme=24)
         jobs = [_job(id=f"j{i}", title=f"Working Student Data Analytics {i}", company=f"Acme {i}")
                 for i in range(main._NEW_ON_BOARD_CAP + 5)]
-        out, _ = self._run(monkeypatch, jobs, {"health_warnings": ["an earlier warning"]})
+        out, audit = self._run(monkeypatch, jobs, {"health_warnings": ["an earlier warning"]})
         assert out["health_warnings"][0] == "an earlier warning"
-        assert "65 ads looked new on job boards that were read before" in out["health_warnings"][1]
+        assert "5 older ads that are new to the pipeline wait for the next runs" in out["health_warnings"][1]
         assert len(out["new_jobs"]) == main._NEW_ON_BOARD_CAP
+        # the five that wait are named, so that the save step leaves them unseen
+        assert out["held_over"] == [f"j{i}" for i in range(60, 65)]
+        assert "waits for a later run" in audit["j64"]["why"]
 
     def test_the_audit_line_of_the_judged_ad_says_why_it_was_kept(self, tmp_path, monkeypatch):
         _read_before(tmp_path, board__personio__acme=24)

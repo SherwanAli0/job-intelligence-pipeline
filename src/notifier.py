@@ -118,8 +118,35 @@ def _evidence_html(j: dict) -> str:
     )
 
 
+def _by_hand_html(by_hand: list[dict] | None) -> str:
+    """Roles the pipeline knows by title, place and link only, because their
+    site refuses the page to a program. No score: the ad text was not read."""
+    if not by_hand:
+        return ""
+    from html import escape
+    shown = by_hand[:_BY_HAND_MAX]
+    items = "".join(
+        f'<div style="margin-top:4px;">&bull; <a href="{escape(str(j.get("url") or ""), quote=True)}" '
+        f'style="color:#1d4ed8;text-decoration:none;">{escape(str(j.get("title") or ""))}</a>'
+        f' <span style="color:#6b7280;">{escape(str(j.get("company") or ""))}'
+        f'{", " + escape(str(j.get("location") or "")) if j.get("location") else ""}</span></div>'
+        for j in shown)
+    more = (f'<div style="margin-top:4px;color:#6b7280;">and {len(by_hand) - len(shown)} more</div>'
+            if len(by_hand) > len(shown) else "")
+    return (
+        '<div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;'
+        'border-radius:8px;padding:10px 14px;margin:10px 28px 0;font-size:13px;">'
+        '<b>To check by hand</b> <span style="color:#6b7280;">(the site does not let a program read '
+        'these pages, so they have no score)</span>'
+        f'{items}{more}</div>'
+    )
+
+
+_BY_HAND_MAX = 15
+
+
 def _build_html(jobs: list[dict], warnings: list[str] | None = None,
-                notes: list[str] | None = None) -> str:
+                notes: list[str] | None = None, by_hand: list[dict] | None = None) -> str:
     today = date.today().strftime("%d %b %Y")
 
     # T1d: pipeline-health warnings (e.g. a job source silently dead for
@@ -142,6 +169,8 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None,
             f'border-radius:8px;padding:8px 14px;margin:10px 28px 0;font-size:12px;">'
             f'{items}</div>'
         )
+
+    warn_html += _by_hand_html(by_hand)
 
     # Sort jobs so that fresh ones bubble to the top within their score band
     def _sort_key(j):
@@ -260,7 +289,8 @@ def _build_html(jobs: list[dict], warnings: list[str] | None = None,
         # so an old date next to a new ad does not look like a mistake.
         ghost_html += (
             '<span style="background:#ecfdf5;color:#047857;padding:1px 6px;'
-            'border-radius:8px;font-size:10px;margin-left:6px;">new on this board</span>'
+            'border-radius:8px;font-size:10px;margin-left:6px;">'
+            + ("from a newly added board" if j.get("_first_read") else "new on this board") + '</span>'
         ) if j.get("_new_on_board") else ""
 
         # Evidence table rides on tailor_html so the flag-off HTML is byte-identical.
@@ -385,7 +415,7 @@ _SMTP_RETRY_WAITS = (5, 20, 0)
 
 
 def send_email(jobs: list[dict], warnings: list[str] | None = None,
-               notes: list[str] | None = None) -> bool:
+               notes: list[str] | None = None, by_hand: list[dict] | None = None) -> bool:
     """Send the digest. Returns True only on confirmed delivery - main.py uses
     this to decide whether jobs may be marked 'seen' (a failed send must not
     bury the day's matches). `warnings` are pipeline-health notes rendered as
@@ -406,11 +436,14 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None,
     subject_prefix = f"🔥 {fresh_count} fresh · " if fresh_count else "🎯 "
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"{subject_prefix}{len(jobs)} job matches \u2014 {today}"
+    by_hand = by_hand or []
+    msg["Subject"] = (f"{subject_prefix}{len(jobs)} job matches"
+                      + (f" + {len(by_hand)} to check by hand" if by_hand else "")
+                      + f" \u2014 {today}")
     msg["From"]    = gmail_user
     msg["To"]      = gmail_to
 
-    html = _build_html(jobs, warnings, notes)
+    html = _build_html(jobs, warnings, notes, by_hand)
     msg.attach(MIMEText(html, "html"))
 
     # Three attempts with a short backoff: a dropped connection or a
@@ -436,7 +469,8 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None,
             # sendmail() returned, so Gmail accepted the message; only the
             # closing QUIT failed. Retrying here would send the digest twice.
             print(f"  [Email] delivered; ignoring an error while closing: {e}")
-        print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh) to {gmail_to}"
+        print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh"
+              + (f", {len(by_hand)} to check by hand" if by_hand else "") + f") to {gmail_to}"
               + (f" (attempt {attempt})" if attempt > 1 else ""))
         return True
     print(f"  [Email] Failed: {last_error}")

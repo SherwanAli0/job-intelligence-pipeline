@@ -275,7 +275,12 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
         merged = (set(prior.get("_merged_ids") or []) | set(j.get("_merged_ids") or [])
                   | {prior.get("id"), j.get("id")})
         cur_focus, prv_focus = _in_focus(j), _in_focus(prior)
-        if cur_focus != prv_focus:
+        if bool(j.get("_by_hand")) != bool(prior.get("_by_hand")):
+            # One copy is known by title only (its site refuses the page),
+            # the other can be read and scored: the readable one stays.
+            if prior.get("_by_hand"):
+                best[key] = j
+        elif cur_focus != prv_focus:
             if cur_focus:
                 best[key] = j
         else:
@@ -2082,7 +2087,8 @@ def _fresh_by_date(j: dict) -> bool:
 #
 # Where the pipeline can tell that an ad is new, the printed date no longer
 # decides. It can tell on a board it reads as a whole (scrapers._board_read:
-# Greenhouse, Lever, Ashby, Personio, Recruitee, the LinkedIn lists for NRW)
+# Greenhouse, Lever, Ashby, Personio, Recruitee, Workable, Teamtailor, Breezy,
+# the LinkedIn lists for NRW)
 # and on XING by the posting id: the board was read by an earlier delivered
 # run not longer ago than the freshness rule allows, and this ad was not on
 # it then, or it would be in seen_jobs. A board read for the first time has
@@ -2092,46 +2098,75 @@ def _fresh_by_date(j: dict) -> bool:
 #
 # A limit per run, because the inference rests on seen_jobs: if that file is
 # ever emptied, or a board changes every link at once, each old ad on it looks
-# new. Past the limit the printed date decides again and the digest says so.
+# new. Past the limit an ad waits: it is left out of seen_jobs, so the next
+# run meets it again, and the digest says how many are waiting.
+#
+# A board read for the first time (owner, 2026-11-17: yes). What stands on a
+# newly added board is not new, but the pipeline could not have seen it
+# earlier: on 14 November 2026 three new feeds lost 642 ads to the age rule on
+# their first day, 40 of them wanted. Such a board has no earlier read; its
+# ads now pass the age rule too, behind the ads that are new on known boards
+# and within the same limit, so a large board is worked through over several
+# runs. Not for lists that are asked for a time window (LinkedIn) or XING,
+# which tells new postings by their id: neither has such a backlog.
 _NEW_ON_BOARD_CAP = 60
 
 
-def _new_on_a_read_board(j: dict) -> bool:
+def _board_standing(j: dict) -> str:
+    """'' (the printed date decides), 'new' (new on a board that was read
+    before) or 'first' (the board is read for the first time)."""
     key = j.get("_board")
-    if not key or j.get("_board_new") is False:
-        return False
+    if not key or not isinstance(key, str) or j.get("_board_new") is False:
+        return ""
     try:
         import sweep
         from config import max_filter_age_hours
         read = sweep.covered_until(key)             # by an earlier delivered run
         if read is None:
-            return False
+            return "first" if key.startswith("board|") and "_board_new" not in j else ""
         hours = (sweep.run_start() - read).total_seconds() / 3600.0
-        return 0 < hours <= max_filter_age_hours()
+        return "new" if 0 < hours <= max_filter_age_hours() else ""
     except Exception:
-        return False
+        return ""
+
+
+def _new_on_a_read_board(j: dict) -> bool:
+    return _board_standing(j) == "new"
 
 
 def _mark_new_on_read_boards(jobs: list[dict], skip_ids=()) -> tuple[int, int]:
     """Flag the jobs the age rule would drop for their printed date although
-    they are new on a board that was read before. Returns (flagged, left to
-    the printed date because the run's limit was reached)."""
-    late = [j for j in jobs if j.get("id") not in skip_ids
-            and not _fresh_by_date(j) and _new_on_a_read_board(j)]
+    they are new on a board that was read before, or stand on a board that is
+    read for the first time. Returns (flagged, waiting for a later run because
+    the run's limit was reached)."""
+    new, first = [], []
+    for j in jobs:
+        if j.get("id") in skip_ids or _fresh_by_date(j):
+            continue
+        standing = _board_standing(j)
+        if standing == "new":
+            new.append(j)
+        elif standing == "first":
+            first.append(j)
+    late = new + first                              # a new board's backlog goes last
     kept, over = late[:_NEW_ON_BOARD_CAP], late[_NEW_ON_BOARD_CAP:]
     for j in kept:
         j["_new_on_board"] = True
+        if any(j is f for f in first):
+            j["_first_read"] = True
     for j in over:
         j["_new_on_board_over"] = True
     if kept:
         from collections import Counter
         by_source = Counter(j.get("source", "?") for j in kept)
+        backlog = sum(1 for j in kept if j.get("_first_read"))
         print(f"[Freshness] {len(kept)} ads kept although the date they print is older than the "
-              f"rule allows: new on a board that was read before ("
+              f"rule allows: {len(kept) - backlog} new on a board that was read before, {backlog} on a "
+              f"board read for the first time ("
               + ", ".join(f"{s} {n}" for s, n in by_source.most_common()) + ")")
     if over:
-        print(f"[Freshness] {len(over)} more looked new on such a board; past {_NEW_ON_BOARD_CAP} "
-              f"a run the printed date decides")
+        print(f"[Freshness] {len(over)} more wait for a later run: {_NEW_ON_BOARD_CAP} a run get past "
+              f"the age rule this way")
     return len(kept), len(over)
 
 
@@ -2147,8 +2182,8 @@ def _fresh_or_noted(j: dict) -> bool:
     if age is not None:
         j["_drop_note"] = (f"dated {str(j.get('posted_at') or '').strip()[:10]}, "
                            f"{age:.1f} days old when first seen"
-                           + ("; new on a board read before, but past the run's limit"
-                              if j.pop("_new_on_board_over", False) else ""))
+                           + ("; waits for a later run (the limit of ads let past the age rule "
+                              "was reached)" if j.get("_new_on_board_over") else ""))
     return False
 
 
@@ -2733,6 +2768,27 @@ def _write_audit() -> None:
         print(f"  [Audit] could not write the audit file: {type(e).__name__}")
 
 
+def _by_hand_kept(rows: list[dict]) -> list[dict]:
+    """The checks a title and a place can pass, for rows known by nothing
+    else: tech work in the title, a place in Germany, and inside the focus
+    area. A row without text counts as on-site, so that means North
+    Rhine-Westphalia and the Bonn belt."""
+    kept = []
+    for j in rows:
+        if not _is_tech_relevant(j):
+            why = "Tech-relevance filter"
+        elif not _is_attendable_from_germany(j):
+            why = "Location filter"
+        else:
+            _tag_where(j)
+            why = "" if _is_in_focus_area(j) else "Focus-area filter"
+        if why:
+            _RUN_AUDIT.append(_audit_row(j, "filter", filter=why, why="known by title only"))
+        else:
+            kept.append(j)
+    return kept
+
+
 def node_filter(state: dict) -> dict:
     _RUN_AUDIT.clear()
     seen, all_jobs = state["seen"], state["all_jobs"]
@@ -2797,6 +2853,14 @@ def node_filter(state: dict) -> dict:
     # Fetch the full ad for stub bodies BEFORE the tech gate and the language
     # test, so neither judges an English ad on a two-line snippet. Ids whose
     # body could not be fetched are remembered for node_persist.
+    # Rows known by title, place and link only, because their site refuses
+    # the page to a program (DLR's bot defence since 2026-11-17,
+    # scrapers._rmk_stub). They leave the chain here: asking for the page
+    # again is what the site refused, and every check after this one reads
+    # the ad text. They go to the digest as a list to check by hand, without
+    # a score, once they have passed what a title and a place can pass.
+    by_hand = [j for j in new_jobs if j.get("_by_hand")]
+    new_jobs = [j for j in new_jobs if not j.get("_by_hand")]
     body_unresolved = _fill_missing_bodies(new_jobs)
     new_jobs = _apply_filter(new_jobs, _is_tech_relevant,
                              "Tech-relevance filter (CV keywords)")
@@ -2808,6 +2872,11 @@ def node_filter(state: dict) -> dict:
         _tag_where(j)
     new_jobs = _apply_filter(new_jobs, _is_in_focus_area,
                              "Focus-area filter (remote/hybrid DE, on-site NRW+Bonn)")
+    by_hand = _by_hand_kept(by_hand)
+    if by_hand:
+        print(f"[By hand] {len(by_hand)} roles are listed by title only (the site refuses the page):")
+        for j in by_hand[:5]:
+            print(f"  - {j.get('title', '')[:90]} @ {j.get('company', '')} ({j.get('location', '')})")
     new_jobs = _apply_filter(new_jobs, _is_english_friendly,
                              "English filter (ad must read as English)")
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
@@ -2823,17 +2892,20 @@ def node_filter(state: dict) -> dict:
     _skill_radar(all_jobs)
 
     if not new_jobs:
-        print("Nothing new today - skipping scoring and notification.")
+        print("Nothing new today - skipping scoring"
+              + (" (the list to check by hand is still sent)." if by_hand else " and notification."))
 
+    # Ads past the run's limit wait: node_persist leaves them out of seen_jobs.
+    held_over = [j["id"] for j in all_jobs if j.get("_new_on_board_over") and j.get("id")]
     out = {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track,
-           "body_unresolved": body_unresolved}
+           "body_unresolved": body_unresolved, "by_hand": by_hand, "held_over": held_over}
     if over_the_limit:
-        # Far more ads than usual looked new on boards that were read before:
-        # seen_jobs emptied, or a board that changed every link. Worth a look.
+        # A newly added board with many ads, or far more new ads than usual
+        # on known boards: seen_jobs emptied, or a board that changed every link.
         out["health_warnings"] = list(state.get("health_warnings") or []) + [
-            f"{over_the_limit + _NEW_ON_BOARD_CAP} ads looked new on job boards that were read before, "
-            f"far more than usual. {_NEW_ON_BOARD_CAP} were let past the age rule, the rest were judged "
-            f"by their printed date. Has the memory of seen ads been reset?"]
+            f"{over_the_limit} older ads that are new to the pipeline wait for the next runs: "
+            f"{_NEW_ON_BOARD_CAP} a run are let past the age rule (a newly added job board is worked "
+            f"through this way). If no board was added, the memory of seen ads may have been reset."]
     return out
 
 
@@ -2868,7 +2940,8 @@ def node_score(state: dict) -> dict:
                                      german_ad=bool(j.get("_german_ad")),
                                      reason=str(j.get("reason", ""))[:400],
                                      # judged although its printed date is old
-                                     **({"kept": "new on a board read before"}
+                                     **({"kept": "first read of its board" if j.get("_first_read")
+                                         else "new on a board read before"}
                                         if j.get("_new_on_board") else {})))
 
     return {"scored": scored, "dq_counts": dq_counts}
@@ -2959,12 +3032,13 @@ def node_rank(state: dict) -> dict:
 
 def node_notify(state: dict) -> dict:
     top, near = state.get("top", []), state.get("near", [])
+    by_hand = state.get("by_hand") or []
     if state.get("dry_run"):
         print("\n[DRY RUN] Skipping email + Notion. Pipeline complete.")
         return {"email_ok": True}
-    if top or near:
+    if top or near or by_hand:
         ok = send_email(top + near, warnings=state.get("health_warnings"),
-                        notes=state.get("run_notes"))
+                        notes=state.get("run_notes"), by_hand=by_hand)
         if top:
             add_to_notion(top)
         return {"email_ok": ok}
@@ -2998,6 +3072,9 @@ def node_persist(state: dict) -> dict:
         retry |= _score_retry_update(
             [j["id"] for j in state.get("scored", [])
              if str(j.get("reason", "")).startswith(SCORER_FAILED_PREFIX)])
+        # ...and ads that wait for a later run because this run had let its
+        # limit of older ads past the age rule (_mark_new_on_read_boards).
+        retry |= set(state.get("held_over") or [])
         seen.update({j["id"]: today for j in all_jobs if j["id"] not in retry})
         # ...and the copies of the same job that were merged into the kept
         # one (_dedup_cross_source): read is read, under whichever link.
@@ -3047,6 +3124,7 @@ def node_persist(state: dict) -> dict:
             "drops": {label: sum(c.values()) for label, c in drops.items()},
             "dq": dict(dq.most_common(8)) if dq else {},
             "digest": len(state.get("top", [])), "near": len(state.get("near", [])),
+            "by_hand": len(state.get("by_hand") or []), "held_over": len(state.get("held_over") or []),
             "closed": state.get("closed_dropped", 0),
             "track_mix": state.get("track_mix", {}),
             "email_ok": email_ok,

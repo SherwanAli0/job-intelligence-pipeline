@@ -373,8 +373,8 @@ def body_fetch_report(top: int = 8) -> str:
 
 
 # -- Boards that were read as a whole (2026-11-17) -------------------------------
-# Greenhouse, Lever, Ashby, Personio and Recruitee hand over a company's whole
-# list of open jobs in one answer. A job this run sees for the first time on
+# Greenhouse, Lever, Ashby, Personio, Recruitee, Workable, Teamtailor and
+# Breezy hand over a company's whole list of open jobs in one answer. A job this run sees for the first time on
 # such a board, when an earlier run has read the board, is new THERE, whatever
 # date it prints (a re-opened ad keeps its first date, some boards print the
 # day the requisition was created). The freshness rule used to drop it for
@@ -4369,18 +4369,19 @@ _LI_RESULT_LIMIT = 1000       # LinkedIn serves nothing beyond the first 1,000 r
 # "Praktikum" 339 results for six evening hours) stay well below it.
 _LI_LIST_LIMIT = 800
 _LI_PACE = float(os.environ.get("JOBHUNTER_LINKEDIN_PACE", "3"))          # seconds between requests
-# Results read per keyword search. It was 50 with python-jobspy, on the days
-# LinkedIn let the query through at all. One paced lane has about 450 requests
-# in its time, once the answers' own time and the description fetches in
-# between are taken off: the two NRW lists take around 120 of them, three
-# pages for each of the 93 keyword searches 279. Then every search is read as far as planned
-# in a normal run, and its mark moves on; a depth the lane cannot reach would
-# leave every search cut short in every run.
-_LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "30"))
+# Results read per keyword search: 50, as with python-jobspy on the days
+# LinkedIn let its query through. The lane started with 30, not knowing what
+# LinkedIn would answer from the production address. Its first run (17
+# November, 21:08) read 95 searches, 333 requests in 1,303 seconds, and not
+# one was refused: 3.9 seconds a request with the description fetches in
+# between. Five pages for each of the 93 keyword searches are 465 requests,
+# the two NRW lists around 100 more, about 37 minutes. A search the lane
+# cannot finish keeps its place for the next run (sweep.py).
+_LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "50"))
 # The lane's time, waits and description fetches included. python-jobspy's
 # LinkedIn lane ran for about 33 minutes of a run (the 14 minutes of the
 # other sources plus 19 on its own); the scrape as a whole took 40.
-_LI_SECONDS = int(os.environ.get("JOBHUNTER_LINKEDIN_SECONDS", "2100"))
+_LI_SECONDS = int(os.environ.get("JOBHUNTER_LINKEDIN_SECONDS", "2400"))
 _LI_WAITS = (60, 120, 240)    # after the first, the second and every later refusal in a row
 _LI_GIVE_UP_AFTER = 4         # waits in a row without one answer: the next refusal ends the lane
 _LI_EMPTY_PAGE_CHARS = 400    # an answer without cards that is longer than this is no empty result
@@ -4816,7 +4817,10 @@ _RMK_REGION = re.compile(
 )
 _RMK_STUDENT = re.compile(
     r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr"
-    r"|Praktik|Internship|Praxissemester",
+    r"|Praktik|Internship|Praxissemester"
+    # DLR titles its student roles "Studentin (w/m/d) ..." and "Student (f/m/x)
+    # ..." (2026-11-17: the pattern above picked 41 of its job addresses).
+    r"|Studentin\b|Student(?:in)?-%28|Studierende",
     re.IGNORECASE,
 )
 # Match the city by NAME. Splitting the URL path on dashes instead produced
@@ -4850,9 +4854,74 @@ _RMK_NRW = re.compile(
 )
 
 
+# Pages a site would not hand out in this run, by host. On 17 November 2026
+# jobs.dlr.de began to answer every job page with HTTP 403 and "Policy ID:
+# cq_botdefence_system_policy", while its sitemap and robots.txt stayed open.
+# A site that says no to a program is not asked in another way (the rule of
+# this repository: no way around a bot wall), and not asked 120 times a run
+# either: after three refusals the rest of its pages are left alone. What the
+# sitemap address itself says (place, title, link) is still public, and such
+# a role goes to the digest as a row to check by hand (_rmk_stub).
+_RMK_REFUSED: dict = {}
+_RMK_ANSWERS: dict = {}          # host -> page answers of any kind in this run
+_RMK_GATES: dict = {}            # host -> lock that lets its first pages through one by one
+_RMK_LOCK = threading.Lock()
+_RMK_REFUSALS_BEFORE_STOP = 3
+_RMK_REFUSED_STATUS = (401, 403, 429)
+_RMK_GENDER_TAG = re.compile(r"\((wmd|mwd|fmx|mfx|fmd|mfd|wmx|mwx|gn)\)", re.IGNORECASE)
+# An address drops the slash of "Praktikum/Masterarbeit" and "Internship/Master
+# thesis": the two words stand glued together. Only after these words, so that
+# "JavaScript" and "DevOps" stay whole.
+_RMK_GLUED = re.compile(r"\b(Praktikum|Praktikant(?:in)?|Internship|Abschlussarbeit|Masterarbeit"
+                        r"|Bachelorarbeit|Studienarbeit|Werkstudent(?:in)?)(?=[A-ZÄÖÜ])")
+
+
+def _rmk_stub(url: str, source: str) -> dict | None:
+    """A row from the sitemap address alone: '/job/{Place}-{Title}/{id}/'."""
+    path = urllib.parse.unquote(url or "").split("/job/", 1)[-1].strip("/")
+    head, _, tail = path.rpartition("/")
+    slug = head if head and tail.isdigit() else path
+    text = " ".join(slug.replace("-", " ").split())
+    m = _RMK_CITY_RE.search("/job/" + text)
+    place = m.group(1) if m else ""
+    title = text[len(place):].strip() if place else text
+    title = _RMK_GENDER_TAG.sub(lambda g: "(" + "/".join(g.group(1).lower()) + ")", title)
+    title = _RMK_GLUED.sub(lambda g: g.group(1) + " / ", title)
+    if not re.search(r"[^\W\d_]", title):
+        return None                              # no title in the address, only a number
+    row = job(title=title, company=source, location=f"{place}, Germany" if place else "Deutschland",
+              url=url, source=source, description=title)
+    row["_stub"] = True
+    row["_by_hand"] = True
+    row["_student"] = True                       # picked as a student role by its address
+    return row
+
+
 def _rmk_page(url: str, source: str) -> list[dict]:
     try:
-        r = _guarded_get(url, headers=HEADERS, timeout=15)
+        host = urllib.parse.urlsplit(url).netloc
+        with _RMK_LOCK:
+            # Until a host has given three answers its pages are asked one by
+            # one: a site that refuses is then asked exactly three times, not
+            # once per worker.
+            gate = (_RMK_GATES.setdefault(host, threading.Lock())
+                    if _RMK_ANSWERS.get(host, 0) < _RMK_REFUSALS_BEFORE_STOP else None)
+        if gate:
+            gate.acquire()
+        try:
+            with _RMK_LOCK:
+                refused = _RMK_REFUSED.setdefault(host, set())
+                if len(refused) >= _RMK_REFUSALS_BEFORE_STOP:
+                    refused.add(url)             # the site has said no: not asked again in this run
+                    return []
+            r = _guarded_get(url, headers=HEADERS, timeout=15)
+            with _RMK_LOCK:
+                _RMK_ANSWERS[host] = _RMK_ANSWERS.get(host, 0) + 1
+                if r.status_code in _RMK_REFUSED_STATUS:
+                    _RMK_REFUSED.setdefault(host, set()).add(url)
+        finally:
+            if gate:
+                gate.release()
         if r.status_code != 200:
             return []
         soup = BeautifulSoup(r.text, "html.parser")
@@ -4876,14 +4945,19 @@ def _rmk_page(url: str, source: str) -> list[dict]:
         if meta_txt and meta_txt not in desc:
             desc = f"{meta_txt}\n{desc}"
 
-        return [job(
+        row = job(
             title=title,
             company=source,
             location=location,
             url=url,
             source=source,
             description=desc,
-        )]
+        )
+        if _RMK_STUDENT.search(url):
+            # The source says so: DLR titles a student role "Studentin (w/m/d)
+            # ...", which no title rule reads as student work.
+            row["_student"] = True
+        return [row]
     except Exception:
         return []
 
@@ -4902,6 +4976,9 @@ def _rmk_pick(urls: list[str]) -> list[str]:
 
 def scrape_research_institutes() -> list[dict]:
     results: list[dict] = []
+    with _RMK_LOCK:
+        _RMK_REFUSED.clear()
+        _RMK_ANSWERS.clear()
     for host, source in _RMK_SITES:
         try:
             r = _guarded_get(f"{host}/sitemap.xml", headers=HEADERS, timeout=30)
@@ -4915,8 +4992,14 @@ def scrape_research_institutes() -> list[dict]:
             picked = _rmk_pick(urls)
             got = _parallel_collect(picked, lambda u, s=source: _rmk_page(u, s), source)
             results.extend(got)
+            with _RMK_LOCK:
+                refused = set(_RMK_REFUSED.get(urllib.parse.urlsplit(host).netloc, ()))
+            by_hand = [row for row in (_rmk_stub(u, source) for u in picked if u in refused) if row]
+            results.extend(by_hand)
             print(f"  [{source}] {len(got)} student roles "
-                  f"from {len(urls)} postings")
+                  f"from {len(urls)} postings"
+                  + (f"; the site refused its pages ({len(refused)} not read): {len(by_hand)} roles "
+                     f"are known by title only, to check by hand" if refused else ""))
         except Exception as e:
             print(f"  [{source}] failed: {e}")
     return results
@@ -5067,21 +5150,34 @@ def scrape_employer_feeds() -> list[dict]:
     """Workable, Teamtailor and Breezy employers (see _WORKABLE_ACCOUNTS)."""
     out: list[dict] = []
     counts = {"Workable": 0, "Teamtailor": 0, "Breezy": 0}
+    # Each call: platform, address, row parser, the board's name, and how many
+    # jobs the answer holds before the Germany-or-remote check. An answer
+    # with at least one job is a whole board that was read (_board_read).
     calls = ([("Workable", f"https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true",
-               lambda r, c=company: _workable_rows(r.json(), c)) for slug, company in _WORKABLE_ACCOUNTS]
+               lambda r, c=company: _workable_rows(r.json(), c), slug,
+               lambda r: len((r.json() or {}).get("jobs") or [])) for slug, company in _WORKABLE_ACCOUNTS]
              + [("Teamtailor", f"https://{site}/jobs.rss?per_page=1000",
-                 lambda r, c=company: _teamtailor_rows(r.content, c)) for site, company in _TEAMTAILOR_SITES]
+                 lambda r, c=company: _teamtailor_rows(r.content, c), site,
+                 lambda r: (r.content or b"").count(b"<item")) for site, company in _TEAMTAILOR_SITES]
              + [("Breezy", f"https://{slug}.breezy.hr/json",
-                 lambda r, c=company: _breezy_rows(r.json(), c)) for slug, company in _BREEZY_ACCOUNTS])
+                 lambda r, c=company: _breezy_rows(r.json(), c), slug,
+                 lambda r: len(r.json() or [])) for slug, company in _BREEZY_ACCOUNTS])
 
     def fetch(call):
-        platform, url, parse = call
+        platform, url, parse, board, count = call
         try:
             r = _guarded_get(url, headers=HEADERS, timeout=25)
             if r.status_code != 200:
                 print(f"  [{platform}] {url.split('/')[2]} HTTP {r.status_code}")
                 return []
-            return parse(r)
+            rows = parse(r)
+            try:
+                held = count(r)
+            except Exception:
+                held = len(rows)
+            if held:
+                _board_read("scrape_employer_feeds", platform, board, rows)
+            return rows
         except Exception as e:
             print(f"  [{platform}] {url.split('/')[2]} failed: {type(e).__name__}")
             return []
