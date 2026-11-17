@@ -54,9 +54,10 @@ flowchart TD
 ```
 
 **Runtime.** The whole pipeline is one container image. EventBridge Scheduler starts an
-ECS Fargate task once a day at 10:00 Europe/Berlin (so daylight saving is handled for me;
-a second, 16:00 run existed until 2026-08-18). The schedule lives in AWS, not in this
-repo, so the repo cannot show its current state. The task reads its secrets from SSM
+ECS Fargate task at 10:00 and at 17:00 Europe/Berlin (so daylight saving is handled for
+me; the second run was off from 2026-08-18 to 2026-11-17 and asks the boards only for
+what is new since the morning, see the section of 17 November below). The schedule lives
+in AWS, not in this repo, so the repo cannot show its current state. The task reads its secrets from SSM
 Parameter Store as SecureStrings, reads and writes state in a versioned private S3
 bucket, and logs structured JSON to CloudWatch. Fargate was chosen over Lambda only after
 measuring the real scrape: about 40 minutes (range 36 to 72) when it moved to Fargate in
@@ -198,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,754 offline tests (`pytest --collect-only -q`, 2026-11-16), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,806 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -226,7 +227,7 @@ setting, not something visible in the file.
    | `NOTION_TOKEN` / `NOTION_DATABASE_ID` | Optional: Notion mirror |
 
 3. **Enable the "Daily Job Hunt" workflow** (`gh workflow enable "Daily Job Hunt"`).
-   Its cron runs at 05:00 and 13:00 UTC (twice a day, unlike the single daily AWS run);
+   Its cron runs at 05:00 and 13:00 UTC (twice a day, at other hours than the AWS runs);
    trigger it manually from the Actions tab to test. The Tests workflow runs on pushes
    to `main` and on pull requests.
 
@@ -435,6 +436,41 @@ rule itself with Hypothesis: the level a list demands for German is the level of
 language item, whether the list arrives with line breaks, with bullets or as one line.
 Not measured: a pipeline run with these changes.
 
+## Second daily run and the archive of judged postings (17 November 2026)
+
+**A second run at 17:00.** The pipeline had run once a day since 18 August. A second run
+at 17:00 Europe/Berlin now picks up what was published after the morning run. It does not
+ask the boards for the last 24 hours again: with `JOBHUNTER_SOURCE_WINDOW=since_last_run`,
+set on the afternoon schedule as a container override, JobSpy (LinkedIn and Indeed) and
+the LinkedIn guest search are asked for the hours since the previous completed run
+started, rounded up, plus one hour. After a 10:00 run that is eight hours. The start of
+the previous run comes from `run_stats.jsonl` (its timestamp minus its phase times). A
+run whose digest could not be sent is skipped, because its postings still count as
+unseen, and the window never grows past the normal 24 hours, which is also what a run
+gets when the history names no completed run. Internship queries, which otherwise look
+back a week, use the same short window in this run: the morning run has made the long
+sweep. The Bundesagentur API and Adzuna take whole days and keep their smallest window.
+Employer boards and feeds have no time range and are read in full as before;
+`seen_jobs.json` keeps what the morning run saw out of the second one. The freshness
+filter is unchanged. Each stats line records the window as `source_hours`.
+
+**Every judged posting is kept with its text.** Up to 16 November the pipeline had sent
+9,266 ads to the scorer and kept the text of 346, all of them emailed ones scored 45 or
+more; the audit file has every score since 11 November, without the ad text. Nothing
+showed what a low score had been given to, so the scorer could not be checked against
+hand labels beyond the small calibration set. Each delivered run now appends every
+posting that reached the scoring stage to `scored_<date>.jsonl` in the state store: the
+text (up to 8,000 characters), the score, the score the model returned before the
+stale-posting penalty, the reason, the model, how many characters of the text the model
+was shown, and the pre-screen rule for a posting that a rule dropped. A job the model
+returned no score for is left out and kept when the retry scores it. The files are
+private state like the postings archive: git ignores them and they are never part of
+this repository.
+
+Not measured: a production run with either change.
+[tests/test_scored_archive_and_second_run.py](tests/test_scored_archive_and_second_run.py)
+covers both.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -501,7 +537,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,754 collected, run in CI on every push | 2026-11-16 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,806 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

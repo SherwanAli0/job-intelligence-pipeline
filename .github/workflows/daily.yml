@@ -3,9 +3,9 @@
 #
 #  Migrated 2026-07-20 after source parity was verified: 8,948 postings from
 #  Fargate against a 8,901 GitHub baseline, no source regressed.
-#  Schedules: EventBridge `job-hunter-morning` / `-afternoon`, created as 10:00
-#  and 16:00 Europe/Berlin. The afternoon run was switched off on 2026-08-18, so
-#  the pipeline now runs once a day. The schedule lives in AWS, not in this repo.
+#  Schedules: EventBridge `job-hunter-morning` / `-afternoon`, 10:00 and 17:00
+#  Europe/Berlin. The afternoon run was off from 2026-08-18 to 2026-11-17 (it
+#  ran at 16:00 before). The schedule lives in AWS, not in this repo.
 #  (This workflow's own cron below was UTC-only and DST-naive.)
 #
 #  This workflow is DISABLED, not deleted. To roll back:

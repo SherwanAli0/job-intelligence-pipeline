@@ -959,6 +959,11 @@ JOBS:
 {jobs_block}"""
 
 
+# How much of an ad's text the model is shown. main._archive_scored records it
+# with every kept posting, so the archive says what a score was based on.
+SNIPPET_CHARS = 1500
+
+
 def _format_job_block(jobs: list[dict]) -> str:
     lines = []
     for i, j in enumerate(jobs):
@@ -966,7 +971,7 @@ def _format_job_block(jobs: list[dict]) -> str:
             f"[{i}] Title: {j['title']}\n"
             f"    Company: {j['company']}\n"
             f"    Location: {j['location']}\n"
-            f"    Description snippet: {j['description'][:1500] or 'N/A'}"
+            f"    Description snippet: {j['description'][:SNIPPET_CHARS] or 'N/A'}"
         )
         # Evidence layer (off by default): only jobs carrying retrieved
         # evidence get extra lines, so the flag-off prompt is unchanged.

@@ -23,7 +23,7 @@ container unchanged.
 | Task role | `jobHunterTaskRole` | app permissions: own S3 prefix + SSM path only |
 | Execution role | `jobHunterExecutionRole` | ECS agent: pull image, write logs |
 | Scheduler role | `jobHunterSchedulerRole` | may run only this task definition |
-| Schedules | `job-hunter-morning` / `-afternoon` | Created as 10:00 and 16:00 **Europe/Berlin**. The repo's own notes say the afternoon run was switched off on 2026-08-18 and the pipeline now runs once a day (see the root README). Schedule definitions live in EventBridge, not in this repo: confirm with `aws scheduler get-schedule` |
+| Schedules | `job-hunter-morning` / `-afternoon` | 10:00 and 17:00 **Europe/Berlin**. The afternoon run was created for 16:00, was off from 2026-08-18 to 2026-11-17, and now passes `JOBHUNTER_SOURCE_WINDOW=since_last_run` as a container override, so it asks the boards only for what is new since the morning run (see the root README). Schedule definitions live in EventBridge, not in this repo: confirm with `aws scheduler get-schedule` |
 | Logs | `/ecs/job-hunter` | 14-day retention |
 
 ## Cost control

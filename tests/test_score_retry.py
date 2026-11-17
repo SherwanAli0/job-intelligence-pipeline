@@ -26,6 +26,7 @@ def persist_env(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "save_digested", lambda d: None)
     monkeypatch.setattr(main, "_record_shown", lambda top, near: None)
     monkeypatch.setattr(main, "_archive_postings", lambda top, near: None)
+    monkeypatch.setattr(main, "_archive_scored", lambda scored: None)
     monkeypatch.setattr(main, "_update_source_registry", lambda c: None)
     monkeypatch.setattr(main, "_record_run_stats", lambda s: None)
     import metrics
