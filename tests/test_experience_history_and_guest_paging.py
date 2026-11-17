@@ -45,6 +45,16 @@ class TestEmployerHistoryIsNoRequirement:
         # the employer names itself only after the number
         "With over 10 years of experience in logistics, our team delivers reliably.",
         "With 12 years of experience in fintech, we know the market.",
+        # ... and the sentence after that one speaks to the applicant
+        "With 10 years of experience, we help clients grow. You will support dashboards.",
+        "With 12 years of experience in the market, we know what clients need.\n\nYour tasks include reporting.",
+        "With 8 years of experience, we know how to build analytics teams. Du unterstützt das Team.",
+        # other ways of saying "we have"
+        "Our engineers have 5+ years of experience in building data platforms.",
+        "Thanks to our 12 years of experience in retail analytics, clients trust us.",
+        "We are a team of engineers with 10 years of experience in machine learning.",
+        "Wir verfügen über 12 Jahre Berufserfahrung im E-Commerce.",
+        "Mit unserer langjährigen Erfahrung beraten wir Konzerne.",
     ])
     def test_the_employer_speaking_of_itself_drops_nothing(self, sentence):
         j = _j(description=f"{ENGLISH}{sentence} {ENGLISH}")
@@ -81,6 +91,16 @@ class TestEmployerHistoryIsNoRequirement:
         "Wir erwarten 15+ Jahre Berufserfahrung.",
         # the third person with a small number is not recognised as history
         "Acme has 12 years of experience in the market.",
+        # "we" in front is not enough, whatever the verb
+        "Wir brauchen 4 Jahre Berufserfahrung.",
+        "Wir verlangen 3 Jahre Berufserfahrung.",
+        "We ask for 4 years of experience in a data role.",
+        "We look for 4 years of hands-on experience.",
+        "3 years of experience in Python and SQL, we expect.",
+        "We love data and 4 years of experience in SQL is part of the job.",
+        "We offer 5 years of experience in a fast-growing environment.",
+        "Our new colleague has 3+ years of experience in data engineering.",
+        "Unser neuer Kollege hat 3 Jahre Berufserfahrung.",
     ])
     def test_a_requirement_still_drops(self, sentence):
         assert not main._no_experience_overload(_j(description=f"{ENGLISH}{sentence} {ENGLISH}")), sentence

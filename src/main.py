@@ -568,7 +568,7 @@ def _no_experience_overload(j: dict) -> bool:
         window = desc[max(0, start - 70):end + 70]
         return any(s in window for s in _EXP_SOFTENERS)
 
-    def _violates(n: int, start: int, end: int, hard: bool) -> bool:
+    def _violates(n: int, start: int, end: int, hard: bool, number_at: int | None = None) -> bool:
         """Apply the tier rules to one matched mention. True = job must drop.
 
         2 years used to be kept unless hard-required. The owner reviewed a real
@@ -580,7 +580,7 @@ def _no_experience_overload(j: dict) -> bool:
         (_employer_history): "more than 180 years of experience in the
         fashion industry".
         """
-        if _employer_history(desc, start, end, n):
+        if _employer_history(desc, start if number_at is None else number_at, end, n):
             return False
         if n >= 4:
             return True
@@ -631,7 +631,7 @@ def _no_experience_overload(j: dict) -> bool:
     for pattern, hard, to_int in checks:
         for m in re.finditer(pattern, desc):
             n = to_int(m.group(1))
-            if _violates(n, m.start(), m.end(), hard):
+            if _violates(n, m.start(), m.end(), hard, m.start(1)):
                 return _drop_noted(j, desc, m.start(), m.end())
 
     return True

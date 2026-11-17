@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,891 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
+| [tests/](tests/) | 1,908 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -480,13 +480,17 @@ reached the pipeline through LinkedIn and was dropped before scoring. Its text o
 "We are building on more than 180 years of experience in the fashion industry", and the
 pattern for a bare "N years of ... experience" took 180 as years asked of the applicant;
 four or more always drops. The same sentence stands in the employer's other ads. A mention
-now counts as the employer's own history, and drops nothing, when its sentence does not
-speak to the applicant ("you", "required", "we want", "mindestens") and either the number
-is 15 or more or the employer is the one speaking ("we", "our", "wir", "unser", also right
-after the mention: "With 10 years of experience, we"). The test is in `filters.py` and is
-used by the experience filter and by the experience check before the model. It leans
-towards keeping: an ad kept by mistake is still scored. A statement in the third person
-with a number under 15 ("Acme has 12 years of experience") is still read as a requirement.
+now counts as the employer's own history, and drops nothing, only on positive evidence:
+the number is 15 or more, or the words right before the number say that the employer has
+the experience ("we have", "our team has", "building on", "thanks to our", "wir verfügen
+über", "dank unserer"), or the employer names itself right after the mention ("With 10
+years of experience, we know the market"). It never counts when the sentence speaks to
+or about the applicant ("you", "candidate", "we want", "wir suchen", "mindestens") or a
+requirement word follows ("required", "vorausgesetzt"); "we" alone is no evidence, so "We
+want 4 years of experience" still drops. The test is in `filters.py` and is used by the
+experience filter and by the experience check before the model. A statement in the third
+person with a number under 15 ("Acme has 12 years of experience") is still read as a
+requirement.
 Titles such as "Postgraduate Program" and "Traineeprogramm" now skip the experience
 checks, as "Graduate" and "Trainee" already did.
 
@@ -571,7 +575,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,891 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 1,908 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

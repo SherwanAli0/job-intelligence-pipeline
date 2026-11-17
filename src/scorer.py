@@ -450,6 +450,7 @@ from filters import (
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
     junior_qualifier_in_title as _junior_qualifier_in_title,
     employer_history as _employer_history,
+    number_start as _number_start,
     graduate_designed_title as _graduate_designed_title,
 )
 
@@ -599,12 +600,12 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     if not graduate_designed:
         for m in _RE_EXP_NUM.finditer(d_low):
             years = next((int(g) for g in m.groups() if g and g.isdigit()), None)
-            if not _employer_history(d_low, m.start(), m.end(), years):
+            if not _employer_history(d_low, _number_start(m), m.end(), years):
                 return True, "Requires 3+ years experience", "experience"
     # 1b. Written-out patterns: "three years", "minimum three (3) years"
     if not graduate_designed:
         for m in _RE_EXP_TEXT.finditer(d_low):
-            if not _employer_history(d_low, m.start(), m.end()):
+            if not _employer_history(d_low, _number_start(m), m.end()):
                 return True, "Requires 3+ years experience (written out)", "experience"
     # 1c. Title-level seniority: Senior / Lead / Head / Principal in title
     #     with no junior/entry/intern qualifier → auto-disqualify
