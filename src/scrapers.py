@@ -74,7 +74,10 @@ SCRAPER_TIMEOUT_SECONDS = int(os.environ.get("JOBHUNTER_SCRAPER_TIMEOUT", "600")
 # only ~5% of the jobs. Instead they are STARTED FIRST and collected at the
 # end, so their unavoidable slowness overlaps the ~15 minutes of ATS scraping
 # that has to happen anyway. Same jobs, roughly a third less wall time.
-_BACKGROUND_SCRAPERS = {"scrape_jobspy", "scrape_web_search"}
+_BACKGROUND_SCRAPERS = {"scrape_jobspy", "scrape_web_search",
+                        # 2026-11-17: LinkedIn has its own paced lane, and python-jobspy
+                        # then runs for Indeed alone (see scrape_linkedin).
+                        "scrape_indeed", "scrape_linkedin"}
 
 # How long to wait for a background source once everything else is done. They
 # have already had the full sequential scrape to work in, so this is a final
@@ -95,6 +98,7 @@ def _start_scraper(scraper):
         try:
             box["jobs"] = scraper() or []
         except Exception:
+            box["failed"] = True
             traceback.print_exc()
 
     t = threading.Thread(target=_target, daemon=True, name=scraper.__name__)
@@ -117,7 +121,16 @@ _JOBSPY_PARTIAL: list = []
 # in 6 of 20 runs, and on a timeout its jobs came back only if the thread
 # finished within the late grace period.
 _LI_GUEST_PARTIAL: list = []
-_PARTIAL_BUFFERS = {"scrape_jobspy": _JOBSPY_PARTIAL, "scrape_linkedin_guest": _LI_GUEST_PARTIAL}
+# The same for the paced LinkedIn lane (scrape_linkedin).
+_LI_SWEEP_PARTIAL: list = []
+_PARTIAL_BUFFERS = {"scrape_jobspy": _JOBSPY_PARTIAL, "scrape_indeed": _JOBSPY_PARTIAL,
+                    "scrape_linkedin_guest": _LI_GUEST_PARTIAL,
+                    "scrape_linkedin": _LI_SWEEP_PARTIAL}
+# Scrapers whose unfinished result was taken as it stood. A scraper that
+# keeps a record of what it read to the end (scrape_linkedin, sweep.py) must
+# not write that record once it is in here: what it reads after the snapshot
+# reaches nobody.
+_ABANDONED: set = set()
 
 
 def _salvage_background(name: str) -> list[dict]:
@@ -125,7 +138,9 @@ def _salvage_background(name: str) -> list[dict]:
 
     Snapshot, not handoff: the thread may still be appending, so copy under
     the GIL and let the daemon die with the process. JobSpy and the LinkedIn
-    guest search publish partial progress; anything else returns empty."""
+    lanes publish partial progress; anything else returns empty. The name is
+    noted first, so the scraper can see that it was cut off (_ABANDONED)."""
+    _ABANDONED.add(name)
     return list(_PARTIAL_BUFFERS.get(name, []))
 # [fetched, needed, skipped_on_title] accumulated across per-query enrichment
 _JOBSPY_DESC_STATS: list = [0, 0, 0]
@@ -414,6 +429,14 @@ def _jobspy_active_queries() -> list[str]:
     LinkedIn day now costs depth on every form equally instead of erasing
     whichever form happened to be listed last.
     """
+    order = _queries_by_form()
+    print(f"  [JobSpy] all {len(order)} queries, interleaved by form "
+          f"(student / internship / part-time / full-time)")
+    return order
+
+
+def _queries_by_form() -> list[str]:
+    """config.SEARCH_QUERIES, one form after the other in turn (see above)."""
     groups: dict[str, list[str]] = {"student": [], "intern": [], "part": [], "full": []}
     for q in SEARCH_QUERIES:
         ql = q.lower()
@@ -431,8 +454,6 @@ def _jobspy_active_queries() -> list[str]:
         for lane in lanes:
             if lane:
                 order.append(lane.pop(0))
-    print(f"  [JobSpy] all {len(order)} queries, interleaved by form "
-          f"(student / internship / part-time / full-time)")
     return order
 
 
@@ -455,8 +476,11 @@ _LINKEDIN_SLOW_LANE_WORKERS = 2   # LinkedIn drops concurrent description fetche
 
 
 def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
-                                screen_titles: bool = True) -> None:
+                                screen_titles: bool = True, stats: list | None = None) -> None:
     """Fill in descriptions for title-plausible jobs. Mutates in place.
+
+    A quiet call adds [fetched, needed, skipped on title] to `stats`, or to
+    the JobSpy counters when no list is given.
 
     `screen_titles=False` is for main._fill_missing_bodies: its candidates have
     already passed the employment-form filter, so a seniority word in the
@@ -512,8 +536,9 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
                                      workers=_LINKEDIN_SLOW_LANE_WORKERS)
 
     if quiet:
-        _JOBSPY_DESC_STATS[0] += len(fetched); _JOBSPY_DESC_STATS[1] += len(need)
-        _JOBSPY_DESC_STATS[2] += skipped_title
+        tally = _JOBSPY_DESC_STATS if stats is None else stats
+        tally[0] += len(fetched); tally[1] += len(need)
+        tally[2] += skipped_title
         return
     print(f"  [JobSpy] descriptions: {len(fetched)}/{len(need)} fetched "
           f"({skipped_title} skipped on title, {already} already had one"
@@ -583,7 +608,11 @@ _JOBSPY_PROGRESS: dict = {}
 # off with an unknown part of the list never asked. 50 results halves the
 # pages; every query now gets asked instead of the first ones getting depth.
 _JOBSPY_LINKEDIN_RESULTS = int(os.environ.get("JOBHUNTER_LINKEDIN_RESULTS", "50"))
-_JOBSPY_INDEED_RESULTS = int(os.environ.get("JOBHUNTER_INDEED_RESULTS", "100"))
+# Indeed answers in pages of 100, sorted by relevance, in under a second each.
+# 100 results meant one page: a query with more for its window lost the rest,
+# and not the oldest part of it. 300 since 2026-11-17, and the run log now
+# names the queries that still came back full (_jobspy_lane).
+_JOBSPY_INDEED_RESULTS = int(os.environ.get("JOBHUNTER_INDEED_RESULTS", "300"))
 
 
 # Ids already in seen_jobs, set by main.node_scrape before the scrape starts.
@@ -684,6 +713,11 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
             report["queries"] += 1
             for msg in ((getattr(df, "attrs", None) or {}).get("errors") or {}).values():
                 report["errors"][str(msg)[:80]] += 1
+            # A query that came back with as many rows as were asked for has
+            # more: the board sorts by relevance, so what was left out is not
+            # the oldest part. Counted, so a cut-off query can be seen.
+            if len(df) >= results_wanted:
+                report["full"] = report.get("full", 0) + 1
             fresh: list[dict] = []
             _jobspy_rows_to_jobs(df, fresh, seen_urls, lock)
             report["rows"] += len(fresh)
@@ -702,7 +736,12 @@ def _jobspy_lane(site: str, queries: list[str], results: list[dict],
         time.sleep(pause)
 
 
-def scrape_jobspy() -> list[dict]:
+def scrape_indeed() -> list[dict]:
+    """python-jobspy for Indeed alone. LinkedIn is read by scrape_linkedin."""
+    return scrape_jobspy(sites=("indeed",))
+
+
+def scrape_jobspy(sites: tuple = ("indeed", "linkedin")) -> list[dict]:
     try:
         import threading
         import jobspy  # type: ignore  # noqa: F401 - fail fast if missing
@@ -721,20 +760,19 @@ def scrape_jobspy() -> list[dict]:
 
         # LinkedIn + Indeed - the reliable pair (glassdoor = Cloudflare
         # blocked; Google Jobs removed, 0 results for months, upstream #302).
+        setup = {"indeed": (_JOBSPY_INDEED_RESULTS, 1.0), "linkedin": (_JOBSPY_LINKEDIN_RESULTS, 3.0)}
         lanes = [
-            threading.Thread(target=_jobspy_lane, daemon=True, name="jobspy-indeed",
-                             args=("indeed", active, results, seen_urls, lock,
-                                   _JOBSPY_INDEED_RESULTS, 1.0)),
-            threading.Thread(target=_jobspy_lane, daemon=True, name="jobspy-linkedin",
-                             args=("linkedin", active, results, seen_urls, lock,
-                                   _JOBSPY_LINKEDIN_RESULTS, 3.0)),
+            threading.Thread(target=_jobspy_lane, daemon=True, name=f"jobspy-{site}",
+                             args=(site, active, results, seen_urls, lock, *setup[site]))
+            for site in ("indeed", "linkedin") if site in sites
         ]
         for t in lanes:
             t.start()
         for t in lanes:
             t.join()
 
-        print(f"  [JobSpy] {len(results)} titles from LinkedIn+Indeed "
+        print(f"  [JobSpy] {len(results)} titles from "
+              f"{'LinkedIn+Indeed' if len(lanes) == 2 else ' and '.join(s.capitalize() for s in sites)} "
               f"(queries done: {jobspy_progress_line()})")
         f_, n_, s_ = _JOBSPY_DESC_STATS
         print(f"  [JobSpy] descriptions: {f_}/{n_} fetched, {s_} skipped on title, "
@@ -742,7 +780,10 @@ def scrape_jobspy() -> list[dict]:
         print(f"  [JobSpy] {len(results)} jobs total")
         for site, rep in sorted(_JOBSPY_LANE_REPORT.items()):
             errs = ", ".join(f"{m} ({n}x)" for m, n in rep["errors"].most_common(3))
+            limit = setup.get(site, (0, 0))[0]
             print(f"  [JobSpy] {site}: {rep['rows']} rows from {rep['queries']} queries"
+                  + (f"; {rep['full']} queries reached the limit of {limit} results and have more"
+                     if rep.get("full") else "")
                   + (f"; errors: {errs}" if errs else ""))
         return results
     except Exception as e:
@@ -4172,6 +4213,378 @@ def scrape_linkedin_guest() -> list[dict]:
     return list(results)
 
 
+# -- LinkedIn, one lane (2026-11-17) --------------------------------------------
+# Until this lane, two things asked LinkedIn's public job search at the same
+# time and from the same address: python-jobspy (84 queries, the first 50
+# results of each, no pause after a refusal) and the guest lane above (16
+# queries). In the run of 17 November 2026, 10:00, LinkedIn refused 48 of the
+# 84 python-jobspy queries (HTTP 429) and the guest lane at its second
+# request. Measured the same day from a home address, one request every four
+# seconds: the search "Werkstudent Data Science" returned 379 results for the
+# last SEVEN hours, in an order that is not by date (sortBy changes nothing
+# on this address), with the wanted titles spread over the whole list: the
+# first 50 held about four in ten of them. "Werkstudent" alone returned more
+# than 410 for the same seven hours. About 125 requests in a quarter of an
+# hour were answered, then came the first 429.
+#
+# So requests are the scarce thing, and this lane spends them in an order:
+#   1. Lists for North Rhine-Westphalia, read to the END: one form word
+#      ("Werkstudent", "Praktikum") with the state as location (checked: 10
+#      of 10 cards lay in the state). On-site work counts only there (owner,
+#      2026-09-07), and read to the end a list holds every such posting of
+#      the window. Such a list is neither short nor pure: "Werkstudent" in
+#      NRW had 272 results for six evening hours, 93 of them with a student
+#      or intern title, and those stood anywhere in it (ranks 201 to 250
+#      still held 14), so there is no point at which it can be left early.
+#   2. The first page of every keyword search that no Germany list covers.
+#   3. Lists for all of Germany, read to the end (_LI_POOLS_GERMANY).
+#   4. The keyword searches (config.SEARCH_QUERIES and the guest queries),
+#      page by page across all of them, to _LI_DEPTH. LinkedIn ranks them
+#      over the whole ad text, so they find the posting whose title says
+#      nothing.
+# A list holds every posting with its word, most of them no tech work, and
+# each kept card costs a description fetch. A list therefore keeps only the
+# cards whose title names tech work (TITLE_IS_TECH, set by main.node_scrape).
+#
+# Stage 3 is empty for now. "Werkstudent" for all of Germany is about a
+# thousand postings a day, a hundred requests for one word, and the workplace
+# filter that would cut it down to remote and hybrid work (f_WT) is ignored
+# by this address: with 1, 2, 3 and without it the same 140 postings came
+# back. Whether such a list fits is decided with the numbers the lane now
+# reports in every run (requests answered, refusals, size of every list).
+#
+# One request at a time, a pause after each. After a refusal the lane waits
+# and goes on more slowly; it does not drop the search. A search that could
+# not be read as far as planned keeps its place: sweep.py remembers the time
+# up to which each search has been read, the next run asks it for everything
+# since then, and such searches go first within their stage.
+_LI_PAGE_SIZE = 10            # cards per request
+_LI_RESULT_LIMIT = 1000       # LinkedIn serves nothing beyond the first 1,000 results
+# A list is stopped here, and counts as cut short. LinkedIn matches loosely:
+# "Trainee" with NRW as location returned 600 results for six hours, nearly
+# all apprenticeships ("Ausbildung zum ..."), and "Junior" a list in which 19
+# of the first 250 titles said junior. A word that behaves like that must not
+# eat the requests of everything after it, and the digest then says that a
+# list has gone unread. The lists that are read ("Werkstudent" 272 and
+# "Praktikum" 339 results for six evening hours) stay well below it.
+_LI_LIST_LIMIT = 800
+_LI_PACE = float(os.environ.get("JOBHUNTER_LINKEDIN_PACE", "3"))          # seconds between requests
+# Results read per keyword search. It was 50 with python-jobspy, on the days
+# LinkedIn let the query through at all. One paced lane has about 450 requests
+# in its time: the two NRW lists take around 120 of them, three pages for each
+# of the 96 keyword searches 288. Then every search is read as far as planned
+# in a normal run, and its mark moves on; a depth the lane cannot reach would
+# leave every search cut short in every run.
+_LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "30"))
+# The lane's time, waits and description fetches included. python-jobspy's
+# LinkedIn lane ran for about 33 minutes of a run (the 14 minutes of the
+# other sources plus 19 on its own); the scrape as a whole took 40.
+_LI_SECONDS = int(os.environ.get("JOBHUNTER_LINKEDIN_SECONDS", "2100"))
+_LI_WAITS = (60, 120, 240)    # after the first, the second and every later refusal in a row
+_LI_GIVE_UP_AFTER = 4         # waits in a row without one answer: the next refusal ends the lane
+_LI_EMPTY_PAGE_CHARS = 400    # an answer without cards that is longer than this is no empty result
+_LI_POOL_HOURS = 48           # a pool is never asked for more: older ads fail the freshness rule
+_LI_PUBLISH_EVERY = 40        # cards between two description fetches
+_LI_NRW = "North Rhine-Westphalia, Germany"
+# Two words are enough. Read to the end for the same six hours, "Werkstudent"
+# and "Working Student" kept 62 and 59 cards and shared 55, "Praktikum" and
+# "Internship" 59 and 56 and shared 56; the English words added two school
+# placements and nothing else. Each list costs about 30 requests for six hours.
+_LI_POOLS_NRW = ("Werkstudent", "Praktikum")
+_LI_POOLS_GERMANY: tuple = ()
+_LI_DONE = ("end", "depth", "limit")
+_LI_REFUSED = (429, 403, 999)
+# Why a search was cut short, in words (run log and digest note).
+_LI_WHY = {"time": "the time for LinkedIn was up", "refused": "LinkedIn refused further requests",
+           "error": "requests failed", "long": "a list was longer than planned",
+           "not reached": "not reached"}
+_li_clock = time.monotonic
+
+# Set by main.node_scrape: title -> does it name tech work? None keeps every pool card.
+TITLE_IS_TECH = None
+# What the last run of the lane did (run log, digest note, run statistics).
+LINKEDIN_REPORT: dict = {}
+
+
+def linkedin_lane_on() -> bool:
+    """The paced lane reads LinkedIn, unless JOBHUNTER_LINKEDIN_LANE=legacy asks
+    for the two lanes it replaced (python-jobspy and the guest lane)."""
+    return os.environ.get("JOBHUNTER_LINKEDIN_LANE", "").strip().lower() != "legacy"
+
+
+def _li_cards(html: str) -> tuple[int, list[dict]]:
+    """(cards on the page, the cards that carry a link and a title)."""
+    cards = BeautifulSoup(html or "", "html.parser").select("li")
+    out = []
+    for c in cards:
+        a = c.select_one("a.base-card__full-link") or c.select_one("a")
+        t = c.select_one(".base-search-card__title")
+        url = _li_canonical_url(a.get("href", "") if a else "")
+        if not url or not t:
+            continue
+        co = c.select_one(".base-search-card__subtitle")
+        loc = c.select_one(".job-search-card__location")
+        tm = c.select_one("time")
+        out.append({"url": url, "title": t.get_text(strip=True),
+                    "company": co.get_text(strip=True) if co else "LinkedIn",
+                    "location": loc.get_text(strip=True) if loc else "Germany",
+                    "posted_at": (tm.get("datetime") or "") if tm else ""})
+    return len(cards), out
+
+
+def _linkedin_plan() -> list[dict]:
+    """The searches of one run and the stage each belongs to (see above)."""
+    def search(key, words, stage, location, pool, depth):
+        return {"key": f"linkedin|{key}", "words": words, "stage": stage,
+                "location": location, "pool": pool, "depth": depth}
+
+    plan = [search(f"nrw|{w.lower()}", w, 1, _LI_NRW, True, 0) for w in _LI_POOLS_NRW]
+    pool_words = tuple(w.lower() for w in _LI_POOLS_GERMANY)
+    taken: set[str] = set()
+    for query in list(_queries_by_form()) + list(_LI_GUEST_QUERIES):
+        name = " ".join(query.lower().split())
+        if name in taken:
+            continue
+        taken.add(name)
+        covered = any(w in name for w in pool_words)
+        plan.append(search(f"q|{name}", query, 4 if covered else 2, LOCATION, False, _LI_DEPTH))
+    plan += [search(f"de|{w.lower()}", w, 3, LOCATION, True, 0) for w in _LI_POOLS_GERMANY]
+    return plan
+
+
+def _li_order(plan: list[dict]):
+    """The searches in the order they are asked, one page per turn."""
+    def still_open(stages):
+        group = [s for s in plan if s["stage"] in stages and not s["status"]]
+        return sorted(group, key=lambda s: -s["unread"])    # cut short last time: first
+
+    while still_open((1,)):
+        yield from still_open((1,))
+    yield from still_open((2,))                              # one page each for now
+    while still_open((3,)):
+        yield from still_open((3,))
+    while still_open((2, 4)):
+        yield from still_open((2, 4))
+
+
+def _li_ask(s: dict) -> tuple[str, str]:
+    """('ok' | 'refused' | 'error', body) for the next page of one search."""
+    try:
+        r = _guarded_get(_LI_GUEST_URL,
+                         params={"keywords": s["words"], "location": s["location"],
+                                 "f_TPR": f"r{s['hours'] * 3600}", "start": s["offset"]},
+                         headers=HEADERS, timeout=15)
+    except Exception:
+        return "error", ""
+    if r.status_code in _LI_REFUSED:
+        return "refused", ""
+    if r.status_code != 200:
+        return "error", ""
+    return "ok", r.text or ""
+
+
+def scrape_linkedin() -> list[dict]:
+    """LinkedIn's public job search in one paced lane (see above)."""
+    import config as _cfg
+    import sweep
+
+    results: list[dict] = _LI_SWEEP_PARTIAL
+    results.clear()
+    LINKEDIN_REPORT.clear()
+    plan = _linkedin_plan()
+    base = _max_age_hours()
+    for s in plan:
+        if _cfg.is_catchup():
+            hours = base
+        elif s["pool"]:
+            hours = min(sweep.window_hours(s["key"], base), max(base, _LI_POOL_HOURS))
+        else:
+            # Never less than before: an internship search still looks back a week.
+            usual = _query_hours_old(s["words"])
+            hours = max(usual, sweep.window_hours(s["key"], usual))
+        # `unread` orders the searches, not `hours`: an internship search asks
+        # for a week in every run and would always stand first.
+        s.update(hours=int(hours), unread=sweep.hours_unread(s["key"]), offset=0, ids=set(),
+                 errors=0, status="")
+
+    started = _li_clock()
+    seen_urls: set[str] = set()
+    counts: Counter = Counter()
+    tally = [0, 0, 0]                    # descriptions fetched, needed, skipped on title
+    batch: list[dict] = []
+    pace, refusals, streak, halt = _LI_PACE, 0, 0, ""
+
+    def publish() -> None:
+        """Descriptions for the cards found since the last call, then hand them over."""
+        if not batch:
+            return
+        unseen = [j for j in batch if j["id"] not in KNOWN_JOB_IDS]
+        counts["known"] += len(batch) - len(unseen)
+        _enrich_jobspy_descriptions(unseen, quiet=True, stats=tally)
+        results.extend(batch)
+        batch.clear()
+
+    for s in _li_order(plan):
+        if _li_clock() - started > _LI_SECONDS:
+            halt = "time"
+            break
+        outcome, body = _li_ask(s)
+        counts["requests"] += 1
+        n_cards, cards = _li_cards(body) if outcome == "ok" else (0, [])
+        if outcome == "ok" and not n_cards and len(body.strip()) > _LI_EMPTY_PAGE_CHARS:
+            outcome = "refused"          # a page of something else: a wall, not an empty result
+        elif outcome == "ok" and n_cards and not cards:
+            # Cards, and not one of them readable: LinkedIn's page has changed.
+            # That is not the end of a search, and nothing was read.
+            outcome = "error"
+            counts["unreadable"] += 1
+        if outcome == "refused":
+            wait = _LI_WAITS[min(streak, len(_LI_WAITS) - 1)]
+            refusals += 1
+            if streak >= _LI_GIVE_UP_AFTER or _li_clock() - started + wait > _LI_SECONDS:
+                halt = "refused"         # LinkedIn lets nothing through in this run
+                break
+            streak += 1
+            print(f"  [LinkedIn] refused at request {counts['requests']} ('{s['words']}'): "
+                  f"waiting {wait}s, then going on more slowly")
+            time.sleep(wait)
+            counts["waited"] += wait
+            pace = min(pace * 1.5, 12.0)
+            continue
+        if outcome == "error":
+            counts["errors"] += 1
+            s["errors"] += 1
+            if s["errors"] >= 2:
+                s["status"] = "error"
+            if counts["errors"] >= 10 and not counts["answered"]:
+                halt = "error"           # nothing answers at all: no point in asking 100 more
+                break
+            time.sleep(pace)
+            continue
+
+        counts["answered"] += 1
+        streak = 0
+        counts["cards"] += n_cards
+        counts["cards_unread"] += n_cards - len(cards)
+        new = [c for c in cards if c["url"] not in s["ids"]]
+        s["ids"].update(c["url"] for c in cards)
+        s["offset"] += n_cards
+        if s["location"] == _LI_NRW:
+            counts["nrw_cards"] += len(cards)
+            counts["nrw_in_state"] += sum(
+                1 for c in cards if re.search(r"rhine-westphalia|nordrhein-westfalen", c["location"], re.I))
+        for c in new:
+            if c["url"] in seen_urls:
+                continue
+            if s["pool"] and TITLE_IS_TECH is not None:
+                try:
+                    wanted = bool(TITLE_IS_TECH(c["title"]))
+                except Exception:
+                    wanted = True
+                if not wanted:
+                    counts["pool_other"] += 1
+                    continue
+            seen_urls.add(c["url"])
+            # source "linkedin" as before: the dead-source alarm and the
+            # parity check track LinkedIn as a whole.
+            batch.append(job(title=c["title"], company=c["company"], location=c["location"],
+                             url=c["url"], source="linkedin", description="",
+                             posted_at=c["posted_at"]))
+        if not new or n_cards < _LI_PAGE_SIZE:
+            s["status"] = "end"
+        elif s["depth"] and s["offset"] >= s["depth"]:
+            s["status"] = "depth"
+        elif s["pool"] and s["offset"] >= _LI_LIST_LIMIT:
+            s["status"] = "long"
+        elif s["offset"] >= _LI_RESULT_LIMIT:
+            s["status"] = "limit"
+        if len(batch) >= _LI_PUBLISH_EVERY:
+            publish()
+        time.sleep(pace)
+    publish()
+
+    cut = [s for s in plan if s["status"] not in _LI_DONE]
+    for s in cut:
+        s["status"] = s["status"] or halt or "not reached"
+    # Everything found has been handed over above. If the run took the lane's
+    # result as it stood before that (a snapshot), what was read to the end
+    # afterwards reached nobody and must not count as read.
+    recorded = "scrape_linkedin" not in _ABANDONED
+    if recorded:
+        for s in plan:
+            sweep.record(s["key"], s["status"] in _LI_DONE, s["hours"], s["status"], read=s["offset"])
+    reasons = Counter(s["status"] for s in cut)
+    LINKEDIN_REPORT.update({
+        "searches": len(plan), "done": len(plan) - len(cut), "cut_short": len(cut), "halt": halt,
+        "reasons": dict(reasons),
+        "requests": counts["requests"], "refusals": refusals, "waited_s": counts["waited"],
+        "cards": counts["cards"], "kept": len(results), "known": counts["known"],
+        "pool_cards_left_out": counts["pool_other"], "described": tally[0],
+        "unreadable_pages": counts["unreadable"], "cards_unread": counts["cards_unread"],
+        "seconds": round(_li_clock() - started), "recorded": recorded,
+        "pools": {s["key"].split("|", 1)[1]: {"read": s["offset"], "hours": s["hours"],
+                                              "status": s["status"]}
+                  for s in plan if s["pool"]},
+    })
+
+    why = ", ".join(f"{_LI_WHY.get(reason, reason)}: {n}" for reason, n in reasons.most_common())
+    print(f"  [LinkedIn] {len(plan)} searches: {len(plan) - len(cut)} read as far as planned"
+          + (f", {len(cut)} cut short ({why})" if cut else "")
+          + f"; {counts['requests']} requests in {LINKEDIN_REPORT['seconds']}s, {refusals} refused"
+          + (f" (waited {counts['waited']}s)" if refusals else ""))
+    print("  [LinkedIn] full lists: " + "; ".join(
+        f"{name} {p['read']} in {p['hours']}h ({p['status']})"
+        for name, p in LINKEDIN_REPORT["pools"].items()))
+    print(f"  [LinkedIn] {counts['cards']} cards read, {len(results)} postings kept "
+          f"({counts['pool_other']} from the full lists left out, no tech work in the title), "
+          f"{counts['known']} already seen; descriptions: {tally[0]}/{tally[1]} fetched, "
+          f"{tally[2]} skipped on title")
+    if counts["nrw_cards"] >= 20 and counts["nrw_in_state"] * 10 < counts["nrw_cards"] * 3:
+        print(f"  [LinkedIn] note: only {counts['nrw_in_state']} of {counts['nrw_cards']} cards of the "
+              f"NRW lists name the state: the location may not be honoured")
+    if counts["unreadable"] or counts["cards_unread"]:
+        print(f"  [LinkedIn] {counts['unreadable']} answers held cards of which none could be read, "
+              f"{counts['cards_unread']} single cards could not be read: has the page changed?")
+    if not recorded:
+        print("  [LinkedIn] the run took this lane's result before it had finished: "
+              "nothing is recorded as read to the end")
+    return list(results)
+
+
+def linkedin_lane_note() -> str:
+    """One sentence for the digest: how much of LinkedIn this run read."""
+    r = LINKEDIN_REPORT
+    if not r:
+        return ""
+    text = f"LinkedIn: {r['done']} of {r['searches']} searches were read as far as planned"
+    if r["cut_short"]:
+        reasons = r.get("reasons") or {r.get("halt") or "": r["cut_short"]}
+        main_reason = max(reasons, key=reasons.get)
+        why = _LI_WHY.get(main_reason, "the lane stopped early")
+        text += f"; {r['cut_short']} were cut short ({why}) and are asked first in the next run"
+    return text + "."
+
+
+def linkedin_lane_warnings(hours: int = 48) -> list[str]:
+    """A warning once a search has gone unread for longer than the freshness
+    rule allows: from then on, what it finds late is dropped as too old."""
+    import sweep
+    out = []
+    unreadable = LINKEDIN_REPORT.get("unreadable_pages", 0)
+    if unreadable >= 3:
+        # Said the same day: a changed page reads as "no jobs", and the
+        # dead-source alarm needs three empty runs to notice.
+        out.append(f"LinkedIn: {unreadable} answers held job cards that could not be read. "
+                   f"The page layout has probably changed; the LinkedIn lane needs a look.")
+    late = sweep.overdue(hours, "linkedin|")
+    if late:
+        lists = sum(1 for key, _ in late if not key.startswith("linkedin|q|"))
+        out.append(f"LinkedIn: {len(late)} searches ({lists} of them full lists) have not been read as "
+                   f"far as planned for more than {hours} hours (longest: {late[0][1]:.0f} h). "
+                   f"What they find later can be too old for the freshness rule.")
+    return out
+
+
 # -- Stellenwerk - the university job boards of Bonn, Köln and Düsseldorf -----
 # The single best-matched source in the pipeline: stellenwerk.de/bonn-rhein-sieg
 # is the joint board of the University of Bonn and Hochschule Bonn-Rhein-Sieg,
@@ -5556,7 +5969,8 @@ def scrape_all() -> list[dict]:
     all_jobs: list[dict] = []
 
     scrapers_in_order = [
-        scrape_jobspy,             # LinkedIn + Indeed
+        scrape_jobspy,             # LinkedIn + Indeed (Indeed alone when scrape_linkedin runs)
+        scrape_linkedin,           # LinkedIn in one paced lane (2026-11-17)
         scrape_arbeitnow,          # Free JSON API - English jobs, Germany-focused
         scrape_remotive,           # Free JSON API - remote jobs worldwide
         scrape_jobicy,             # Free JSON API - remote jobs open to Germany/Europe
@@ -5622,6 +6036,16 @@ def scrape_all() -> list[dict]:
         scrape_web_search,         # DuckDuckGo web search
     ]
 
+    # LinkedIn is asked by ONE lane. With the paced lane on, python-jobspy
+    # runs for Indeed alone and the guest lane stays off; with
+    # JOBHUNTER_LINKEDIN_LANE=legacy it is the other way round.
+    if linkedin_lane_on():
+        scrapers_in_order = [scrape_indeed if s is scrape_jobspy else s
+                             for s in scrapers_in_order if s is not scrape_linkedin_guest]
+    else:
+        scrapers_in_order = [s for s in scrapers_in_order if s is not scrape_linkedin]
+    _ABANDONED.clear()
+
     # Start the deliberately-slow, self-throttling sources first so their wait
     # overlaps the sequential ATS scraping instead of adding to it.
     background = []
@@ -5643,7 +6067,14 @@ def scrape_all() -> list[dict]:
     # to run in, so most of the time they are already finished.
     for name, box, t in background:
         t0 = time.time()
-        t.join(BACKGROUND_JOIN_SECONDS)
+        grace = BACKGROUND_JOIN_SECONDS
+        if name == "scrape_linkedin":
+            # The lane ends by itself after _LI_SECONDS. It is given that time
+            # from ITS start plus five minutes for its last description
+            # fetches, however short the other sources were: a lane cut off
+            # here records nothing as read.
+            grace = max(60.0, box["t0"] + _LI_SECONDS + 300 - t0)
+        t.join(grace)
         SCRAPER_TIMINGS[name] = round(time.time() - t0, 1)
         if t.is_alive():
             # Salvage what the scraper accumulated instead of discarding it.
@@ -5657,10 +6088,16 @@ def scrape_all() -> list[dict]:
                 print(f"  [{name}] still running \u2014 salvaging {len(partial)} jobs "
                       f"collected so far instead of skipping the source"
                       + (f" (queries done: {jobspy_progress_line()})"
-                         if name == "scrape_jobspy" else ""))
+                         if name in ("scrape_jobspy", "scrape_indeed") else ""))
                 all_jobs.extend(partial)
             else:
                 print(f"  [{name}] still running after the grace period \u2014 skipped this run")
+        elif box.get("failed") and not box["jobs"]:
+            # It raised. What it had handed over before that is still real
+            # jobs, and a lane that raised has recorded nothing as read.
+            partial = list(_PARTIAL_BUFFERS.get(name, []))
+            print(f"  [{name}] ended with an error: keeping the {len(partial)} jobs it had handed over")
+            all_jobs.extend(partial)
         else:
             print(f"  [{name}] collected {len(box['jobs'])} jobs from background")
             all_jobs.extend(box["jobs"])
