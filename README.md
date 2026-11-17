@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,229 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,314 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -651,6 +651,43 @@ The email marks such an ad "new on this board", the audit line of its score says
 the run log counts them. Not measured: how many ads a day this keeps.
 [tests/test_new_on_a_read_board.py](tests/test_new_on_a_read_board.py) covers it.
 
+## Four gaps closed after the first run of the LinkedIn lane (17 November 2026, night)
+
+The lane's first run from the production address read 95 searches with 333 requests, none
+refused, both NRW lists to their end, and the whole scrape took 22 minutes where it had
+taken 40. Four things were still open:
+
+- **LinkedIn keyword searches are read five pages deep again.** It was three while nobody
+  knew what LinkedIn answers from that address. The lane has 40 minutes.
+- **A board read for the first time.** What stands on a newly added board is not new, but
+  the pipeline could not have seen it earlier: on 14 November three new feeds lost 642 ads
+  to the age rule on their first day. Such ads now pass the age rule too, behind the ads
+  that are new on known boards and within the same limit of 60 a run. Within the limit,
+  ads whose title names tech work go first, so a large board does not use it up on ads
+  the later checks drop anyway. What is past the limit waits: it is left out of the
+  memory of seen ads, the next run meets it again, and the digest says how many are
+  waiting. Not more than 600 wait. Past that the printed date decides, as it did for
+  everything past the limit in the section above: without that end, a lost memory of seen
+  ads would let every old ad on every board through, 60 a run, for months.
+- **Workable, Teamtailor and Breezy** name the boards they read, like the other feeds that
+  hand over a company's whole list, so the rule for ads new on a known board covers them.
+- **DLR.** From 17 November jobs.dlr.de answers every job page with HTTP 403 and "Policy
+  ID: cq_botdefence_system_policy", while its sitemap and robots.txt stay open. The site
+  is not asked in another way, and after three refusals it is not asked again in that
+  run. What a sitemap address itself says (place, title, link) goes to the digest as a
+  list "To check by hand", without a score, after the checks a title and a place can pass
+  (student form, tech work in the title, focus area). Read that way on 17 November, the
+  list held 12 roles. One email lists 15 of them; the rest stay out of the memory of seen
+  ads and follow in the next emails. A copy of the same job that can be read beats the
+  copy known by title only. DLR's own spelling of a student role ("Studentin (w/m/d)
+  ...") is picked, and a row picked by that spelling alone counts as a student role.
+
+Not included: SmartRecruiters and Workday in the rule for ads new on a known board (their
+lists are read in part). A waiting ad whose board is then not read for more than 48
+hours is judged by its printed date after all, like any ad on a board that was not read
+for that long. Not measured: a morning run with five pages per search.
+[tests/test_remaining_gaps.py](tests/test_remaining_gaps.py) covers the four.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -717,7 +754,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,229 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,314 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

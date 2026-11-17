@@ -376,13 +376,14 @@ class TestTheOrderOfTheSearches:
         assert all(s["depth"] == scrapers._LI_DEPTH for s in plan if not s["pool"])
 
     def test_the_settings_fit_the_lanes_time(self):
-        # One request every three seconds for half an hour is about 400 requests
-        # once the description fetches are taken off. Three pages for every
-        # keyword search and the NRW lists fit; five pages for each did not.
+        # The lane's first run from the production address (17 November 2026):
+        # 333 requests in 1,303 seconds, none refused, so 3.9 seconds a request
+        # with the description fetches in between. Five pages for every keyword
+        # search plus about a hundred requests for the two NRW lists fit.
         plan = scrapers._linkedin_plan()
         keyword_requests = sum(s["depth"] // 10 for s in plan if not s["pool"])
-        assert (scrapers._LI_PACE, scrapers._LI_DEPTH, scrapers._LI_SECONDS) == (3.0, 30, 2100)
-        assert keyword_requests * (scrapers._LI_PACE + 0.5) < scrapers._LI_SECONDS * 0.6
+        assert (scrapers._LI_PACE, scrapers._LI_DEPTH, scrapers._LI_SECONDS) == (3.0, 50, 2400)
+        assert (keyword_requests + 100) * 3.9 < scrapers._LI_SECONDS
         assert scrapers._LI_LIST_LIMIT == 800 and scrapers._LI_GIVE_UP_AFTER == 4
 
     def test_for_now_no_list_is_read_for_all_of_germany(self):

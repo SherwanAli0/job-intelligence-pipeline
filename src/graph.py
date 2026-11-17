@@ -44,6 +44,8 @@ class RunState(TypedDict, total=False):
     run_notes: list[str]
     drop_by_filter_track: Any
     body_unresolved: list[str]
+    by_hand: list[dict]          # rows known by title only, listed in the digest without a score
+    held_over: list[str]         # ids that wait for a later run (limit of old-dated ads per run)
     dq_counts: Any
     track_mix: dict[str, int]
     closed_dropped: int
@@ -100,10 +102,14 @@ def build_graph(nodes: dict):
     first_scoring_stage = "evidence" if with_evidence else "score"
 
     def _has_new_jobs(state: RunState) -> str:
-        return first_scoring_stage if state.get("new_jobs") else "persist"
+        if state.get("new_jobs"):
+            return first_scoring_stage
+        # Nothing to score, but roles to check by hand: the digest still goes out.
+        return "notify" if state.get("by_hand") else "persist"
 
     g.add_conditional_edges("filter", _has_new_jobs,
-                            {first_scoring_stage: first_scoring_stage, "persist": "persist"})
+                            {first_scoring_stage: first_scoring_stage, "notify": "notify",
+                             "persist": "persist"})
     if with_evidence:
         g.add_edge("evidence", "score")
     g.add_edge("score", "rank")
