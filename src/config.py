@@ -25,16 +25,50 @@ def is_catchup(today=None) -> bool:
     return (today or _date.today()) < CATCHUP_UNTIL
 
 
+# -- Second run of the day: ask the boards only for what is new ---------------
+# The morning run asks for the last 24 hours. A second run on the same day
+# (17:00, owner 2026-11-17) is there to catch what was published since the
+# morning, so with JOBHUNTER_SOURCE_WINDOW=since_last_run every source that
+# takes a time range is asked only for the hours since the previous completed
+# run started (a source that takes whole days keeps its smallest window).
+# main.node_scrape works those hours out from the run history and stores them
+# here; without the variable, or when the history cannot say, the window stays
+# at 24 hours. The FILTER cap below is not touched: a posting this run sees
+# for the first time is still judged by the usual rules.
+_SOURCE_HOURS_OVERRIDE = None
+
+
+def since_last_run_requested() -> bool:
+    import os
+    return os.environ.get("JOBHUNTER_SOURCE_WINDOW", "").strip().lower() == "since_last_run"
+
+
+def set_source_window_hours(hours) -> None:
+    """Narrow the SOURCE window for this run to `hours` (never wider than the
+    normal window, never under an hour). None restores the normal window."""
+    global _SOURCE_HOURS_OVERRIDE
+    _SOURCE_HOURS_OVERRIDE = None if hours is None else max(1, min(int(hours), _NORMAL_HOURS))
+
+
+def source_window_narrowed() -> bool:
+    """True while a since-last-run window is in force for this run."""
+    return _SOURCE_HOURS_OVERRIDE is not None
+
+
 def max_posting_age_hours(today=None) -> int:
     """SOURCE window in hours: what scrapers ask JobSpy, LinkedIn and the
     Arbeitsagentur for. `today` is injectable for tests."""
-    return _CATCHUP_HOURS if is_catchup(today) else _NORMAL_HOURS
+    if is_catchup(today):
+        return _CATCHUP_HOURS
+    if _SOURCE_HOURS_OVERRIDE is not None:
+        return _SOURCE_HOURS_OVERRIDE
+    return _NORMAL_HOURS
 
 
-# FILTER cap. The pipeline runs once a day, so a 24h filter cap equals the
-# run interval with no slack: a posting published just after its source was
-# scraped yesterday is just over 24h old at today's filter step, and a missed
-# run lost a whole day. 48h covers both. Repeats stay blocked by seen_jobs and
+# FILTER cap. A 24h filter cap equals the interval between two morning runs
+# with no slack: a posting published just after its source was scraped
+# yesterday is just over 24h old at today's filter step, and a missed run
+# lost a whole day. 48h covers both. Repeats stay blocked by seen_jobs and
 # the emailed-key memory, so a wider window cannot resend anything.
 _FILTER_HOURS = 48
 

@@ -13,6 +13,10 @@ aws/.*-task
 shown_jobs.jsonl
 # the text of emailed postings (personal archive)
 postings_*.jsonl
+# the text and score of every posting that reached the scorer (personal archive)
+scored_*.jsonl
+# every dropped and judged job of a run (personal archive)
+audit_*.jsonl
 
 # Stray scrape debris from probing sources by hand
 uk.html

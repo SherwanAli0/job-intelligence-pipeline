@@ -600,6 +600,10 @@ def _query_hours_old(query: str) -> int:
     fetch, so the wider window adds almost no time."""
     import config as _cfg
     base = _max_age_hours()
+    if _cfg.source_window_narrowed():
+        # Second run of the day: the morning run made the week-long sweep,
+        # this one asks only for what was published since.
+        return base
     if _cfg.internship_lane_on() and _RE_INTERNSHIP_QUERY.search(query):
         return max(base, _cfg.INTERNSHIP_SOURCE_HOURS)
     return base

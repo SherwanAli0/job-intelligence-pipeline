@@ -1777,6 +1777,64 @@ def _archive_postings(top: list[dict], near: list[dict]) -> None:
         print(f"  [Postings] could not archive the posting texts: {e}")
 
 
+def _archive_scored(scored: list[dict], skip_ids=()) -> None:
+    """Keep the text and the verdict of every posting that reached the scoring
+    stage (scored_<date>.jsonl in the state bucket; gitignored locally).
+
+    The audit file has every score without the ad text, and the postings
+    archive has the text of emailed ads only, so neither can show what a low
+    score was given to: of 9,266 ads scored up to 2026-11-16, the text of 346
+    was kept, every one of them scored 45 or more. Checking the scorer against
+    hand labels, or fitting anything to its scores, needs the low end too.
+
+    Postings a pre-screen rule dropped are kept as well, with the rule's name
+    and no model score. `skip_ids` are the jobs node_persist leaves unseen for
+    another try (the ad body could not be fetched, or the model returned no
+    score): they are judged again on the next run and kept then, once, with
+    the text that verdict was based on. Never raises."""
+    from datetime import datetime, timezone
+    from scorer import HAIKU_MODEL, SCORER_FAILED_PREFIX, SNIPPET_CHARS
+    skip = set(skip_ids or ())
+    jobs = [j for j in (scored or [])
+            if j.get("id") not in skip
+            and not str(j.get("reason", "")).startswith(SCORER_FAILED_PREFIX)]
+    if not jobs:
+        return
+    now = datetime.now(timezone.utc)
+    name = f"scored_{now.date().isoformat()}.jsonl"
+    stamp = now.isoformat(timespec="seconds")
+    try:
+        existing = storage.read_text(name) or ""      # a second run on one day appends
+        lines = []
+        for j in jobs:
+            by_rule = bool(j.get("disqualified_category"))
+            lines.append(json.dumps({
+                "id": j.get("id", ""), "url": j.get("url", ""), "title": j.get("title", ""),
+                "company": j.get("company", ""), "location": j.get("location", ""),
+                "source": j.get("source", ""), "form": j.get("_form", ""),
+                "where": j.get("_where", ""), "track": j.get("_track", ""),
+                "german_ad": bool(j.get("_german_ad")),
+                "posted_at": str(j.get("posted_at") or ""),
+                # score: what the digest used (after the stale-posting penalty).
+                # model_score: what the model returned; None when a rule decided.
+                "score": j.get("score", 0),
+                "model_score": None if by_rule else j.get("_model_score", j.get("score", 0)),
+                "category": j.get("disqualified_category") or "",
+                "model": "" if by_rule else HAIKU_MODEL,
+                "reason": str(j.get("reason", ""))[:1000],
+                "shown_chars": SNIPPET_CHARS,       # how much of the text the model saw
+                "evidence": bool(j.get("evidence")),
+                "scored_at": stamp,
+                "description": (j.get("description") or "")[:8000],
+            }, ensure_ascii=False))
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        storage.write_text(name, existing + "\n".join(lines) + "\n")
+        print(f"  [Scored] kept the text and score of {len(lines)} judged postings in {name}")
+    except Exception as e:
+        print(f"  [Scored] could not archive the judged postings: {type(e).__name__}")
+
+
 def _record_shown(top: list[dict], near: list[dict]) -> None:
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1968,6 +2026,65 @@ def _load_run_history() -> list[dict]:
             except Exception:
                 pass
     return out[-_HISTORY_WINDOW:]
+
+
+# -- Second run of the day ------------------------------------------------------
+# See config.since_last_run_requested. The window is never under two hours,
+# so a manual run started right after another one still asks for something.
+_MIN_SOURCE_HOURS = 2
+
+
+def _previous_run_start(history: list[dict]):
+    """UTC start of the last run in the history that completed and delivered.
+
+    A stats line is written at the END of a run, so the start is its timestamp
+    minus the phase times. A run whose digest could not be sent left the state
+    untouched and is skipped: its postings still count as unseen."""
+    import math
+    from datetime import datetime, timedelta, timezone
+    for h in reversed(history or []):
+        if not isinstance(h, dict) or h.get("email_ok") is False:
+            continue
+        try:
+            end = datetime.fromisoformat(str(h.get("ts", "")).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        # Phase times are seconds. Anything else in their place (a list, a
+        # flag, NaN, a negative or absurd number) counts as no time at all:
+        # the window then starts a little late, and the hour of slack covers it.
+        phases = h.get("phases")
+        took = sum(float(v) for v in (phases.values() if isinstance(phases, dict) else ())
+                   if isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and math.isfinite(v) and 0 <= v <= 86400)
+        return end - timedelta(seconds=took)
+    return None
+
+
+def _since_last_run_hours(history: list[dict], now=None):
+    """Hours a since-last-run window has to cover: from the start of the last
+    delivered run until now, rounded up, plus an hour of slack (the sources
+    are read at different minutes of a run). None when the history cannot
+    say; config.set_source_window_hours caps the result at the normal window."""
+    import math
+    from datetime import datetime, timezone
+    start = _previous_run_start(history)
+    if start is None:
+        return None
+    hours = ((now or datetime.now(timezone.utc)) - start).total_seconds() / 3600.0
+    if hours <= 0:
+        return None
+    return max(_MIN_SOURCE_HOURS, math.ceil(hours) + 1)
+
+
+def _source_hours():
+    """Hours the time-range sources were asked for in this run (run stats)."""
+    try:
+        import config as _cfg
+        return _cfg.max_posting_age_hours()
+    except Exception:
+        return None
 
 
 def _detect_platform() -> str:
@@ -2284,6 +2401,27 @@ def node_scrape(state: dict) -> dict:
     import scrapers as _scrapers
     _scrapers.KNOWN_JOB_IDS = set(seen)
 
+    # A second run on the same day asks the boards only for what was published
+    # since the previous run started (config.since_last_run_requested).
+    import config as _cfg
+    _cfg.set_source_window_hours(None)
+    if _cfg.since_last_run_requested() and not _cfg.is_catchup():
+        # The window is a refinement. Whatever goes wrong while working it out,
+        # the run goes on with the normal window instead of stopping.
+        try:
+            hours = _since_last_run_hours(_load_run_history())
+            _cfg.set_source_window_hours(hours)
+            if hours is None:
+                print("[Window] since_last_run was asked for, but the run history names "
+                      "no completed run: normal window")
+            else:
+                print(f"[Window] since last run: sources that take a time range are asked "
+                      f"for the last {_cfg.max_posting_age_hours()} hours")
+        except Exception as e:
+            _cfg.set_source_window_hours(None)
+            print(f"[Window] could not work out the since-last-run window "
+                  f"({type(e).__name__}): normal window")
+
     all_jobs = scrape_all()
 
     from collections import Counter as _Counter
@@ -2319,6 +2457,9 @@ def node_scrape(state: dict) -> dict:
     quiet = _quiet_today(_load_source_registry(), src_counts)
     run_notes.append(f"Sources that delivered today: {len(src_counts)}."
                      + (f" Usually active but empty today: {', '.join(quiet)}." if quiet else ""))
+    if _cfg.source_window_narrowed():
+        run_notes.append("Second run of the day: the job boards were asked only for postings "
+                         f"of the last {_cfg.max_posting_age_hours()} hours.")
     for n in run_notes:
         print(f"NOTE: {n}")
     for w in health_warnings:
@@ -2462,6 +2603,12 @@ def node_filter(state: dict) -> dict:
 
 def node_score(state: dict) -> dict:
     scored = score_jobs(state["new_jobs"])
+
+    # What the model itself returned, before the stale-posting penalty below
+    # changes it: _archive_scored keeps both numbers.
+    for j in scored:
+        if not j.get("disqualified_category"):
+            j["_model_score"] = j.get("score", 0)
 
     ghosts = _apply_ghost_penalty(scored)
     if ghosts:
@@ -2624,6 +2771,7 @@ def node_persist(state: dict) -> dict:
         # O2: log what was shown, with features, for the conversion join
         _record_shown(state.get("top", []), state.get("near", []))
         _archive_postings(state.get("top", []), state.get("near", []))
+        _archive_scored(state.get("scored", []), skip_ids=retry)
         _write_audit()
         # Source-health long-term memory (see _update_source_registry).
         _update_source_registry(state.get("src_counts", {}))
@@ -2657,6 +2805,9 @@ def node_persist(state: dict) -> dict:
             "email_ok": email_ok,
             "warnings": state.get("health_warnings", []),
             "phases": state.get("phases", {}),
+            # Hours the time-range sources were asked for: 24 on a normal run,
+            # fewer on a second run of the day (config.since_last_run_requested).
+            "source_hours": _source_hours(),
             "scrapers": dict(sorted(_scraper_timings().items(), key=lambda x: -x[1])[:10]),
             "llm_cost_usd": round(llm_cost, 4),
             "batch_means": getattr(_sc, "SCORE_BATCH_MEANS", []),
