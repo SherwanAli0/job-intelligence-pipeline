@@ -2092,14 +2092,18 @@ def _fresh_by_date(j: dict) -> bool:
 # and on XING by the posting id: the board was read by an earlier delivered
 # run not longer ago than the freshness rule allows, and this ad was not on
 # it then, or it would be in seen_jobs. A board read for the first time has
-# no such earlier read, so what already stands on it is still judged by its
-# date. Everything else (keyword searches, Indeed, Adzuna) keeps the date
-# rule: there the pipeline sees a part, and an ad it has not seen may be old.
+# no such earlier read (see below). Everything else (keyword searches,
+# Indeed, Adzuna) keeps the date rule: there the pipeline sees a part, and an
+# ad it has not seen may be old.
 #
 # A limit per run, because the inference rests on seen_jobs: if that file is
 # ever emptied, or a board changes every link at once, each old ad on it looks
 # new. Past the limit an ad waits: it is left out of seen_jobs, so the next
-# run meets it again, and the digest says how many are waiting.
+# run meets it again, and the digest says how many are waiting. Not more than
+# _NEW_ON_BOARD_WAIT of them: waiting without an end would turn the limit
+# into a throttle, and after a lost seen_jobs every old ad on every board
+# would get past the age rule, 60 a run, for months. Past the waiting list
+# the printed date decides, as it did before ads could wait.
 #
 # A board read for the first time (owner, 2026-11-17: yes). What stands on a
 # newly added board is not new, but the pipeline could not have seen it
@@ -2110,6 +2114,7 @@ def _fresh_by_date(j: dict) -> bool:
 # runs. Not for lists that are asked for a time window (LinkedIn) or XING,
 # which tells new postings by their id: neither has such a backlog.
 _NEW_ON_BOARD_CAP = 60
+_NEW_ON_BOARD_WAIT = 600        # ten runs' worth; the three feeds of 14 November held 642 ads
 
 
 def _board_standing(j: dict) -> str:
@@ -2134,6 +2139,15 @@ def _new_on_a_read_board(j: dict) -> bool:
     return _board_standing(j) == "new"
 
 
+def _title_names_tech(j: dict) -> bool:
+    """Tech work named in the title alone (the check the LinkedIn lane uses
+    for its cards)."""
+    try:
+        return bool(_is_tech_relevant({"title": j.get("title") or "", "description": ""}))
+    except Exception:
+        return False
+
+
 def _mark_new_on_read_boards(jobs: list[dict], skip_ids=()) -> tuple[int, int]:
     """Flag the jobs the age rule would drop for their printed date although
     they are new on a board that was read before, or stand on a board that is
@@ -2148,14 +2162,23 @@ def _mark_new_on_read_boards(jobs: list[dict], skip_ids=()) -> tuple[int, int]:
             new.append(j)
         elif standing == "first":
             first.append(j)
-    late = new + first                              # a new board's backlog goes last
-    kept, over = late[:_NEW_ON_BOARD_CAP], late[_NEW_ON_BOARD_CAP:]
+    # Who gets the run's limit first: ads whose title names tech work, so a
+    # large backlog does not use it up on ads the later checks drop anyway
+    # (a new board of 600 ads would otherwise take five days in the order the
+    # board lists them). Among equals an ad that is new on a known board goes
+    # before a new board's backlog, then the order the boards were read in.
+    backlog_ids = {id(j) for j in first}
+    late = sorted(new + first, key=lambda j: (not _title_names_tech(j), id(j) in backlog_ids))
+    kept, rest = late[:_NEW_ON_BOARD_CAP], late[_NEW_ON_BOARD_CAP:]
+    over, past = rest[:_NEW_ON_BOARD_WAIT], rest[_NEW_ON_BOARD_WAIT:]
     for j in kept:
         j["_new_on_board"] = True
-        if any(j is f for f in first):
+        if id(j) in backlog_ids:
             j["_first_read"] = True
     for j in over:
         j["_new_on_board_over"] = True
+    for j in past:
+        j["_new_on_board_past"] = True              # the printed date decides
     if kept:
         from collections import Counter
         by_source = Counter(j.get("source", "?") for j in kept)
@@ -2167,6 +2190,9 @@ def _mark_new_on_read_boards(jobs: list[dict], skip_ids=()) -> tuple[int, int]:
     if over:
         print(f"[Freshness] {len(over)} more wait for a later run: {_NEW_ON_BOARD_CAP} a run get past "
               f"the age rule this way")
+    if past:
+        print(f"[Freshness] {len(past)} more than the {_NEW_ON_BOARD_WAIT} that may wait: "
+              f"for these the printed date decides")
     return len(kept), len(over)
 
 
@@ -2183,7 +2209,9 @@ def _fresh_or_noted(j: dict) -> bool:
         j["_drop_note"] = (f"dated {str(j.get('posted_at') or '').strip()[:10]}, "
                            f"{age:.1f} days old when first seen"
                            + ("; waits for a later run (the limit of ads let past the age rule "
-                              "was reached)" if j.get("_new_on_board_over") else ""))
+                              "was reached)" if j.get("_new_on_board_over") else "")
+                           + ("; not kept waiting (the waiting list was full)"
+                              if j.get("_new_on_board_past") else ""))
     return False
 
 
@@ -2873,10 +2901,18 @@ def node_filter(state: dict) -> dict:
     new_jobs = _apply_filter(new_jobs, _is_in_focus_area,
                              "Focus-area filter (remote/hybrid DE, on-site NRW+Bonn)")
     by_hand = _by_hand_kept(by_hand)
+    # The email lists the first 15 of them (notifier._BY_HAND_MAX). The rest
+    # wait for the next email: node_persist leaves them out of seen_jobs, so
+    # a role is never marked as seen without having been listed.
+    import notifier as _notifier
+    by_hand_later = by_hand[_notifier._BY_HAND_MAX:]
     if by_hand:
         print(f"[By hand] {len(by_hand)} roles are listed by title only (the site refuses the page):")
         for j in by_hand[:5]:
             print(f"  - {j.get('title', '')[:90]} @ {j.get('company', '')} ({j.get('location', '')})")
+        if by_hand_later:
+            print(f"  {len(by_hand_later)} of them wait for the next email "
+                  f"({_notifier._BY_HAND_MAX} are listed in one email)")
     new_jobs = _apply_filter(new_jobs, _is_english_friendly,
                              "English filter (ad must read as English)")
     new_jobs = _apply_filter(new_jobs, _no_experience_overload, "ExperienceFilter (>=2 years)")
@@ -2897,15 +2933,20 @@ def node_filter(state: dict) -> dict:
 
     # Ads past the run's limit wait: node_persist leaves them out of seen_jobs.
     held_over = [j["id"] for j in all_jobs if j.get("_new_on_board_over") and j.get("id")]
+    waiting = set(held_over)
+    held_over += [j["id"] for j in by_hand_later if j.get("id") and j["id"] not in waiting]
     out = {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track,
            "body_unresolved": body_unresolved, "by_hand": by_hand, "held_over": held_over}
     if over_the_limit:
         # A newly added board with many ads, or far more new ads than usual
         # on known boards: seen_jobs emptied, or a board that changed every link.
+        past = sum(1 for j in all_jobs if j.get("_new_on_board_past"))
         out["health_warnings"] = list(state.get("health_warnings") or []) + [
             f"{over_the_limit} older ads that are new to the pipeline wait for the next runs: "
             f"{_NEW_ON_BOARD_CAP} a run are let past the age rule (a newly added job board is worked "
-            f"through this way). If no board was added, the memory of seen ads may have been reset."]
+            f"through this way). If no board was added, the memory of seen ads may have been reset."
+            + (f" {past} more were judged by their printed date: not more than "
+               f"{_NEW_ON_BOARD_WAIT} wait." if past else "")]
     return out
 
 

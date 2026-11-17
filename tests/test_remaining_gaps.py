@@ -350,6 +350,31 @@ class TestASiteThatRefusesItsPages:
         assert len(rows) == 12 and not any(r.get("_by_hand") for r in rows)
         assert all(r.get("_student") for r in rows)
 
+    def test_a_site_that_only_fails_does_not_stay_in_single_file(self, monkeypatch):
+        # Three attempts go one by one, whatever comes back. After that the
+        # pages are asked side by side again, as before the gate existed.
+        import threading
+        import time as real_time
+        urls = _dlr_urls(*[f"K%C3%B6ln-Werkstudent-%28wmd%29-Data-{i}" for i in range(30)])
+        monkeypatch.setattr(scrapers, "_RMK_SITES", ((DLR, "DLR"),))
+        running, peak, lock = [0], [0], threading.Lock()
+
+        def get(url, **kw):
+            if url.endswith("/sitemap.xml"):
+                return _Resp(content=_sitemap(urls).encode("utf-8"))
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            real_time.sleep(0.02)
+            with lock:
+                running[0] -= 1
+            raise ConnectionError("timed out")
+        monkeypatch.setattr(scrapers.requests, "get", get)
+        monkeypatch.setattr(scrapers, "SCRAPE_WORKERS", 8)
+        assert scrapers.scrape_research_institutes() == []
+        assert peak[0] > 1, "after the first three attempts the pages are asked side by side"
+        assert scrapers._RMK_REFUSED.get("jobs.dlr.de", set()) == set()
+
     def test_a_site_that_answers_gets_no_such_rows(self, monkeypatch):
         urls = _dlr_urls("K%C3%B6ln-Werkstudent-%28wmd%29-Data")
         html = ('<html><head><meta property="og:title" content="Werkstudent (w/m/d) Data">'
@@ -542,3 +567,197 @@ class TestTheListToCheckByHand:
         main.node_persist({"dry_run": False, "seen": {}, "email_ok": True, "all_jobs": [row],
                            "scored": [], "top": [], "near": [], "by_hand": [row]})
         assert stats[0]["by_hand"] == 1 and stats[0]["held_over"] == 0
+
+
+# -- 5. what the check of this change found ------------------------------------------
+class TestWhoGetsTheLimitFirst:
+    def test_ads_whose_title_names_tech_work_go_first(self, monkeypatch):
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_CAP", 2)
+        jobs = [_job(id="m0", title="Working Student Marketing"),
+                _job(id="m1", title="Working Student Office Management"),
+                _job(id="d0"), _job(id="d1", title="Praktikum Machine Learning")]
+        assert [main._title_names_tech(j) for j in jobs] == [False, False, True, True]
+        assert main._mark_new_on_read_boards(jobs) == (2, 2)
+        assert [j["id"] for j in jobs if j.get("_new_on_board")] == ["d0", "d1"]
+        assert [j["id"] for j in jobs if j.get("_new_on_board_over")] == ["m0", "m1"]
+
+    def test_such_a_title_on_a_new_board_goes_before_another_title_on_a_known_board(self, tmp_path, monkeypatch):
+        _read_before(tmp_path, board__personio__known=24)
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_CAP", 1)
+        known = _job(id="k", title="Working Student Marketing", board="board|personio|known", source="Personio")
+        backlog = _job(id="b")
+        assert main._mark_new_on_read_boards([known, backlog]) == (1, 1)
+        assert backlog.get("_new_on_board") and backlog.get("_first_read")
+        assert known.get("_new_on_board_over") and "_new_on_board" not in known
+
+    def test_among_equal_titles_the_order_is_as_before(self, tmp_path, monkeypatch):
+        _read_before(tmp_path, board__personio__known=24)
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_CAP", 3)
+        dull = [_job(id=f"b{i}", title="Working Student Marketing") for i in range(3)]
+        known = [_job(id=f"k{i}", title="Working Student Marketing", board="board|personio|known",
+                      source="Personio") for i in range(2)]
+        main._mark_new_on_read_boards(dull + known)
+        assert [j["id"] for j in dull + known if j.get("_new_on_board")] == ["b0", "k0", "k1"]
+
+    def test_a_title_check_that_fails_changes_nothing(self, monkeypatch):
+        monkeypatch.setattr(main, "_is_tech_relevant", lambda j: 1 / 0)
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_CAP", 1)
+        jobs = [_job(id="a"), _job(id="b")]
+        assert main._title_names_tech(jobs[0]) is False
+        assert main._mark_new_on_read_boards(jobs) == (1, 1)
+        assert jobs[0].get("_new_on_board") and jobs[1].get("_new_on_board_over")
+
+    @pytest.mark.parametrize("title", [None, "", 7])
+    def test_a_title_that_is_no_text_is_no_tech_title(self, title):
+        assert main._title_names_tech({"title": title}) is False
+
+
+class TestNotMoreThanTheWaitingListWaits:
+    def test_past_the_waiting_list_the_printed_date_decides(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_CAP", 2)
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_WAIT", 3)
+        jobs = [_job(id=f"b{i}", title=f"Working Student Data Analytics {i}", company=f"Acme {i}")
+                for i in range(7)]
+        out, audit = _filter(monkeypatch, jobs)
+        assert [j["id"] for j in out["new_jobs"]] == ["b0", "b1"]
+        assert out["held_over"] == ["b2", "b3", "b4"]
+        assert "waits for a later run" in audit["b4"]["why"] and "not kept waiting" not in audit["b4"]["why"]
+        for past in ("b5", "b6"):
+            assert audit[past]["filter"] == "Freshness filter"
+            assert "not kept waiting (the waiting list was full)" in audit[past]["why"]
+            assert "waits for a later run" not in audit[past]["why"]
+        warning = out["health_warnings"][-1]
+        assert warning.startswith("3 older ads that are new to the pipeline wait for the next runs")
+        assert warning.endswith("2 more were judged by their printed date: not more than 3 wait.")
+
+        saved, _ = TestAnAdPastTheLimitWaits()._persist(monkeypatch, tmp_path, jobs, held_over=out["held_over"])
+        assert sorted(saved) == ["b0", "b1", "b5", "b6"], "only the three that wait stay unseen"
+
+    def test_the_warning_is_as_before_when_nothing_is_past_the_list(self, monkeypatch):
+        monkeypatch.setattr(main, "_NEW_ON_BOARD_CAP", 1)
+        jobs = [_job(id=f"b{i}", title=f"Working Student Data Analytics {i}", company=f"Acme {i}")
+                for i in range(2)]
+        out, _ = _filter(monkeypatch, jobs)
+        assert out["health_warnings"][-1].endswith("the memory of seen ads may have been reset.")
+
+    def test_a_lost_memory_of_seen_ads_lets_a_bounded_number_past(self, tmp_path, capsys):
+        # every ad on a known board looks new when seen_jobs is empty
+        _read_before(tmp_path, board__personio__known=24)
+        jobs = [_job(id=f"x{i}", board="board|personio|known", source="Personio") for i in range(1000)]
+        assert (main._NEW_ON_BOARD_CAP, main._NEW_ON_BOARD_WAIT) == (60, 600)
+        assert main._mark_new_on_read_boards(jobs) == (60, 600)
+        assert sum(1 for j in jobs if j.get("_new_on_board_past")) == 340
+        assert not any(j.get("_new_on_board_past") and (j.get("_new_on_board") or j.get("_new_on_board_over"))
+                       for j in jobs)
+        assert "340 more than the 600 that may wait" in capsys.readouterr().out
+        # the 340 are judged by their date: old, so the age rule drops them
+        assert not any(main._is_fresh_enough(j) for j in jobs if j.get("_new_on_board_past"))
+
+
+class TestRolesPastTheFifteenOfOneEmailWait:
+    @staticmethod
+    def _rows(n):
+        return [TestTheListToCheckByHand._stub(
+            f"r{i:02d}", f"Studentische Hilfskraft (w/m/d) KI gestützte Datenauswertung {i}", "Köln, Germany")
+            for i in range(n)]
+
+    def test_they_stay_unseen_and_the_next_email_lists_them(self, monkeypatch, tmp_path, capsys):
+        rows = self._rows(18)
+        out, _ = _filter(monkeypatch, rows)
+        assert len(out["by_hand"]) == 18 and out["new_jobs"] == []
+        assert out["held_over"] == ["r15", "r16", "r17"]
+        assert "3 of them wait for the next email (15 are listed in one email)" in capsys.readouterr().out
+
+        html = notifier._build_html([], by_hand=out["by_hand"])
+        assert html.count("KI gestützte Datenauswertung") == 15
+        assert "Datenauswertung 14<" in html and "Datenauswertung 15<" not in html
+        assert "and 3 more follow in the next emails" in html
+
+        saved, stats = TestAnAdPastTheLimitWaits()._persist(
+            monkeypatch, tmp_path, rows, held_over=out["held_over"], by_hand=out["by_hand"])
+        assert sorted(saved) == [f"r{i:02d}" for i in range(15)], "what the email listed is seen, the rest is not"
+        assert stats[0]["by_hand"] == 18 and stats[0]["held_over"] == 3
+
+        # the next run: the fifteen are seen, the three are met again and listed
+        out, _ = _filter(monkeypatch, rows[15:])
+        assert [j["id"] for j in out["by_hand"]] == ["r15", "r16", "r17"] and out["held_over"] == []
+
+    def test_fifteen_or_fewer_leave_nothing_waiting(self, monkeypatch, capsys):
+        out, _ = _filter(monkeypatch, self._rows(15))
+        assert len(out["by_hand"]) == 15 and out["held_over"] == []
+        assert "wait for the next email" not in capsys.readouterr().out
+        assert "more follow" not in notifier._build_html([], by_hand=out["by_hand"])
+
+    def test_the_filter_and_the_email_cut_at_the_same_place(self, monkeypatch):
+        monkeypatch.setattr(notifier, "_BY_HAND_MAX", 4)
+        out, _ = _filter(monkeypatch, self._rows(6))
+        assert out["held_over"] == ["r04", "r05"]
+        html = notifier._build_html([], by_hand=out["by_hand"])
+        assert html.count("KI gestützte Datenauswertung") == 4 and "and 2 more follow in the next emails" in html
+
+    def test_the_subject_counts_what_the_email_lists(self, monkeypatch, capsys):
+        import smtplib
+        sent = {}
+
+        class Server:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def login(self, *a):
+                pass
+
+            def sendmail(self, sender, to, text):
+                sent["text"] = text
+        monkeypatch.setenv("GMAIL_USER", "someone@example.org")
+        monkeypatch.setenv("GMAIL_APP_PASSWORD", "x")
+        monkeypatch.setattr(smtplib, "SMTP_SSL", Server)
+        assert notifier.send_email([], by_hand=self._rows(18)) is True
+        from email import message_from_string
+        from email.header import decode_header, make_header
+        subject = str(make_header(decode_header(message_from_string(sent["text"])["Subject"])))
+        assert "0 job matches + 15 to check by hand" in subject
+        assert "15 to check by hand" in capsys.readouterr().out
+
+
+class TestThePageRowSaysStudentOnlyForDlrsOwnSpellings:
+    PAGE = ('<html><head><meta property="og:title" content="{title}"></head>'
+            '<body><div class="jobdescription">Python and SQL</div></body></html>')
+
+    def _row(self, monkeypatch, url, title):
+        page = self.PAGE.format(title=title).encode("utf-8")
+        monkeypatch.setattr(scrapers.requests, "get", lambda u, **kw: _Resp(content=page))
+        scrapers._RMK_ANSWERS.clear()
+        (row,) = scrapers._rmk_page(url, "DLR")
+        return row
+
+    @pytest.mark.parametrize("slug", ["K%C3%B6ln-Studentin-%28wmd%29-Datenmanagement",
+                                      "Bonn-Student-%28fmx%29-Machine-Learning",
+                                      "Bonn-Studierende-im-Bereich-Datenanalyse"])
+    def test_dlrs_spellings_carry_the_flag(self, monkeypatch, slug):
+        row = self._row(monkeypatch, f"{DLR}/job/{slug}/1/", "Studentin (w/m/d) Datenmanagement")
+        assert row["_student"] is True and main._job_form(row) == "student"
+
+    @pytest.mark.parametrize("slug", ["Sankt-Augustin-Studentische-Hilfskraft-Datenmanagement",
+                                      "Sankt-Augustin-Praktikum-Datenmanagement",
+                                      "Sankt-Augustin-Internship-Data-Management",
+                                      "Sankt-Augustin-Wissenschaftliche-Hilfskraft-Datenmanagement"])
+    def test_the_other_addresses_leave_the_form_to_the_title(self, monkeypatch, slug):
+        # the title was changed after the address was made: the title decides, as before
+        url = f"https://jobs.fraunhofer.de/job/{slug}/2/"
+        assert scrapers._RMK_STUDENT.search(url), "the address is still picked"
+        row = self._row(monkeypatch, url, "Projektmitarbeiter (w/m/d) Datenmanagement")
+        assert "_student" not in row
+        assert main._job_form(row) != "student"
+
+    def test_the_picker_takes_the_same_addresses_as_before(self):
+        import re
+        before = re.compile(r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr"
+                            r"|Praktik|Internship|Praxissemester"
+                            r"|Studentin\b|Student(?:in)?-%28|Studierende", re.IGNORECASE)
+        assert scrapers._RMK_STUDENT.pattern == before.pattern and scrapers._RMK_STUDENT.flags == before.flags

@@ -4815,14 +4815,17 @@ _RMK_REGION = re.compile(
     r"|Br%C3%BChl|Euskirchen|Leverkusen|Remagen|Koblenz|D%C3%BCsseldorf)",
     re.IGNORECASE,
 )
+# DLR titles its student roles "Studentin (w/m/d) ..." and "Student (f/m/x) ..."
+# (2026-11-17: the words below picked 41 of its job addresses). No title rule
+# reads these as student work, so a row picked by them says so itself.
+_RMK_STUDENT_SPELLED = r"Studentin\b|Student(?:in)?-%28|Studierende"
 _RMK_STUDENT = re.compile(
     r"Studentische|Student-assistant|Student-Assistant|Werkstudent|Hilfskr"
     r"|Praktik|Internship|Praxissemester"
-    # DLR titles its student roles "Studentin (w/m/d) ..." and "Student (f/m/x)
-    # ..." (2026-11-17: the pattern above picked 41 of its job addresses).
-    r"|Studentin\b|Student(?:in)?-%28|Studierende",
+    r"|" + _RMK_STUDENT_SPELLED,
     re.IGNORECASE,
 )
+_RMK_STUDENT_SPELLED_RE = re.compile(_RMK_STUDENT_SPELLED, re.IGNORECASE)
 # Match the city by NAME. Splitting the URL path on dashes instead produced
 # locations like "Wachtberg STUDENTISCHE", because the title follows the city
 # in the same path segment with no separator to key on.
@@ -4863,7 +4866,7 @@ _RMK_NRW = re.compile(
 # sitemap address itself says (place, title, link) is still public, and such
 # a role goes to the digest as a row to check by hand (_rmk_stub).
 _RMK_REFUSED: dict = {}
-_RMK_ANSWERS: dict = {}          # host -> page answers of any kind in this run
+_RMK_ANSWERS: dict = {}          # host -> page requests finished in this run, failed ones too
 _RMK_GATES: dict = {}            # host -> lock that lets its first pages through one by one
 _RMK_LOCK = threading.Lock()
 _RMK_REFUSALS_BEFORE_STOP = 3
@@ -4901,9 +4904,10 @@ def _rmk_page(url: str, source: str) -> list[dict]:
     try:
         host = urllib.parse.urlsplit(url).netloc
         with _RMK_LOCK:
-            # Until a host has given three answers its pages are asked one by
-            # one: a site that refuses is then asked exactly three times, not
-            # once per worker.
+            # The pages that are asked before a host has answered three times
+            # go one at a time (the workers that were already waiting too): a
+            # site that refuses from the start is then asked exactly three
+            # times, not once per worker.
             gate = (_RMK_GATES.setdefault(host, threading.Lock())
                     if _RMK_ANSWERS.get(host, 0) < _RMK_REFUSALS_BEFORE_STOP else None)
         if gate:
@@ -4915,11 +4919,14 @@ def _rmk_page(url: str, source: str) -> list[dict]:
                     refused.add(url)             # the site has said no: not asked again in this run
                     return []
             r = _guarded_get(url, headers=HEADERS, timeout=15)
-            with _RMK_LOCK:
-                _RMK_ANSWERS[host] = _RMK_ANSWERS.get(host, 0) + 1
-                if r.status_code in _RMK_REFUSED_STATUS:
+            if r.status_code in _RMK_REFUSED_STATUS:
+                with _RMK_LOCK:
                     _RMK_REFUSED.setdefault(host, set()).add(url)
         finally:
+            # An attempt that failed counts too: a host that only times out
+            # would otherwise keep every one of its pages in single file.
+            with _RMK_LOCK:
+                _RMK_ANSWERS[host] = _RMK_ANSWERS.get(host, 0) + 1
             if gate:
                 gate.release()
         if r.status_code != 200:
@@ -4953,9 +4960,12 @@ def _rmk_page(url: str, source: str) -> list[dict]:
             source=source,
             description=desc,
         )
-        if _RMK_STUDENT.search(url):
+        if _RMK_STUDENT_SPELLED_RE.search(url):
             # The source says so: DLR titles a student role "Studentin (w/m/d)
-            # ...", which no title rule reads as student work.
+            # ...", which no title rule reads as student work. Not for the
+            # other addresses the picker takes: their words (Werkstudent,
+            # Praktikum, Hilfskraft) stand in the title, and the title rules
+            # read them as they always did.
             row["_student"] = True
         return [row]
     except Exception:

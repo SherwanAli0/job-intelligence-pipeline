@@ -131,8 +131,9 @@ def _by_hand_html(by_hand: list[dict] | None) -> str:
         f' <span style="color:#6b7280;">{escape(str(j.get("company") or ""))}'
         f'{", " + escape(str(j.get("location") or "")) if j.get("location") else ""}</span></div>'
         for j in shown)
-    more = (f'<div style="margin-top:4px;color:#6b7280;">and {len(by_hand) - len(shown)} more</div>'
-            if len(by_hand) > len(shown) else "")
+    # main.node_filter keeps the rest unseen, so the next email lists them.
+    more = (f'<div style="margin-top:4px;color:#6b7280;">and {len(by_hand) - len(shown)} more '
+            f'follow in the next emails</div>' if len(by_hand) > len(shown) else "")
     return (
         '<div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;'
         'border-radius:8px;padding:10px 14px;margin:10px 28px 0;font-size:13px;">'
@@ -437,8 +438,9 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None,
 
     msg = MIMEMultipart("alternative")
     by_hand = by_hand or []
+    listed = min(len(by_hand), _BY_HAND_MAX)         # the rest follow in the next emails
     msg["Subject"] = (f"{subject_prefix}{len(jobs)} job matches"
-                      + (f" + {len(by_hand)} to check by hand" if by_hand else "")
+                      + (f" + {listed} to check by hand" if by_hand else "")
                       + f" \u2014 {today}")
     msg["From"]    = gmail_user
     msg["To"]      = gmail_to
@@ -470,7 +472,7 @@ def send_email(jobs: list[dict], warnings: list[str] | None = None,
             # closing QUIT failed. Retrying here would send the digest twice.
             print(f"  [Email] delivered; ignoring an error while closing: {e}")
         print(f"  [Email] Sent digest with {len(jobs)} jobs ({fresh_count} fresh"
-              + (f", {len(by_hand)} to check by hand" if by_hand else "") + f") to {gmail_to}"
+              + (f", {listed} to check by hand" if by_hand else "") + f") to {gmail_to}"
               + (f" (attempt {attempt})" if attempt > 1 else ""))
         return True
     print(f"  [Email] Failed: {last_error}")
