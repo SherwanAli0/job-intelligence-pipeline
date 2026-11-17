@@ -4003,8 +4003,14 @@ def scrape_hiringcafe() -> list[dict]:
 # -- LinkedIn guest API (direct, server-side filtered) -------------------------
 # LinkedIn serves logged-out job search through a public guest endpoint that
 # accepts filters JobSpy does not expose, crucially f_TPR (time range).
-# LinkedIn rate-limits at roughly 10 pages (~250 results) per IP, so the
-# budget has to be spent on postings that could actually be eligible.
+# LinkedIn rate-limits at roughly 10 requests per IP, so the budget has to be
+# spent on postings that could actually be eligible.
+#
+# One request returns 10 cards, not 25 (measured 2026-11-17: start=0, 10 and
+# 20 gave 30 different postings, and start=25 began with the 26th). The loop
+# below used to ask for start = page * 25 and so read the cards 1-10, 26-35,
+# 51-60 ... of every query: 15 of every 25 results were never read. The offset
+# of a query now advances by the number of cards its last request returned.
 #
 # The f_E (experience level) filter was REMOVED in the Werkstudent pivot.
 # "werkstudent" in the keyword is now the real filter, and German student ads
@@ -4058,6 +4064,8 @@ def scrape_linkedin_guest() -> list[dict]:
     # instead of erasing most of them. Page 1 is also where the freshest and
     # most relevant hits sit, so shallow-and-wide beats deep-and-narrow here.
     exhausted: set[str] = set()
+    # Where the next request of each query starts: the cards read so far.
+    offsets: dict[str, int] = {q: 0 for q in _LI_GUEST_QUERIES}
 
     for page in range(_LI_GUEST_PAGES):
         if len(exhausted) == len(_LI_GUEST_QUERIES):
@@ -4073,7 +4081,7 @@ def scrape_linkedin_guest() -> list[dict]:
                         "location": "Germany",
                         # Seconds window: 24h normally, 7 days in catch-up.
                         "f_TPR": f"r{_max_age_hours() * 3600}",
-                        "start": page * 25,
+                        "start": offsets[query],
                     },
                     headers=HEADERS, timeout=15,
                 )
@@ -4091,9 +4099,12 @@ def scrape_linkedin_guest() -> list[dict]:
 
                 soup = BeautifulSoup(r.text, "html.parser")
                 cards = soup.select("li")
+                offsets[query] += len(cards)
                 if len(cards) < 5:
-                    exhausted.add(query)       # end of results for this query
-                    continue
+                    # End of results for this query. The cards of this last,
+                    # short page are still read below (they used to be thrown
+                    # away with the page).
+                    exhausted.add(query)
 
                 for c in cards:
                     a = c.select_one("a.base-card__full-link") or c.select_one("a")

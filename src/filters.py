@@ -605,3 +605,81 @@ def junior_qualifier_in_title(title: str) -> bool:
 def junior_qualifier_in_text(text: str) -> bool:
     """Same idea for the opening of an ad body (whole words only)."""
     return bool(_RE_JUNIOR_IN_BODY.search(text or ""))
+
+
+# -- Years that describe the employer, not the applicant ----------------------
+# Shared by main._no_experience_overload and scorer._hard_disqualify.
+#
+# C&A opens every ad with "We are building on more than 180 years of experience
+# in the fashion industry". The bare "N years of ... experience" pattern read
+# that as a requirement of 180 years, and a working-student ad the owner later
+# received from LinkedIn's own email was dropped before scoring (2026-11-17).
+#
+# A mention is the employer's own history when nothing in its sentence, up to
+# the end of the mention, speaks to the applicant ("you", "required", "we
+# want", "wir erwarten", "mindestens" ...), no requirement word follows it
+# ("... required", "... vorausgesetzt"), and one of these holds:
+#   1. the number is 15 or more: "more than 180 years of experience";
+#   2. the employer is the one speaking, before the mention ("we", "our",
+#      "wir", "unser") or right after it ("With 10 years of experience, we").
+# The test leans towards keeping: an ad kept by mistake still goes to the
+# scorer, an ad dropped by mistake is never seen again. A statement in the
+# third person with a number under 15 ("Acme has 12 years of experience") is
+# still read as a requirement.
+EXP_IMPLAUSIBLE_YEARS = 15
+_EXP_LEAD_CHARS = 90
+_EXP_TAIL_CHARS = 60
+# Where a sentence ends: punctuation, a line break, a bullet, or a dash set off
+# by spaces ("flexible hours - 3 years of experience required").
+_RE_EXP_BREAK = re.compile(r"[.!?\n;:•|]|\s[-–—]\s")
+_RE_EXP_EMPLOYER_VOICE = re.compile(r"\b(?:we|our|ours|wir|unser\w*)\b", re.IGNORECASE)
+_RE_EXP_EMPLOYER_AFTER = re.compile(r"^[^.!?\n;:•|]{0,60}?,\s+(?:we|our|wir|unser\w*)\b", re.IGNORECASE)
+_RE_EXP_APPLICANT_VOICE = re.compile(
+    r"\b(?:you|your|yours|candidates?|applicants?|someone|person|people|hir(?:e|ing)"
+    r"|requir\w*|must|should|need\w*|want\w*|wish\w*|valu\w*|prefer\w*|desir\w*"
+    r"|looking\s+for|seek\w*|search\w*|expect\w*|ideal\w*|minimum|at\s+least|profile|qualif\w*"
+    r"|du|dir|dich|dein\w*|sie|ihnen|ihr\w*|euch|bewerber\w*|mindestens|erforderlich\w*"
+    r"|voraus\w*|such\w*|gesucht|erwart\w*|w[üu]nsch\w*|gew[üu]nscht|erw[üu]nscht"
+    r"|forder\w*|gefordert|ben[öo]tig\w*|mitbring\w*|bringst|profil)\b",
+    re.IGNORECASE,
+)
+_RE_EXP_REQUIRED_AFTER = re.compile(
+    r"\b(?:required|requirement|mandatory|necessary|needed|preferred|desired|is\s+a\s+must"
+    r"|erforderlich|gew[üu]nscht|erw[üu]nscht|voraus\w*|notwendig|zwingend)\b",
+    re.IGNORECASE,
+)
+
+
+def employer_history(text: str, start: int, end: int, years: int | None = None) -> bool:
+    """Is the experience mentioned at text[start:end] the employer's own
+    history rather than something asked of the applicant?"""
+    lead_from = max(0, start - _EXP_LEAD_CHARS)
+    for m in _RE_EXP_BREAK.finditer(text, lead_from, max(lead_from, start)):
+        lead_from = m.end()
+    if _RE_EXP_APPLICANT_VOICE.search(text[lead_from:end]):
+        return False
+    tail = text[end:end + _EXP_TAIL_CHARS]
+    cut = _RE_EXP_BREAK.search(tail)
+    if _RE_EXP_REQUIRED_AFTER.search(tail[:cut.start()] if cut else tail):
+        return False
+    if years is not None and years >= EXP_IMPLAUSIBLE_YEARS:
+        return True
+    return bool(_RE_EXP_EMPLOYER_VOICE.search(text[lead_from:start])
+                or _RE_EXP_EMPLOYER_AFTER.search(text[end:end + 80]))
+
+
+# Titles that mark a role as designed for fresh graduates. Such postings
+# often still boilerplate "X years experience" in the body (e.g. Airbus VIE
+# programmes) - the title-level intent wins, so they skip the experience
+# checks. "Postgraduate Program" and compounds like "Traineeprogramm" count
+# too: the pattern used to want the bare words (2026-11-17, a postgraduate
+# programme in Aachen dropped for experience).
+_RE_GRADUATE_TITLE = re.compile(
+    r"\b(?:post[\s\-]?graduates?|graduates?|trainee\w*|vie|interns?|internships?|"
+    r"praktikum\w*|praktikant\w*|absolvent\w*|entry[\s\-]?level|junior)\b",
+    re.IGNORECASE,
+)
+
+
+def graduate_designed_title(title: str) -> bool:
+    return bool(_RE_GRADUATE_TITLE.search(title or ""))

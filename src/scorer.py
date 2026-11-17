@@ -449,6 +449,8 @@ from filters import (
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
     junior_qualifier_in_title as _junior_qualifier_in_title,
+    employer_history as _employer_history,
+    graduate_designed_title as _graduate_designed_title,
 )
 
 # Unpaid / equity-only compensation
@@ -587,20 +589,23 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     # Graduate-designed titles (graduate/trainee/VIE/intern/Praktikum/
     # Absolvent/entry-level/junior) skip the experience checks - body-text
     # year mentions are boilerplate in programmes built for fresh grads.
-    graduate_designed = bool(re.search(
-        r"\b(graduate|trainee|vie|intern(?:ship)?|praktikum|praktikant(?:in)?|"
-        r"absolvent(?:in)?|entry[\s\-]?level|junior)\b",
-        t_low,
-    ))
+    graduate_designed = _graduate_designed_title(title)
 
     # -- Check 1: Experience requirement ---------------------------------------
     # 1a. Numeric patterns: "3+ years", "minimum 4 years", "3-5 years experience",
     #     "with 3+ years", "demonstrated 3 years", "proven 5+ years"
-    if not graduate_designed and _RE_EXP_NUM.search(d_low):
-        return True, "Requires 3+ years experience", "experience"
+    #     Years that describe the employer ("with over 30 years of experience,
+    #     we ...") are no requirement (filters.employer_history).
+    if not graduate_designed:
+        for m in _RE_EXP_NUM.finditer(d_low):
+            years = next((int(g) for g in m.groups() if g and g.isdigit()), None)
+            if not _employer_history(d_low, m.start(), m.end(), years):
+                return True, "Requires 3+ years experience", "experience"
     # 1b. Written-out patterns: "three years", "minimum three (3) years"
-    if not graduate_designed and _RE_EXP_TEXT.search(d_low):
-        return True, "Requires 3+ years experience (written out)", "experience"
+    if not graduate_designed:
+        for m in _RE_EXP_TEXT.finditer(d_low):
+            if not _employer_history(d_low, m.start(), m.end()):
+                return True, "Requires 3+ years experience (written out)", "experience"
     # 1c. Title-level seniority: Senior / Lead / Head / Principal in title
     #     with no junior/entry/intern qualifier → auto-disqualify
     if _RE_SENIOR_TITLE.search(title_for_seniority):

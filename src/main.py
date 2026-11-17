@@ -362,6 +362,8 @@ from filters import (
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
     junior_qualifier_in_title as _junior_qualifier_in_title,
     junior_qualifier_in_text as _junior_qualifier_in_text,
+    employer_history as _employer_history,
+    graduate_designed_title as _is_graduate_designed,
 )
 
 
@@ -521,22 +523,18 @@ _EXP_SOFTENERS = (
 )
 
 
-# Titles that mark a role as designed for fresh graduates. Such postings
-# often still boilerplate "X years experience" in the body (e.g. Airbus VIE
-# programmes) - the title-level intent wins, so they skip the experience drop.
-_GRADUATE_TITLE_RE = None  # compiled lazily below
+def _drop_noted(j: dict, text: str, start: int, end: int) -> bool:
+    """Remember the words a text rule tripped on and return False, the verdict
+    of the filter. node_filter writes the note into the audit line of the
+    drop, so the next misread sentence can be found in the log (the C&A one
+    could only be reconstructed by running the filters again on the ad)."""
+    j["_drop_note"] = " ".join(text[max(0, start - 60):end + 40].split())
+    return False
 
 
-def _is_graduate_designed(title: str) -> bool:
-    global _GRADUATE_TITLE_RE
-    import re
-    if _GRADUATE_TITLE_RE is None:
-        _GRADUATE_TITLE_RE = re.compile(
-            r"\b(graduate|trainee|vie|intern(?:ship)?|praktikum|praktikant(?:in)?|"
-            r"absolvent(?:in)?|entry[\s\-]?level|junior)\b",
-            re.IGNORECASE,
-        )
-    return bool(_GRADUATE_TITLE_RE.search(title or ""))
+# Titles written for beginners skip the experience filter, and years that
+# describe the employer are no requirement: both tests live in filters.py,
+# shared with the scorer's own experience check.
 
 
 def _no_experience_overload(j: dict) -> bool:
@@ -577,7 +575,13 @@ def _no_experience_overload(j: dict) -> bool:
         digest and named "wants 2 years experience" as a reason he could not
         apply to any of them, so 2 is now treated like 3: dropped unless the
         surrounding text softens it ("ideally", "nice to have", "of advantage").
+
+        Years that describe the employer are no requirement at all
+        (_employer_history): "more than 180 years of experience in the
+        fashion industry".
         """
+        if _employer_history(desc, start, end, n):
+            return False
         if n >= 4:
             return True
         if n >= 2:
@@ -588,10 +592,12 @@ def _no_experience_overload(j: dict) -> bool:
     # misses them and the job reads as junior-friendly. Real examples from a
     # delivered digest: DKB's "Mehrjährige Berufserfahrung" and paretos'
     # "Mehrere Jahre Erfahrung". Softeners still apply, so "idealerweise
-    # mehrjährige Erfahrung" survives.
+    # mehrjährige Erfahrung" survives, and so does the employer speaking of
+    # itself ("dank unserer langjährigen Erfahrung").
     for m in _RE_EXP_GERMAN_WORDS.finditer(desc):
-        if not _softened(m.start(), m.end()):
-            return False
+        if _softened(m.start(), m.end()) or _employer_history(desc, m.start(), m.end()):
+            continue
+        return _drop_noted(j, desc, m.start(), m.end())
 
     # (pattern, hard_requirement, value_extractor) - value from group(1)
     checks = [
@@ -626,7 +632,7 @@ def _no_experience_overload(j: dict) -> bool:
         for m in re.finditer(pattern, desc):
             n = to_int(m.group(1))
             if _violates(n, m.start(), m.end(), hard):
-                return False
+                return _drop_noted(j, desc, m.start(), m.end())
 
     return True
 
@@ -2524,11 +2530,15 @@ def node_filter(state: dict) -> dict:
         kept, dropped = [], []
         for j in jobs:
             if fn(j):
+                j.pop("_drop_note", None)
                 kept.append(j)
             else:
                 dropped.append(j)
                 drop_by_filter_track[label][_classify_track(j)] += 1
-                _RUN_AUDIT.append(_audit_row(j, "filter", filter=label.split(" (")[0]))
+                # The words a text rule tripped on, when the rule left them.
+                note = j.pop("_drop_note", "")
+                _RUN_AUDIT.append(_audit_row(j, "filter", filter=label.split(" (")[0],
+                                             **({"why": note[:200]} if note else {})))
         if dropped:
             print(f"[{label}] dropped {len(dropped)} jobs, e.g.:")
             for ex in dropped[:3]:
