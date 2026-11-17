@@ -311,6 +311,10 @@ _RE_MASTERS_REQ = re.compile(
 # Master's disqualifier must stand down.
 _RE_ENROLLED_CONTEXT = re.compile(
     r"enrolled|immatrikuliert|eingeschrieben|matriculated|student\s+status"
+    r"|pursuing\s+(?:an?\s+|your\s+|their\s+|the\s+)?(?:[\w'-]+\s+){0,2}(?:master|bachelor|degree|ph\.?\s?d|m\.?\s?sc|studies)"
+    r"|enrol+ment\s+(?:in|at)\s+(?:an?\s+|the\s+)?(?:[\w'-]+\s+){0,3}(?:master|bachelor|degree|university)"
+    r"|working\s+towards?\s+(?:an?\s+|your\s+|their\s+)?(?:[\w'-]+\s+){0,2}(?:master|bachelor|degree|ph\.?\s?d|m\.?\s?sc)"
+    r"|master'?s?\s+student|masterstudent"
     r"|werkstudent|working\s+student|studentische|studierende|studying\s+at"
     r"|bachelor(?:'s)?\s+or\s+master|bachelor-\s*oder\s+master",
     re.IGNORECASE,
@@ -370,6 +374,33 @@ _RE_BAD_DOMAIN = re.compile(
     r"laboratory\s+information|pharma\s+(engineer|developer)|"
     r"embedded\s+(linux|software|developer|engineer)"
     r")\b",
+    re.IGNORECASE,
+)
+
+# Location check: regions in a remote location that include Germany, and
+# titles written for the German job market (see check 5).
+_RE_LOC_COVERS_GERMANY = re.compile(
+    r"\b(?:europe|european\s+union|eu|emea|dach|worldwide)\b", re.IGNORECASE)
+_RE_GERMAN_MARKET_TITLE = re.compile(
+    r"werkstudent\w*|praktik\w*|studentische\w*"
+    r"|\(\s*[mwfdx]\s*/\s*[mwfdx]\s*/\s*(?:[mwfdx]|div\.?|divers)\s*\)",
+    re.IGNORECASE,
+)
+
+# A title that names data or ML work (see check 4). "Software" and "developer"
+# are deliberately not here: an embedded job is often titled "Software
+# Engineer" and says "firmware" only in its text.
+_RE_DATA_OR_ML_TITLE = re.compile(
+    r"\bdata\b|\bdaten\w*|machine[\s-]+learning|deep[\s-]+learning|\bml\b|\bai\b|\bki\b"
+    r"|artificial\s+intelligence|k(?:ü|ue)nstliche\s+intelligenz|\bllm\b|\bgenai\b|\bnlp\b"
+    r"|computer\s+vision|analytic\w*|analyst\w*|statisti\w*|scientist\w*"
+    r"|\bbi\b|business[\s-]+intelligence",
+    re.IGNORECASE,
+)
+# The domain named in the title itself, in the short forms a title uses.
+_RE_BAD_DOMAIN_TITLE = re.compile(
+    r"\b(?:embedded|firmware|fpga|vhdl|verilog|microcontroller|mikrocontroller|hardware"
+    r"|leiterplatte\w*|medical\s+devices?|medizintechnik\w*)\b",
     re.IGNORECASE,
 )
 
@@ -628,7 +659,15 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
             return True, f"Primary language appears non-Python ({signal})", "non_python"
 
     # -- Check 4: Wrong domain -------------------------------------------------
-    if _RE_BAD_DOMAIN.search(combined):
+    # The words have to describe the ROLE. In the ad text they describe the
+    # employer just as often ("a leading medical device company", "from
+    # embedded systems to the cloud"), and a data or ML role at such an
+    # employer is in scope: a title that names that work goes on to the model
+    # (2026-11-17: a Data Scientist at a medical-device maker, a statistics
+    # internship in pharma and a machine-learning internship were dropped).
+    # A title that names the domain itself always drops.
+    if (_RE_BAD_DOMAIN.search(t_low) or _RE_BAD_DOMAIN_TITLE.search(t_low)
+            or (_RE_BAD_DOMAIN.search(d_low) and not _RE_DATA_OR_ML_TITLE.search(t_low))):
         return True, "Wrong domain (embedded / hardware / biomedical / pharma)", "wrong_domain"
 
     # -- Check 5: Location - Germany on-site OR remote-that-covers-Germany -----
@@ -649,8 +688,18 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     # is_german_location carries its own foreign veto, and an explicit
     # "Germany" in the string wins ("Remote - Germany, United States").
     loc_german = _is_german_location(loc_low)
-    germany_in_loc_or_desc = loc_german or _mentions_germany(desc_2000)
-    remote_covers_de = any(s in desc_2000 for s in _REMOTE_COVERS_GERMANY_SIGNALS)
+    # A title written for the German market ("Werkstudent ...", "(m/w/d)")
+    # places a job whose location says only "Remote" (2026-11-17: "Werkstudent
+    # Data Engineering & Backend (w/m/div.)", location "Remote", was dropped
+    # as "Germany not confirmed").
+    germany_in_loc_or_desc = (loc_german or _mentions_germany(desc_2000)
+                              or (bool(_RE_GERMAN_MARKET_TITLE.search(title))
+                                  and not _is_foreign_location(loc_low)))
+    # Coverage can stand in the LOCATION as well: "Remote, Europe, USA" and
+    # "Remote, EMEA, LATAM, Canada" include Germany. Only the ad text used to
+    # be searched, so the USA or LATAM next to it dropped the job.
+    remote_covers_de = (any(s in desc_2000 for s in _REMOTE_COVERS_GERMANY_SIGNALS)
+                        or ("remote" in loc_low and bool(_RE_LOC_COVERS_GERMANY.search(loc_low))))
 
     # Hard veto: explicitly locked out of Germany region
     if any(s in combined_loc for s in _REMOTE_LOCKED_OUT_SIGNALS):

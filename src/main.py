@@ -743,6 +743,27 @@ _MASTERS_TRIGGER_PATTERNS = (
     r"\bmasterabschluss\b",
 )
 
+# More ways of saying "is studying for it" (2026-11-17: seven internship and
+# working-student ads dropped on "currently pursuing a Master's degree" and
+# "current enrolment in a Master's program"). The degree has to be named with
+# the verb: "candidates pursuing excellence" and "our enrollment process" say
+# nothing about studies.
+_RE_STUDYING_FOR_DEGREE = re.compile(
+    r"pursuing\s+(?:an?\s+|your\s+|their\s+|the\s+)?(?:[\w'-]+\s+){0,2}"
+    r"(?:master|bachelor|degree|ph\.?\s?d|m\.?\s?sc|studies|studium)"
+    r"|enrol+ment\s+(?:in|at)\s+(?:an?\s+|the\s+)?(?:[\w'-]+\s+){0,3}"
+    r"(?:master|bachelor|degree|university|ph\.?\s?d|m\.?\s?sc)"
+    r"|working\s+towards?\s+(?:an?\s+|your\s+|their\s+)?(?:[\w'-]+\s+){0,2}"
+    r"(?:master|bachelor|degree|ph\.?\s?d|m\.?\s?sc)",
+    re.IGNORECASE,
+)
+
+# Words that say a degree has to be finished already (see _no_masters_required).
+_RE_DEGREE_FINISHED = re.compile(
+    r"completed|abgeschlossen\w*|finished|graduated|\bholds?\s+an?\b|\bholding\s+an?\b|erfolgreich\w*\s+absolviert",
+    re.IGNORECASE,
+)
+
 # Softening / preference phrases - if any appear in the surrounding window
 # (±80 chars), the degree mention is treated as nice-to-have, not required.
 _MASTERS_SOFTENING = (
@@ -785,6 +806,7 @@ _MASTERS_EXCLUSION_CONTEXTS = (
     # not a completed-degree requirement.
     "enrolled", "immatrikuliert", "eingeschrieben", "studium", "studying",
     "student of", "study programme", "study program", "degree program",
+    "master's student", "masters student", "master student", "masterstudent",
     "bachelor's or master", "bachelor or master", "bachelor- oder master",
     "scrum master", "master data", "master class", "masterclass",
     "master branch", "master node", "master/slave", "master plan",
@@ -813,7 +835,13 @@ def _no_masters_required(j: dict) -> bool:
     import re
     title = (j.get("title") or "").lower()
     desc  = (j.get("description") or "").lower()
-    text  = f"{title}\n{desc}"
+    # A typographic apostrophe is the same word: "master’s student".
+    text  = f"{title}\n{desc}".replace("’", "'")
+    # An internship or student job is held by someone who is still studying.
+    # A degree named in such an ad is the one being studied for ("We are
+    # looking for a Master's student", "suited to students considering a
+    # future PhD") unless the words next to it say it has to be finished.
+    studying = j.get("_form") in ("student", "internship")
 
     for pat in _MASTERS_TRIGGER_PATTERNS:
         for m in re.finditer(pat, text):
@@ -821,8 +849,13 @@ def _no_masters_required(j: dict) -> bool:
             end   = min(len(text), m.end() + 80)
             window = text[start:end]
 
+            if studying and not _RE_DEGREE_FINISHED.search(window):
+                continue
+
             # Exclusion context? skip this occurrence.
             if any(excl in window for excl in _MASTERS_EXCLUSION_CONTEXTS):
+                continue
+            if _RE_STUDYING_FOR_DEGREE.search(window):
                 continue
             # Softened? skip this occurrence.
             if any(soft in window for soft in _MASTERS_SOFTENING):
@@ -1123,11 +1156,22 @@ def _place_in(loc: str, terms: tuple) -> bool:
     return bool(rx.search(loc or ""))
 
 
+# "Remote" in a title says where the work is done, except where it names the
+# field or the product: "Remote Sensing", "Remote Control Software".
+_RE_REMOTE_IN_TITLE = re.compile(
+    r"\bremote\b(?![\s-]+(?:sensing|control|monitoring|access|support|desktop|device))", re.IGNORECASE)
+
+
 def _tag_where(j: dict) -> dict:
     """Annotate j with _where (REMOTE / HYBRID / ON-SITE), _belt, _nrw and
     _where_rank (0 remote, 1 belt, 2 NRW, 3 elsewhere). Mutates and returns j."""
     loc = (j.get("location") or "").lower()
-    desc = (j.get("description") or "").lower()
+    # The title counts as ad text here. "Data Scientist - Hybrid - Frankfurt",
+    # "[Remote] Werkstudent:in Data Analytics" and "... | 100 % Home-Office
+    # möglich" were read as ON-SITE and dropped by the focus-area rule, because
+    # only the location field and the ad body were searched (2026-11-17).
+    title = (j.get("title") or "").lower()
+    desc = f"{title}\n{(j.get('description') or '').lower()}"
     blob = f"{loc} {desc}"
     belt = _place_in(loc, _COMMUTABLE_FROM_BONN)
     # The long NRW town list applies to the LOCATION field only. Applied to ad
@@ -1143,7 +1187,8 @@ def _tag_where(j: dict) -> dict:
     if _is_full_remote(loc, desc) or ("remote" in loc and not far_city):
         where = "REMOTE"
     elif ("remote" in loc or _has_hybrid_signal(blob)
-            or re.search(r"home[- ]?office|mobiles arbeiten|mobile work", blob)):
+            or re.search(r"home[- ]?office|mobiles arbeiten|mobile work", blob)
+            or _RE_REMOTE_IN_TITLE.search(title)):
         where = "HYBRID"              # an office exists; the city matters
     else:
         where = "ON-SITE"
@@ -1578,9 +1623,37 @@ _RE_FULLTIME_TECH_TITLE = re.compile(
     r"|\bjava\b|\bios\b|android|typescript|javascript|golang|kotlin|\.net\b|c\+\+"
     r"|devops|mlops|\bsdet\b|site\s+reliability|\bsre\b|\bcloud\b|informatik\w*|informatics"
     r"|automati\w*|robotic\w*|robotik|digitali\w*|\bquant(?:itative)?\b|statistic\w*|statistik\w*"
-    r"|research\s+(?:engineer|scientist)|platform\s+engineer|\bapi\b|\bsql\b",
+    r"|research\s+(?:engineer|scientist)|platform\s+engineer|\bapi\b|\bsql\b"
+    # 2026-11-17, from a review of dropped ads: tech titles in words the list
+    # did not know ("Forward Deployed Engineer", "LLMOps Engineer", "GIS &
+    # Database Engineer", "Business-Intelligence Consultant", "Business Analyst
+    # Energiedatenmanagement", "Robot Learning Engineer", "Junior Technology
+    # Analyst", "Trainee Informationstechnologie ... Azure"). Each is narrow on
+    # purpose: "Stammdatenpflege", "Database Marketing Manager", "Robot
+    # Operator" and "Field Ops Engineer" are not tech work.
+    r"|forward[\s-]+deployed|\b(?:llm|ai|data|devsec|cloud)ops\b"
+    r"|database\s+(?:engineer|developer|administrator|architect)\w*|datenbank(?:entwickl|administrat|architekt)\w*"
+    r"|business[\s-]+intelligence|informationstechnolog\w*|\bazure\b|\baws\b|robot\s+learning"
+    r"|technology\s+analyst\w*",
     re.IGNORECASE,
 )
+# "IT" alone is no tech work ("IT Sales", "IT Helpdesk", "Junior IT
+# Administrator"), but a trainee or graduate programme built on it is how
+# employers name their entry into IT ("Trainee IT - International Graduate
+# Program", "Trainee - Central IT"). Case-sensitive: the English word "it" is
+# not the department.
+_RE_IT_WORD = re.compile(r"\bIT\b")
+_RE_TRAINEE_PROGRAMME = re.compile(r"\btrainee\w*|\bgraduate\s+program\w*|\babsolventenprogramm\w*", re.IGNORECASE)
+# "(Junior / Mid-Level)": the title itself opens the role to juniors.
+_RE_JUNIOR_WORD = re.compile(r"\b(?:junior|jr\.?)\b", re.IGNORECASE)
+# A German compound with "daten" inside ("Energiedatenmanagement") names data
+# work only next to an analyst or engineer word: "Business Analyst
+# Energiedatenmanagement" yes, "Stammdatenmanagement Specialist" and
+# "Kundendatenanalyse Sachbearbeiter" no.
+_RE_DATA_COMPOUND = re.compile(
+    r"\w+daten(?:management|analyse|analytik|verarbeitung|modell|plattform|architekt)\w*", re.IGNORECASE)
+_RE_ANALYST_OR_ENGINEER = re.compile(
+    r"analyst\w*|analytiker\w*|engineer\w*|ingenieur\w*|scientist\w*|entwickler\w*|developer\w*", re.IGNORECASE)
 # ...but a hook word inside a clearly non-tech title ("Software Sales Executive",
 # "Data Entry Clerk", "Datenschutzbeauftragter") does not make it tech work,
 # unless the title ALSO names real data/ML/software work ("Sales Data Analyst").
@@ -1602,7 +1675,11 @@ _RE_MIDLEVEL_TITLE = re.compile(
 )
 _RE_FULLTIME_STRONG_TECH_TITLE = re.compile(
     r"machine[\s-]+learning|deep[\s-]+learning|\bml\b|\bai\b|\bki\b|data\s+(?:scien|engineer|analy)\w*"
-    r"|python|\bnlp\b|\bllm\b|genai|software\s+(?:engineer|developer)|\bdeveloper\b",
+    r"|python|\bnlp\b|\bllm\b|genai|software\s+(?:engineer|developer)|\bdeveloper\b"
+    # "Softwareentwickler IPS / Integrated Product Support": the German word
+    # for software developer outweighs the hook word "support" as the English
+    # one does.
+    r"|software\s*entwickl\w*",
     re.IGNORECASE,
 )
 
@@ -1652,6 +1729,18 @@ _RE_STUDENT_WORK_MARKER = re.compile(
 )
 
 
+# "(MSc/PhD)", "(BSc, MSc or PhD)", "(Master/PhD)": the degrees an ad accepts,
+# listed together in brackets after the job title. Without the brackets it is
+# the position itself ("MSc/PhD Position Computer Vision", "Master or PhD
+# Student"), and a PhD named on its own is one too.
+_RE_DEGREE_LIST_IN_TITLE = re.compile(
+    r"\(\s*(?:b\.?\s?sc\.?|m\.?\s?sc\.?|bs|ms|ba|ma|bachelor(?:'s)?|master(?:'s)?|diplom)"
+    r"(?:\s*(?:/|,|or|oder|und|and)\s*(?:b\.?\s?sc\.?|m\.?\s?sc\.?|bs|ms|bachelor(?:'s)?|master(?:'s)?))*"
+    r"\s*(?:/|,|or|oder|und|and)\s*ph\.?\s?d\.?\s*\)",
+    re.IGNORECASE,
+)
+
+
 def _is_eligible_form(j: dict) -> bool:
     """Employment-form gate: every regular form, except thesis, Ausbildung /
     dual study, PhD, professorships and freelance work (and pages that are not
@@ -1665,6 +1754,9 @@ def _is_eligible_form(j: dict) -> bool:
     title = j.get("title") or ""
     if j.get("source") in _WEB_SEARCH_SOURCES and _RE_NOT_A_POSTING_TITLE.search(title):
         return False
+    # A list of accepted degrees is not a doctorate: "Graduate Software
+    # Engineer - STEM Graduate (MSc/PhD)" is a regular entry-level job.
+    title = _RE_DEGREE_LIST_IN_TITLE.sub(" ", title)
     if _RE_NOT_A_JOB_TITLE.search(title) and not _RE_STUDENT_WORK_MARKER.search(title):
         return False
     return True
@@ -1677,9 +1769,12 @@ def _fulltime_title_ok(j: dict) -> bool:
     if j.get("_form") != "full-time":
         return True
     title = j.get("title") or ""
-    if not _RE_FULLTIME_TECH_TITLE.search(title):
+    if not (_RE_FULLTIME_TECH_TITLE.search(title)
+            or (_RE_IT_WORD.search(title) and _RE_TRAINEE_PROGRAMME.search(title))
+            or (_RE_DATA_COMPOUND.search(title) and _RE_ANALYST_OR_ENGINEER.search(title))):
         return False
-    if _RE_MIDLEVEL_TITLE.search(title):
+    # "Robotics Software Engineer (Junior / Mid-Level)" is open to juniors.
+    if _RE_MIDLEVEL_TITLE.search(title) and not _RE_JUNIOR_WORD.search(title):
         return False
     if _RE_FULLTIME_NON_TECH_TITLE.search(title) and not _RE_FULLTIME_STRONG_TECH_TITLE.search(title):
         return False
