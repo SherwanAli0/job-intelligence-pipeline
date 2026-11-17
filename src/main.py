@@ -268,6 +268,12 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
         # Indeed had found too (both have priority 0 and lose every tie).
         seen_on = sorted(set(prior.get("_seen_on") or [prior.get("source", "")])
                          | set(j.get("_seen_on") or [j.get("source", "")]))
+        # Every id merged into the kept copy (2026-11-17). The copies that
+        # lose are the same job, and node_persist marks them seen with it.
+        # Until then a losing copy stayed unseen: when it turned up alone on
+        # a later day it looked like a job the pipeline had never read.
+        merged = (set(prior.get("_merged_ids") or []) | set(j.get("_merged_ids") or [])
+                  | {prior.get("id"), j.get("id")})
         cur_focus, prv_focus = _in_focus(j), _in_focus(prior)
         if cur_focus != prv_focus:
             if cur_focus:
@@ -283,6 +289,7 @@ def _dedup_cross_source(jobs: list[dict]) -> list[dict]:
                 if len(j.get("description", "")) > len(prior.get("description", "")):
                     best[key] = j
         best[key]["_seen_on"] = seen_on
+        best[key]["_merged_ids"] = sorted(i for i in merged if i and i != best[key].get("id"))
     return list(best.values())
 
 # German words anywhere in the title = German-language role
@@ -2043,6 +2050,12 @@ def _ever_shown_url_hashes() -> set[str]:
 
 
 def _is_fresh_enough(j: dict) -> bool:
+    """Fresh by the date it prints, or let past the age rule because it is new
+    on a board that was read before (flag set by _mark_new_on_read_boards)."""
+    return _fresh_by_date(j) or bool(j.get("_new_on_board"))
+
+
+def _fresh_by_date(j: dict) -> bool:
     if j.get("source") in _LONG_LIVED_SOURCES:
         return True
     from config import is_catchup
@@ -2060,6 +2073,68 @@ def _is_fresh_enough(j: dict) -> bool:
     return age_days * 24 <= max_filter_age_hours()
 
 
+# -- New on a board that was read before (owner, 2026-11-17: "keep them") ------
+# The freshness rule reads the date an ad prints. That date is not always the
+# day the ad appeared: a re-opened posting keeps its first date, some boards
+# print the day the requisition was created, XING postings with a brand-new id
+# carried dates days back. Such an ad was dropped as old on the day it showed
+# up, although the pipeline could not have seen it earlier.
+#
+# Where the pipeline can tell that an ad is new, the printed date no longer
+# decides. It can tell on a board it reads as a whole (scrapers._board_read:
+# Greenhouse, Lever, Ashby, Personio, Recruitee, the LinkedIn lists for NRW)
+# and on XING by the posting id: the board was read by an earlier delivered
+# run not longer ago than the freshness rule allows, and this ad was not on
+# it then, or it would be in seen_jobs. A board read for the first time has
+# no such earlier read, so what already stands on it is still judged by its
+# date. Everything else (keyword searches, Indeed, Adzuna) keeps the date
+# rule: there the pipeline sees a part, and an ad it has not seen may be old.
+#
+# A limit per run, because the inference rests on seen_jobs: if that file is
+# ever emptied, or a board changes every link at once, each old ad on it looks
+# new. Past the limit the printed date decides again and the digest says so.
+_NEW_ON_BOARD_CAP = 60
+
+
+def _new_on_a_read_board(j: dict) -> bool:
+    key = j.get("_board")
+    if not key or j.get("_board_new") is False:
+        return False
+    try:
+        import sweep
+        from config import max_filter_age_hours
+        read = sweep.covered_until(key)             # by an earlier delivered run
+        if read is None:
+            return False
+        hours = (sweep.run_start() - read).total_seconds() / 3600.0
+        return 0 < hours <= max_filter_age_hours()
+    except Exception:
+        return False
+
+
+def _mark_new_on_read_boards(jobs: list[dict], skip_ids=()) -> tuple[int, int]:
+    """Flag the jobs the age rule would drop for their printed date although
+    they are new on a board that was read before. Returns (flagged, left to
+    the printed date because the run's limit was reached)."""
+    late = [j for j in jobs if j.get("id") not in skip_ids
+            and not _fresh_by_date(j) and _new_on_a_read_board(j)]
+    kept, over = late[:_NEW_ON_BOARD_CAP], late[_NEW_ON_BOARD_CAP:]
+    for j in kept:
+        j["_new_on_board"] = True
+    for j in over:
+        j["_new_on_board_over"] = True
+    if kept:
+        from collections import Counter
+        by_source = Counter(j.get("source", "?") for j in kept)
+        print(f"[Freshness] {len(kept)} ads kept although the date they print is older than the "
+              f"rule allows: new on a board that was read before ("
+              + ", ".join(f"{s} {n}" for s, n in by_source.most_common()) + ")")
+    if over:
+        print(f"[Freshness] {len(over)} more looked new on such a board; past {_NEW_ON_BOARD_CAP} "
+              f"a run the printed date decides")
+    return len(kept), len(over)
+
+
 def _fresh_or_noted(j: dict) -> bool:
     """_is_fresh_enough, and for a drop the date the ad carried.
 
@@ -2071,7 +2146,9 @@ def _fresh_or_noted(j: dict) -> bool:
     age = _job_age_days(j)
     if age is not None:
         j["_drop_note"] = (f"dated {str(j.get('posted_at') or '').strip()[:10]}, "
-                           f"{age:.1f} days old when first seen")
+                           f"{age:.1f} days old when first seen"
+                           + ("; new on a board read before, but past the run's limit"
+                              if j.pop("_new_on_board_over", False) else ""))
     return False
 
 
@@ -2707,6 +2784,8 @@ def node_filter(state: dict) -> dict:
     # Stale postings never reach the digest; the whole point is applying fast.
     # Ads carried over for a body retry were fresh when first found.
     retrying = _body_retry_ids()
+    # An ad that is new on a board read before is new, whatever date it prints.
+    _, over_the_limit = _mark_new_on_read_boards(new_jobs, retrying)
     new_jobs = _apply_filter(new_jobs, lambda j: j["id"] in retrying or _fresh_or_noted(j),
                              f"Freshness filter (<={_MAX_POSTING_AGE_HOURS}h or unknown)")
     new_jobs = _apply_filter(new_jobs, _is_eligible_form,
@@ -2746,8 +2825,16 @@ def node_filter(state: dict) -> dict:
     if not new_jobs:
         print("Nothing new today - skipping scoring and notification.")
 
-    return {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track,
-            "body_unresolved": body_unresolved}
+    out = {"new_jobs": new_jobs, "drop_by_filter_track": drop_by_filter_track,
+           "body_unresolved": body_unresolved}
+    if over_the_limit:
+        # Far more ads than usual looked new on boards that were read before:
+        # seen_jobs emptied, or a board that changed every link. Worth a look.
+        out["health_warnings"] = list(state.get("health_warnings") or []) + [
+            f"{over_the_limit + _NEW_ON_BOARD_CAP} ads looked new on job boards that were read before, "
+            f"far more than usual. {_NEW_ON_BOARD_CAP} were let past the age rule, the rest were judged "
+            f"by their printed date. Has the memory of seen ads been reset?"]
+    return out
 
 
 def node_score(state: dict) -> dict:
@@ -2779,7 +2866,10 @@ def node_score(state: dict) -> dict:
         _RUN_AUDIT.append(_audit_row(j, "score", score=j.get("score", 0), category=cat,
                                      track=j.get("_track", ""),
                                      german_ad=bool(j.get("_german_ad")),
-                                     reason=str(j.get("reason", ""))[:400]))
+                                     reason=str(j.get("reason", ""))[:400],
+                                     # judged although its printed date is old
+                                     **({"kept": "new on a board read before"}
+                                        if j.get("_new_on_board") else {})))
 
     return {"scored": scored, "dq_counts": dq_counts}
 
@@ -2909,6 +2999,10 @@ def node_persist(state: dict) -> dict:
             [j["id"] for j in state.get("scored", [])
              if str(j.get("reason", "")).startswith(SCORER_FAILED_PREFIX)])
         seen.update({j["id"]: today for j in all_jobs if j["id"] not in retry})
+        # ...and the copies of the same job that were merged into the kept
+        # one (_dedup_cross_source): read is read, under whichever link.
+        seen.update({i: today for j in all_jobs if j["id"] not in retry
+                     for i in (j.get("_merged_ids") or [])})
         save_seen(seen)
         # Remember what was actually EMAILED by company+title, so the same
         # posting can never return under a fresh tracking URL or via another
