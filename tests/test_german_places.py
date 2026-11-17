@@ -487,9 +487,14 @@ class TestRemoteWordOnlyInTheAd:
             disq, why, _c = scorer._hard_disqualify(_j(loc=loc, desc=self.D))
             assert not disq, (loc, why)
 
-    @pytest.mark.parametrize("loc", ["Remote", "Remote - EMEA", ""])
+    # Since 2026-11-17 a region that includes Germany in the location ("Remote -
+    # EMEA") and a title written for the German market ("Werkstudent ...") are
+    # Germany signals of their own (tests/test_review_of_dropped_ads.py), so
+    # the title here is a neutral one and "Remote - EMEA" moved over there.
+    @pytest.mark.parametrize("loc", ["Remote", "Remote - LATAM", ""])
     def test_remote_in_the_location_with_no_germany_signal_still_drops(self, loc):
-        disq, _w, cat = scorer._hard_disqualify(_j(loc=loc, desc="Fully remote working student role. "
+        disq, _w, cat = scorer._hard_disqualify(_j(title="Data Analyst", loc=loc,
+                                                   desc="Fully remote working student role. "
                                                    "Python and SQL pipelines for the business, English-speaking."))
         assert (disq and cat == "location") or loc == "", loc
 

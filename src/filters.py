@@ -234,6 +234,8 @@ NRW_PLACES_MORE = (
     "ruhrgebiet", "ruhrpott", "sauerland", "münsterland", "muensterland", "niederrhein",
     "bergisches land", "ostwestfalen", "siegerland", "rhein-sieg", "rhein-erft", "rhein-kreis neuss",
     "rhein-ruhr", "rheinisch-bergischer kreis", "märkischer kreis", "ennepe-ruhr",
+    # LinkedIn's English region names ("Ruhr Region" was read as outside NRW)
+    "ruhr region", "ruhr area", "rhine-ruhr",
     "mülheim", "mulheim", "porz", "deutz", "beuel", "bad godesberg", "lindenthal", "mülheim-ruhr",
     "koeln", "duesseldorf", "dusseldorf", "muenster", "grevenbroich", "cologne", "neuss",
 )
@@ -558,6 +560,7 @@ REMOTE_COVERS_GERMANY_SIGNALS = (
     "remote worldwide", "worldwide remote", "work from anywhere in the world",
     "anywhere in the world", "remote anywhere in the world", "globally remote", "global remote",
     "location independent", "location-independent", "work from anywhere",
+    "choose where you live", "remote roles open in every time zone",
 )
 
 # Phrases that REVOKE Germany eligibility - even if "remote" appears, these
@@ -580,7 +583,12 @@ REMOTE_LOCKED_OUT_SIGNALS = (
 # "Gentry" (entry) turn "Senior Data Scientist - International" into a junior
 # role, and "Associate Director" is a senior title, not a junior one.
 _RE_JUNIOR_QUALIFIER = re.compile(
-    r"\b(?:junior|jr\.?|entry|intern(?:ship)?s?|praktikum|graduates?|grad|trainees?|associates?)\b",
+    r"\b(?:junior|jr\.?|entry|intern(?:ship)?s?|praktikum|graduates?|grad|trainees?|associates?"
+    # A student job is never a senior role, whatever team it sits in:
+    # "Working student - PMT Architect - Software Engineering" was dropped by
+    # the senior-title filter on "Architect" (2026-11-17).
+    r"|werkstudent\w*|working[\s-]+students?|student\s+(?:assistant|employee|worker)s?"
+    r"|studentische\w*|hiwi|praktikant\w*|pflichtpraktikum|praxissemester)\b",
     re.IGNORECASE,
 )
 _RE_TOP_LEVEL_TITLE = re.compile(
@@ -667,6 +675,17 @@ _RE_EXP_APPLICANT_VOICE = re.compile(
     r"|forder\w*|gefordert|ben[öo]tig\w*|mitbring\w*|bringst|freu\w*|profil)\b",
     re.IGNORECASE,
 )
+# The role stands in brackets right before the mention, on the same line or
+# as the heading of the line above: "Jane Doe [CEO] • 10+ years", "John Roe
+# [Co-Founder & CMO]" followed by a first bullet "• 8+ years ...".
+# Without the brackets it is no biography ("Reporting to the CTO | 4+ years").
+# Square brackets that open with the role, not a role mentioned in passing
+# inside round ones ("experience in leadership (e.g. as CTO) - 5+ years").
+_RE_EXP_PERSON_BIO = re.compile(
+    r"\[\s*(?:ceo|cto|coo|cfo|cmo|cpo|cso|founders?|co-?founders?|managing\s+director"
+    r"|president|gr[üu]nder\w*|gesch[äa]ftsf[üu]hrer\w*)\b[^\]\n]{0,25}\]\s{0,3}[•|:,\-]?[^\S\n]*$",
+    re.IGNORECASE,
+)
 _RE_EXP_AFTER_ASKS = re.compile(
     r"^\s*(?:would\s+|also\s+|therefore\s+|thus\s+|daher\s+|deshalb\s+)?"
     r"(?:expect|require|ask|look|need|want|seek|wish|prefer|hire"
@@ -697,6 +716,11 @@ def employer_history(text: str, start: int, end: int, years: int | None = None) 
     if years is not None and years >= EXP_IMPLAUSIBLE_YEARS:
         return True
     if _RE_EXP_EMPLOYER_HAS.search(text[lead_from:start]):
+        return True
+    # A line of a founder's or manager's biography: "Jane Doe [CEO] • 10+ years
+    # in tech executive leadership". The bullet ends the sentence, so the name
+    # and the role stand just before it.
+    if _RE_EXP_PERSON_BIO.search(text[max(0, start - 40):start]):
         return True
     after = text[end:end + 130]
     named = _RE_EXP_EMPLOYER_AFTER.search(after)

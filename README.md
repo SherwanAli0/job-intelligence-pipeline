@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 1,908 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,047 offline tests (`pytest --collect-only -q`, 2026-11-17), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -509,6 +509,53 @@ Not measured: a production run with these changes.
 [tests/test_experience_history_and_guest_paging.py](tests/test_experience_history_and_guest_paging.py)
 covers them.
 
+## A review of every dropped ad (17 November 2026)
+
+Every ad the pipeline dropped in the runs of 11 to 17 November was read again: 7,795
+different ads, first by title, place and the rule that dropped them, then the 369 doubtful
+ones whose text could still be fetched, together with that text. 292 of those drops were
+right, 232 of them for German (the ad asks for German above the profile's level, or it is
+a full-time ad written in German). 56 were wrong and 21 could not be judged. The rules
+behind the wrong drops were corrected. Run again on the same texts, 51 of the 56 reach the
+model, and no right drop gets past a rule that had stopped it (286 stay dropped; the other
+six had reached the model before and were scored under 45).
+
+- **The text of a LinkedIn ad with a pay range.** The generic extractor took the first
+  block whose class contains "description". On a LinkedIn page with a pay range that is
+  the salary note (`compensation--above-description`), so about one LinkedIn ad in ten
+  (18 of 188 fetched pages) was judged on "This range is provided by the employer. Your
+  actual pay will be based on your skills and experience" and not on its text. LinkedIn's
+  own description container is tried first and pay blocks are skipped.
+- **Where the work is done.** "Hybrid", "Remote" and "Home-Office" in the title count as
+  they do in the ad text; "Data Scientist - Hybrid - Frankfurt" had been read as on-site.
+  "Ruhr Region" is in NRW.
+- **Degrees.** "Currently pursuing a Master's degree" and "current enrolment in a Master's
+  program" describe a student. In an internship or a student job a degree drops the ad
+  only when the ad says it has to be finished.
+- **Remote regions.** A remote location that names a region with Germany in it ("Remote,
+  Europe, USA", "Remote - EMEA") is covered. A title written for the German market
+  ("Werkstudent ...", "(m/w/d)") places a job whose location says only "Remote".
+- **Wrong domain.** The embedded, hardware and biomedical words have to describe the
+  role: in the title, or in the text of an ad whose title names no data or ML work. A data
+  scientist at a maker of medical devices goes on to the model; a "Software Engineer"
+  whose text says firmware still drops, and so does any title that names the domain.
+- **Titles.** The full-time gate knows more tech titles (Forward Deployed Engineer, LLMOps
+  Engineer, Database Engineer, "Business-Intelligence" with a hyphen, "Business Analyst
+  Energiedatenmanagement", a trainee programme in IT), each narrow enough that
+  "Stammdatenpflege", "Database Marketing Manager" and "Field Ops Engineer" stay out.
+  "Junior / Mid-Level" is open to juniors. A working-student or Praktikant title is never
+  senior ("Working student - PMT Architect"). "(MSc/PhD)" in brackets after a title is a
+  list of accepted degrees, not a doctorate. Soft hyphens inside a title are removed.
+- **Years in a biography.** "Jane Doe [CEO] • 10+ years in tech executive leadership"
+  describes a founder, not the applicant.
+
+Changed on purpose: a test had pinned that the location "Remote - EMEA" drops; it now goes
+to the model. Not changed: the freshness rule (68 wanted ads were more than 48 hours old
+when the pipeline first saw them), the German rules, and the model's scoring (18 of the
+wrong drops were scores under 45 whose reason the ad text does not support; 18 pages gave
+the model only the pay note). Not measured: a production run with these changes.
+[tests/test_review_of_dropped_ads.py](tests/test_review_of_dropped_ads.py) covers them.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -575,7 +622,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 1,908 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,047 collected, run in CI on every push | 2026-11-17 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

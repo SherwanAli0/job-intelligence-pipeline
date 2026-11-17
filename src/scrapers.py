@@ -363,8 +363,20 @@ def make_id(url: str, title: str, company: str) -> str:
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+# Soft hyphens and zero-width characters. Some boards deliver titles with a
+# soft hyphen after every syllable ("Soft|wa|re|ent|wick|ler:in", each bar one), which no
+# title pattern matches: such a row failed every keyword test unread.
+_RE_INVISIBLE = re.compile("[" + "".join(map(chr, (0xAD, 0x200B, 0x200C, 0x2060, 0xFEFF))) + "]")
+
+
+def _visible(value):
+    return _RE_INVISIBLE.sub("", value) if isinstance(value, str) else value
+
+
 def job(title, company, location, url, source, description="", posted_at="",
         apply_url="", contact="", salary=""):
+    title, company, location, description = (_visible(title), _visible(company),
+                                             _visible(location), _visible(description))
     return {
         "id": make_id(url, title, company),
         "title": title,
@@ -2007,6 +2019,10 @@ def _cut_keeping_language_lines(text: str, limit: int) -> str:
     return text[:max(0, min(cut, limit - len(tail)))].rstrip() + tail
 
 
+# Page blocks that hold a salary note, not the ad (see _fetch_full_description).
+_RE_PAY_NOTE_CLASS = re.compile(r"compensation|salary|pay-range|payrange", re.IGNORECASE)
+
+
 def _fetch_full_description(url: str) -> str:
     """Visit a URL and extract meaningful text from the page."""
     # SmartRecruiters: the public posting-detail API returns the ad as
@@ -2058,11 +2074,21 @@ def _fetch_full_description(url: str) -> str:
 
         # Try to find the main job content block first
         for selector in [
+            # LinkedIn's own container for the ad text. Without it the generic
+            # "description" selector below took the first element whose class
+            # CONTAINS the word, and on a page with a pay range that is the
+            # salary note ("compensation--above-description"): about one
+            # LinkedIn ad in ten was judged on "This range is provided by
+            # <employer>. Your actual pay will be based on your skills and
+            # experience" instead of its text (2026-11-17, 18 of 188 pages).
+            "div.show-more-less-html__markup", "[class*='description__text']",
             "[class*='job-description']", "[class*='job-detail']",
             "[class*='description']", "[class*='content']",
             "main", "article", "[role='main']",
         ]:
-            el = soup.select_one(selector)
+            # The first element that is not a pay note, not just the first.
+            el = next((e for e in soup.select(selector, limit=8)
+                       if not _RE_PAY_NOTE_CLASS.search(" ".join(e.get("class") or []))), None)
             if el:
                 text = _block_text(el)
                 if len(text) > 200:
