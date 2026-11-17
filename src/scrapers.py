@@ -4271,8 +4271,9 @@ _LI_LIST_LIMIT = 800
 _LI_PACE = float(os.environ.get("JOBHUNTER_LINKEDIN_PACE", "3"))          # seconds between requests
 # Results read per keyword search. It was 50 with python-jobspy, on the days
 # LinkedIn let the query through at all. One paced lane has about 450 requests
-# in its time: the two NRW lists take around 120 of them, three pages for each
-# of the 96 keyword searches 288. Then every search is read as far as planned
+# in its time, once the answers' own time and the description fetches in
+# between are taken off: the two NRW lists take around 120 of them, three
+# pages for each of the 93 keyword searches 279. Then every search is read as far as planned
 # in a normal run, and its mark moves on; a depth the lane cannot reach would
 # leave every search cut short in every run.
 _LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "30"))

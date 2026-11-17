@@ -100,6 +100,16 @@ class TestSearchMarks:
         sweep.begin(NOW)
         assert sweep.window_hours("a", 24) == sweep.SLACK_HOURS
 
+    def test_a_time_without_a_zone_is_taken_as_utc(self, tmp_path):
+        _marks(tmp_path, a=7)
+        plain = NOW.replace(tzinfo=None)
+        sweep.begin(plain)
+        assert sweep.window_hours("a", 24) == 7 + sweep.SLACK_HOURS
+        assert sweep.window_hours("a", 24, now=plain + timedelta(hours=3)) == 10 + sweep.SLACK_HOURS
+        assert sweep.hours_unread("a", now=plain) == 7.0
+        sweep.record("a", False, 9, "time")
+        assert sweep.overdue(5, now=plain) == [("a", 7.0)]
+
     def test_nothing_recorded_means_nothing_written(self, tmp_path):
         sweep.save()
         assert not (tmp_path / "search_marks.json").exists()
