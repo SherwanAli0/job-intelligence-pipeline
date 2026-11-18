@@ -24,6 +24,7 @@ container unchanged.
 | Execution role | `jobHunterExecutionRole` | ECS agent: pull image, write logs |
 | Scheduler role | `jobHunterSchedulerRole` | may run only this task definition |
 | Schedules | `job-hunter-morning` / `-afternoon` | 10:00 and 17:00 **Europe/Berlin**. The afternoon run was created for 16:00, was off from 2026-08-18 to 2026-11-17, and now passes `JOBHUNTER_SOURCE_WINDOW=since_last_run` as a container override, so it asks the boards only for what is new since the morning run (see the root README). Schedule definitions live in EventBridge, not in this repo: confirm with `aws scheduler get-schedule` |
+| Schedules | `job-hunter-linkedin-0630` / `-1330` / `-2230` | 06:30, 13:30 and 22:30 **Europe/Berlin** (since 2026-11-18). Same target as the afternoon schedule, with `JOBHUNTER_MODE=linkedin` as a container override: the task reads LinkedIn on its own (`main.read_linkedin_only`), keeps what it found for the next email run (`linkedin_inbox.jsonl` in the state prefix) and sends nothing. It skips itself while an email run holds `run-full.claim`. An image without this mode would start a full run with an email, so these schedules were created only after the image that has it was deployed |
 | Logs | `/ecs/job-hunter` | 14-day retention |
 
 ## Cost control

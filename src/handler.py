@@ -18,12 +18,66 @@ import sys
 import time
 
 
+# "full": the pipeline with its email. "linkedin": LinkedIn read on its own
+# between the email runs (main.read_linkedin_only), set by the schedules
+# job-hunter-linkedin-* as JOBHUNTER_MODE=linkedin.
+MODES = ("full", "linkedin")
+# Both read LinkedIn, and two reads at once ask LinkedIn twice as fast, which
+# is what it refuses. A LinkedIn-only read skips itself while an email run
+# holds its claim; an email run waits up to _WAIT_FOR_LINKEDIN_SECONDS for a
+# LinkedIn-only read to finish (its lane has 40 minutes). A claim older than
+# what such a run can take is left over from a crash and counts for nothing.
+_LINKEDIN_READ_MAX_SECONDS = 90 * 60
+_WAIT_FOR_LINKEDIN_SECONDS = 20 * 60
+_WAIT_STEP_SECONDS = 30
+
+
+def _claim_age(storage, name: str):
+    """Seconds since the claim `name` was taken, or None (no claim, or unreadable)."""
+    try:
+        raw = storage.read_text(f"{name}.claim")
+        if not raw:
+            return None
+        return max(0.0, time.time() - float(json.loads(raw).get("claimed_at", 0)))
+    except Exception:
+        return None
+
+
+def _wait_for_linkedin_read(storage) -> None:
+    waited = 0
+    while waited < _WAIT_FOR_LINKEDIN_SECONDS:
+        age = _claim_age(storage, "run-linkedin")
+        if age is None or age >= _LINKEDIN_READ_MAX_SECONDS:
+            return
+        if not waited:
+            print("A LinkedIn-only read is running: waiting for it to finish (up to "
+                  f"{_WAIT_FOR_LINKEDIN_SECONDS // 60} minutes)")
+        time.sleep(_WAIT_STEP_SECONDS)
+        waited += _WAIT_STEP_SECONDS
+    print("The LinkedIn-only read is still running: this run goes on anyway")
+
+
 def _run(mode: str = "full", dry_run: bool = False) -> dict:
     # Imported inside the function so an import error surfaces as a handled
     # failure with context, rather than killing the Lambda during init where
     # the traceback is far less legible.
     import main
     import storage
+
+    if mode not in MODES:
+        # A mistyped mode must not start a run with an email nobody expects.
+        result = {"status": "error", "mode": mode, "error": f"unknown mode {mode!r}"}
+        print(json.dumps({"jobhunter_run": result}))
+        return result
+
+    if mode == "linkedin" and not dry_run:
+        age = _claim_age(storage, "run-full")
+        if age is not None and age < getattr(storage, "_CLAIM_TTL_SECONDS", 4 * 3600):
+            result = {"status": "skipped", "mode": mode, "reason": "an email run is reading now"}
+            print(json.dumps({"jobhunter_run": result}))
+            return result
+    if mode == "full" and not dry_run:
+        _wait_for_linkedin_read(storage)
 
     # Mutual exclusion: EventBridge has no equivalent of the GitHub Actions
     # concurrency group, and two overlapping runs would each see the same jobs
@@ -39,7 +93,10 @@ def _run(mode: str = "full", dry_run: bool = False) -> dict:
 
     started = time.time()
     try:
-        main.main(dry_run=dry_run)
+        if mode == "linkedin":
+            main.read_linkedin_only(dry_run=dry_run)
+        else:
+            main.main(dry_run=dry_run)
         status, error = "ok", None
     except SystemExit as e:
         # main() calls sys.exit(0) on the "nothing new today" path.
@@ -104,7 +161,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTERM, _on_sigterm)
     except Exception:
         pass
-    outcome = _run(dry_run=_dry)
+    outcome = _run(mode=os.environ.get("JOBHUNTER_MODE", "").strip().lower() or "full", dry_run=_dry)
     # "skipped" means the overlap guard correctly declined to start a second
     # concurrent hunt (a manual click while the scheduled run was mid-flight).
     # That is the system working, not a failure - exiting 1 for it made GitHub

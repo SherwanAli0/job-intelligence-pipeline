@@ -3199,6 +3199,75 @@ def node_persist(state: dict) -> dict:
     return {}
 
 
+# -- LinkedIn read between the email runs (owner, 2026-11-18) -------------------
+# "i want all jobs frm linkedin all of them to be in the run so i dont miss
+# anything". LinkedIn lets one address read only so much at a time (seven
+# refusals in the run of 18 November 10:00, a refusal after 20 requests at
+# noon, an address refused for more than an hour after that). The lists could
+# not be read to their end in two big reads a day, so LinkedIn is also read on
+# its own between the email runs (handler.py, JOBHUNTER_MODE=linkedin; the
+# schedules job-hunter-linkedin-0630, -1330 and -2230), in smaller portions.
+# Such a read uses the same lane, plan and search marks as an email run. What
+# it finds waits in li_inbox for the next email run; it scores nothing, sends
+# nothing and leaves seen_jobs alone.
+_LINKEDIN_READS_FILE = "linkedin_reads.jsonl"
+
+
+def read_linkedin_only(dry_run: bool = False) -> dict:
+    """One read of LinkedIn between two email runs. Returns what it found and
+    how many postings now wait for the next email run (None: not kept)."""
+    import math
+    from datetime import datetime as _dt, timezone as _tz
+
+    import config as _cfg
+    import li_inbox
+    import scrapers as _scrapers
+    import sweep as _sweep
+
+    print("=" * 60)
+    print("  LinkedIn read between the email runs" + ("  [DRY RUN]" if dry_run else ""))
+    print("=" * 60)
+    seen = load_seen()
+    waiting = li_inbox.load(skip_ids=set(seen))
+    if li_inbox.LOAD_FAILED:
+        # Writing now would put this read's postings over the ones still
+        # waiting, and they would be lost. LinkedIn is not asked: the search
+        # marks stay, so the next read or email run covers these hours.
+        print("[LinkedIn read] the postings waiting from earlier reads could not be read: "
+              "this read stops before asking LinkedIn, nothing is overwritten")
+        return {"found": 0, "kept": None}
+    # No text is fetched again for a posting seen before or already waiting with one.
+    _scrapers.KNOWN_JOB_IDS = set(seen) | {r["id"] for r in waiting
+                                            if len(r.get("description") or "") >= 400}
+    _sweep.begin()
+    _scrapers.TITLE_IS_TECH = lambda title: _is_tech_relevant({"title": title, "description": ""})
+    _scrapers.LINKEDIN_REPORT.clear()
+    # The keyword searches ask for the time since LinkedIn was last read, like
+    # the second email run of the day, not for a whole day or an internship week.
+    since = _sweep.hours_unread("linkedin|nrw|werkstudent")
+    _cfg.set_source_window_hours(math.ceil(since) + _sweep.SLACK_HOURS if since else None)
+    found = _scrapers.scrape_linkedin(with_inbox=False)
+    report = dict(_scrapers.LINKEDIN_REPORT)
+    if dry_run:
+        print(f"[LinkedIn read] {len(found)} postings found; dry run: nothing kept, no search marks moved")
+        return {"found": len(found), "kept": None}
+    kept = li_inbox.save(waiting, found, skip_ids=set(seen))
+    # The marks move only when what was found is kept: a read whose postings
+    # reach nobody has read nothing.
+    if kept is not None and report.get("recorded"):
+        _sweep.save()
+    print(f"[LinkedIn read] {len(found)} postings found; "
+          + (f"{kept} wait for the next email run" if kept is not None
+             else "they could not be kept, the search marks stay where they were"))
+    try:
+        storage.append_line(_LINKEDIN_READS_FILE, json.dumps({
+            "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"), "found": len(found),
+            "waiting": kept, "lane": _linkedin_lane_stats()}, ensure_ascii=False, default=str))
+    except Exception as e:
+        print(f"[LinkedIn read] could not record this read ({type(e).__name__})")
+    return {"found": len(found), "kept": kept}
+
+
 def main(dry_run: bool = False) -> None:
     print("=" * 60)
     print("  Daily Job Hunter - starting run" + ("  [DRY RUN]" if dry_run else ""))

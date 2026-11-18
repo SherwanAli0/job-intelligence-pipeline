@@ -515,11 +515,16 @@ _LINKEDIN_SLOW_LANE_WORKERS = 2   # LinkedIn drops concurrent description fetche
 
 
 def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
-                                screen_titles: bool = True, stats: list | None = None) -> None:
+                                screen_titles: bool = True, stats: list | None = None,
+                                linkedin_workers: int | None = None,
+                                linkedin_pause: float = 0.5) -> None:
     """Fill in descriptions for title-plausible jobs. Mutates in place.
 
     A quiet call adds [fetched, needed, skipped on title] to `stats`, or to
     the JobSpy counters when no list is given.
+
+    `linkedin_workers` and `linkedin_pause` set LinkedIn's slow lane for one
+    call: the LinkedIn lane fetches one at a time with its own pause.
 
     `screen_titles=False` is for main._fill_missing_bodies: its candidates have
     already passed the employment-form filter, so a seniority word in the
@@ -569,10 +574,10 @@ def _enrich_jobspy_descriptions(jobs: list[dict], quiet: bool = False,
         fetched += _parallel_collect(other, _fetch, "desc")
     if li:
         def _fetch_paced(j):
-            time.sleep(0.5)
+            time.sleep(linkedin_pause)
             return _fetch(j)
         fetched += _parallel_collect(li, _fetch_paced, "desc-linkedin",
-                                     workers=_LINKEDIN_SLOW_LANE_WORKERS)
+                                     workers=linkedin_workers or _LINKEDIN_SLOW_LANE_WORKERS)
 
     if quiet:
         tally = _JOBSPY_DESC_STATS if stats is None else stats
@@ -4346,12 +4351,23 @@ def scrape_linkedin_guest() -> list[dict]:
 # each kept card costs a description fetch. A list therefore keeps only the
 # cards whose title names tech work (TITLE_IS_TECH, set by main.node_scrape).
 #
-# Stage 3 is empty for now. "Werkstudent" for all of Germany is about a
-# thousand postings a day, a hundred requests for one word, and the workplace
-# filter that would cut it down to remote and hybrid work (f_WT) is ignored
-# by this address: with 1, 2, 3 and without it the same 140 postings came
-# back. Whether such a list fits is decided with the numbers the lane now
-# reports in every run (requests answered, refusals, size of every list).
+# Stage 3 holds "Werkstudent" and "Praktikum" for all of Germany since
+# 18 November 2026 (owner: "i want all jobs frm linkedin all of them to be in
+# the run"). Measured from the production address at noon that day: 135
+# postings in the last hour for "Werkstudent", read to the end in 15 requests.
+# The workplace filter that would cut the list down to remote and hybrid work
+# (f_WT) is ignored by this address (with 1, 2, 3 and without it the same 140
+# postings came back), so the whole list is read and its cards keep only tech
+# titles like the NRW lists. LinkedIn is read five times a day (two email runs
+# and three LinkedIn-only reads, li_inbox.py), so a list covers three to
+# eight hours, about 500 postings at the busiest time, under LinkedIn's 1,000.
+# A list for all of Germany that reaches the 1,000 anyway counts as read
+# (LinkedIn serves nothing past it, and asking again for a longer stretch
+# would reach it again); the digest says so. Read for the first time, such a
+# list asks only for the last _LI_POOL_FIRST_HOURS, so the first run with it
+# does not spend its requests on a day's backlog the keyword searches had.
+# A keyword search with a list word in it (or a word LinkedIn answers with the
+# same postings, _LI_POOL_ALSO) goes to stage 4.
 #
 # One request at a time, a pause after each. After a refusal the lane waits
 # and goes on more slowly; it does not drop the search. A search that could
@@ -4384,6 +4400,16 @@ _LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "50"))
 _LI_SECONDS = int(os.environ.get("JOBHUNTER_LINKEDIN_SECONDS", "2400"))
 _LI_WAITS = (60, 120, 240)    # after the first, the second and every later refusal in a row
 _LI_GIVE_UP_AFTER = 4         # waits in a row without one answer: the next refusal ends the lane
+# After a refusal the pause grows by half (never past _LI_PACE_MAX), and after
+# _LI_EASE_AFTER answers in a row it shrinks by the same step again, never
+# below _LI_PACE. Before 18 November it only grew: in the run of 18 November
+# 10:00 the fourth of seven refusals came at minute 22, and from then on the
+# lane asked once every 12 seconds, about 70 requests in its last 18 minutes,
+# so 93 of 95 searches were cut short. The same scheme (grow on a refusal,
+# ease after 20 clean answers) is what spinlud/py-linkedin-jobs-scraper uses.
+_LI_SLOWER = 1.5
+_LI_PACE_MAX = 12.0
+_LI_EASE_AFTER = 20
 _LI_EMPTY_PAGE_CHARS = 400    # an answer without cards that is longer than this is no empty result
 _LI_POOL_HOURS = 48           # a pool is never asked for more: older ads fail the freshness rule
 _LI_PUBLISH_EVERY = 40        # cards between two description fetches
@@ -4393,7 +4419,12 @@ _LI_NRW = "North Rhine-Westphalia, Germany"
 # "Internship" 59 and 56 and shared 56; the English words added two school
 # placements and nothing else. Each list costs about 30 requests for six hours.
 _LI_POOLS_NRW = ("Werkstudent", "Praktikum")
-_LI_POOLS_GERMANY: tuple = ()
+_LI_POOLS_GERMANY: tuple = ("Werkstudent", "Praktikum")
+# Words LinkedIn answers with the same postings as a list word (NRW, 17
+# November: "Working Student" and "Werkstudent" kept 59 and 62 cards and
+# shared 55, "Internship" and "Praktikum" 56 and 59 and shared 56).
+_LI_POOL_ALSO = {"werkstudent": ("working student",), "praktikum": ("internship",)}
+_LI_POOL_FIRST_HOURS = 3
 _LI_DONE = ("end", "depth", "limit")
 _LI_REFUSED = (429, 403, 999)
 # Why a search was cut short, in words (run log and digest note).
@@ -4442,6 +4473,7 @@ def _linkedin_plan() -> list[dict]:
 
     plan = [search(f"nrw|{w.lower()}", w, 1, _LI_NRW, True, 0) for w in _LI_POOLS_NRW]
     pool_words = tuple(w.lower() for w in _LI_POOLS_GERMANY)
+    pool_words += tuple(a for w in pool_words for a in _LI_POOL_ALSO.get(w, ()))
     taken: set[str] = set()
     for query in list(_queries_by_form()) + list(_LI_GUEST_QUERIES):
         name = " ".join(query.lower().split())
@@ -4485,19 +4517,30 @@ def _li_ask(s: dict) -> tuple[str, str]:
     return "ok", r.text or ""
 
 
-def scrape_linkedin() -> list[dict]:
-    """LinkedIn's public job search in one paced lane (see above)."""
+def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
+    """LinkedIn's public job search in one paced lane (see above). An email
+    run (`with_inbox`) puts the postings that the LinkedIn-only reads found
+    since (li_inbox.py) in front of what it reads itself."""
     import config as _cfg
     import sweep
 
     results: list[dict] = _LI_SWEEP_PARTIAL
     results.clear()
     LINKEDIN_REPORT.clear()
+    waiting: list[dict] = []
+    inbox_unreadable = False
+    if with_inbox:
+        import li_inbox
+        waiting = li_inbox.load(skip_ids=KNOWN_JOB_IDS)
+        inbox_unreadable = li_inbox.LOAD_FAILED
+        results.extend(waiting)
     plan = _linkedin_plan()
     base = _max_age_hours()
     for s in plan:
         if _cfg.is_catchup():
             hours = base
+        elif s["pool"] and s["stage"] == 3 and sweep.covered_until(s["key"]) is None:
+            hours = min(base, _LI_POOL_FIRST_HOURS)        # first read of a list for all of Germany
         elif s["pool"]:
             hours = min(sweep.window_hours(s["key"], base), max(base, _LI_POOL_HOURS))
         else:
@@ -4510,19 +4553,30 @@ def scrape_linkedin() -> list[dict]:
                  errors=0, status="")
 
     started = _li_clock()
-    seen_urls: set[str] = set()
+    seen_urls: set[str] = {r["url"] for r in waiting}
     counts: Counter = Counter()
     tally = [0, 0, 0]                    # descriptions fetched, needed, skipped on title
     batch: list[dict] = []
-    pace, refusals, streak, halt = _LI_PACE, 0, 0, ""
+    pace, refusals, streak, halt, clean, top = _LI_PACE, 0, 0, "", 0, _LI_PACE
 
     def publish() -> None:
-        """Descriptions for the cards found since the last call, then hand them over."""
+        """Descriptions for the cards found since the last call, then hand them over.
+        They are fetched one at a time with the lane's own pause: LinkedIn
+        refuses bursts, and two fetches at once between the search pages were
+        bursts."""
         if not batch:
             return
         unseen = [j for j in batch if j["id"] not in KNOWN_JOB_IDS]
         counts["known"] += len(batch) - len(unseen)
-        _enrich_jobspy_descriptions(unseen, quiet=True, stats=tally)
+        for j in unseen:
+            # The lane's time counts the texts too: past it they are left for
+            # the email run's own fetch (main._fill_missing_bodies), which asks
+            # only for the postings that passed the checks before it.
+            if _li_clock() - started > _LI_SECONDS:
+                counts["texts_left"] += 1
+                continue
+            _enrich_jobspy_descriptions([j], quiet=True, stats=tally,
+                                        linkedin_workers=1, linkedin_pause=pace)
         results.extend(batch)
         batch.clear()
 
@@ -4551,7 +4605,9 @@ def scrape_linkedin() -> list[dict]:
                   f"waiting {wait}s, then going on more slowly")
             time.sleep(wait)
             counts["waited"] += wait
-            pace = min(pace * 1.5, 12.0)
+            pace = min(pace * _LI_SLOWER, _LI_PACE_MAX)
+            top = max(top, pace)
+            clean = 0
             continue
         if outcome == "error":
             counts["errors"] += 1
@@ -4566,6 +4622,11 @@ def scrape_linkedin() -> list[dict]:
 
         counts["answered"] += 1
         streak = 0
+        clean += 1
+        if pace > _LI_PACE and clean >= _LI_EASE_AFTER:
+            pace = max(_LI_PACE, pace / _LI_SLOWER)      # LinkedIn answers again: one step faster
+            clean = 0
+            counts["eased"] += 1
         counts["cards"] += n_cards
         counts["cards_unread"] += n_cards - len(cards)
         new = [c for c in cards if c["url"] not in s["ids"]]
@@ -4600,8 +4661,8 @@ def scrape_linkedin() -> list[dict]:
             s["status"] = "end"
         elif s["depth"] and s["offset"] >= s["depth"]:
             s["status"] = "depth"
-        elif s["pool"] and s["offset"] >= _LI_LIST_LIMIT:
-            s["status"] = "long"
+        elif s["pool"] and s["stage"] == 1 and s["offset"] >= _LI_LIST_LIMIT:
+            s["status"] = "long"         # a list for NRW; one for all of Germany runs to the 1,000
         elif s["offset"] >= _LI_RESULT_LIMIT:
             s["status"] = "limit"
         if len(batch) >= _LI_PUBLISH_EVERY:
@@ -4624,10 +4685,13 @@ def scrape_linkedin() -> list[dict]:
         "searches": len(plan), "done": len(plan) - len(cut), "cut_short": len(cut), "halt": halt,
         "reasons": dict(reasons),
         "requests": counts["requests"], "refusals": refusals, "waited_s": counts["waited"],
-        "cards": counts["cards"], "kept": len(results), "known": counts["known"],
+        "cards": counts["cards"], "kept": len(results) - len(waiting), "known": counts["known"],
         "pool_cards_left_out": counts["pool_other"], "described": tally[0],
         "unreadable_pages": counts["unreadable"], "cards_unread": counts["cards_unread"],
         "seconds": round(_li_clock() - started), "recorded": recorded,
+        "pace_top": round(top, 1), "pace_end": round(pace, 1), "eased": counts["eased"],
+        "waiting": len(waiting), "inbox_unreadable": inbox_unreadable,
+        "texts_left": counts["texts_left"],
         "pools": {s["key"].split("|", 1)[1]: {"read": s["offset"], "hours": s["hours"],
                                               "status": s["status"]}
                   for s in plan if s["pool"]},
@@ -4637,14 +4701,18 @@ def scrape_linkedin() -> list[dict]:
     print(f"  [LinkedIn] {len(plan)} searches: {len(plan) - len(cut)} read as far as planned"
           + (f", {len(cut)} cut short ({why})" if cut else "")
           + f"; {counts['requests']} requests in {LINKEDIN_REPORT['seconds']}s, {refusals} refused"
-          + (f" (waited {counts['waited']}s)" if refusals else ""))
+          + (f" (waited {counts['waited']}s; pause up to {top:.1f}s, {pace:.1f}s at the end,"
+             f" {counts['eased']} steps back down)" if refusals else ""))
     print("  [LinkedIn] full lists: " + "; ".join(
         f"{name} {p['read']} in {p['hours']}h ({p['status']})"
         for name, p in LINKEDIN_REPORT["pools"].items()))
-    print(f"  [LinkedIn] {counts['cards']} cards read, {len(results)} postings kept "
+    print(f"  [LinkedIn] {counts['cards']} cards read, {len(results) - len(waiting)} postings kept "
           f"({counts['pool_other']} from the full lists left out, no tech work in the title), "
           f"{counts['known']} already seen; descriptions: {tally[0]}/{tally[1]} fetched, "
-          f"{tally[2]} skipped on title")
+          f"{tally[2]} skipped on title"
+          + (f", {counts['texts_left']} left for later (the time was up)" if counts["texts_left"] else ""))
+    if with_inbox:
+        print(f"  [LinkedIn] {len(waiting)} postings from the LinkedIn reads in between, not seen yet")
     if counts["nrw_cards"] >= 20 and counts["nrw_in_state"] * 10 < counts["nrw_cards"] * 3:
         print(f"  [LinkedIn] note: only {counts['nrw_in_state']} of {counts['nrw_cards']} cards of the "
               f"NRW lists name the state: the location may not be honoured")
@@ -4668,6 +4736,8 @@ def linkedin_lane_note() -> str:
         main_reason = max(reasons, key=reasons.get)
         why = _LI_WHY.get(main_reason, "the lane stopped early")
         text += f"; {r['cut_short']} were cut short ({why}) and are asked first in the next run"
+    if r.get("waiting"):
+        text += f"; {r['waiting']} postings came from the LinkedIn reads in between"
     return text + "."
 
 
@@ -4682,6 +4752,15 @@ def linkedin_lane_warnings(hours: int = 48) -> list[str]:
         # dead-source alarm needs three empty runs to notice.
         out.append(f"LinkedIn: {unreadable} answers held job cards that could not be read. "
                    f"The page layout has probably changed; the LinkedIn lane needs a look.")
+    if LINKEDIN_REPORT.get("inbox_unreadable"):
+        out.append("LinkedIn: the postings found by the LinkedIn reads between the email runs could not "
+                   "be read in this run. They stay kept for three days and follow in the next run.")
+    full = [(name, p) for name, p in (LINKEDIN_REPORT.get("pools") or {}).items()
+            if name.startswith("de|") and p.get("status") == "limit"]
+    for name, p in full:
+        out.append(f"LinkedIn: the list for all of Germany '{name.split('|', 1)[1]}' reached LinkedIn's "
+                   f"limit of {_LI_RESULT_LIMIT} postings for {p.get('hours')} hours; the postings past it "
+                   f"were not read.")
     late = sweep.overdue(hours, "linkedin|")
     if late:
         lists = sum(1 for key, _ in late if not key.startswith("linkedin|q|"))

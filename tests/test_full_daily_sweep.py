@@ -16,6 +16,7 @@ import pytest
 from hypothesis import given, settings, strategies as st
 
 import config
+import li_inbox
 import main
 import scrapers
 import sweep
@@ -29,6 +30,7 @@ EMPTY = "<!DOCTYPE html>\n\n<!---->"
 def _clean_state(monkeypatch, tmp_path):
     """Search marks in a temp folder, nothing left over between tests."""
     monkeypatch.setattr(sweep, "MARKS_FILE", str(tmp_path / "search_marks.json"))
+    monkeypatch.setattr(li_inbox, "INBOX_FILE", str(tmp_path / "linkedin_inbox.jsonl"))
     monkeypatch.setattr(config, "_SOURCE_HOURS_OVERRIDE", None)
     monkeypatch.delenv("JOBHUNTER_LINKEDIN_LANE", raising=False)
     monkeypatch.delenv("JOBHUNTER_SOURCE_WINDOW", raising=False)
@@ -289,8 +291,9 @@ class Lane:
         self.sleeps.append(seconds)
         self.clock[0] += seconds
 
-    def _describe(self, jobs, quiet=False, screen_titles=True, stats=None):
+    def _describe(self, jobs, quiet=False, screen_titles=True, stats=None, **kw):
         self.describe_calls += 1
+        self.describe_settings = getattr(self, "describe_settings", []) + [kw]
         self.described.extend(j["url"] for j in jobs)
         if stats is not None:
             stats[0] += len(jobs)
@@ -370,7 +373,9 @@ class TestTheOrderOfTheSearches:
         # brings apprenticeships and "Junior" hardly any junior title.
         assert scrapers._LI_POOLS_NRW == ("Werkstudent", "Praktikum")
         assert {"linkedin|nrw|werkstudent", "linkedin|nrw|praktikum"} <= names
-        assert sum(1 for s in plan if s["pool"]) == 2
+        # and since 2026-11-18 the same two words for all of Germany
+        assert {"linkedin|de|werkstudent", "linkedin|de|praktikum"} <= names
+        assert sum(1 for s in plan if s["pool"]) == 4
         assert all(s["location"] == NRW for s in plan if s["stage"] == 1)
         assert all(s["pool"] == (s["stage"] in (1, 3)) for s in plan)
         assert all(s["depth"] == scrapers._LI_DEPTH for s in plan if not s["pool"])
@@ -379,21 +384,30 @@ class TestTheOrderOfTheSearches:
         # The lane's first run from the production address (17 November 2026):
         # 333 requests in 1,303 seconds, none refused, so 3.9 seconds a request
         # with the description fetches in between. Five pages for every keyword
-        # search plus about a hundred requests for the two NRW lists fit.
+        # search that no list covers, about 40 requests for the two NRW lists
+        # and about 100 for the two lists for all of Germany (three and a half
+        # hours at the busiest time, 2026-11-18) fit.
         plan = scrapers._linkedin_plan()
-        keyword_requests = sum(s["depth"] // 10 for s in plan if not s["pool"])
+        keyword_requests = sum(s["depth"] // 10 for s in plan if s["stage"] == 2)
         assert (scrapers._LI_PACE, scrapers._LI_DEPTH, scrapers._LI_SECONDS) == (3.0, 50, 2400)
-        assert (keyword_requests + 100) * 3.9 < scrapers._LI_SECONDS
+        assert (keyword_requests + 40 + 100) * 3.9 < scrapers._LI_SECONDS
         assert scrapers._LI_LIST_LIMIT == 800 and scrapers._LI_GIVE_UP_AFTER == 4
 
-    def test_for_now_no_list_is_read_for_all_of_germany(self):
-        # About a thousand postings a day for one word, and the filter for
-        # remote and hybrid work is ignored: see the comment above the lane.
-        assert scrapers._LI_POOLS_GERMANY == ()
+    def test_two_lists_are_read_for_all_of_germany(self):
+        # 2026-11-18: "Werkstudent" for all of Germany had 135 postings in the
+        # last hour at noon, read to the end in 15 requests. With LinkedIn read
+        # five times a day a list covers three to eight hours.
+        assert scrapers._LI_POOLS_GERMANY == ("Werkstudent", "Praktikum")
         plan = scrapers._linkedin_plan()
-        assert not [s for s in plan if s["stage"] == 3]
-        assert {s["stage"] for s in plan if not s["pool"]} == {2}, \
-            "every keyword search gets its first page before any gets a second"
+        assert [s["key"] for s in plan if s["stage"] == 3] == ["linkedin|de|werkstudent", "linkedin|de|praktikum"]
+        stage = {s["words"]: s["stage"] for s in plan if not s["pool"]}
+        # covered by a list, or by a word LinkedIn answers with the same postings
+        for words in ("Werkstudent Data Science", "Working Student Machine Learning", "Praktikum Informatik",
+                      "Internship Data Science", "Summer Internship 2027", "Pflichtpraktikum Informatik"):
+            assert stage[words] == 4, words
+        for words in ("Junior Data Scientist Germany", "HiWi Data Science", "Data Science Intern",
+                      "Praktikant Data Science", "studentische Hilfskraft KI", "Teilzeit Data"):
+            assert stage[words] == 2, words
 
     def test_a_keyword_search_that_a_germany_list_covers_waits_for_the_last_stage(self, monkeypatch):
         monkeypatch.setattr(scrapers, "_LI_POOLS_GERMANY", ("Werkstudent", "Praktikum"))
@@ -587,9 +601,11 @@ class TestARefusal:
         assert (report["halt"], report["done"], report["cut_short"]) == ("refused", 0, 3)
         assert {v["status"] for v in report["pools"].values()} == {"refused"}
         # nothing counts as read: each search keeps the stretch it was asked for
+        # (a list for all of Germany read for the first time asks for 3 hours)
         saved = _saved(tmp_path)
         assert {k: v["covered"] for k, v in saved.items()} == {
-            k: (NOW - timedelta(hours=24)).isoformat(timespec="seconds") for k in saved}
+            k: (NOW - timedelta(hours=3 if k.startswith("linkedin|de|") else 24)).isoformat(timespec="seconds")
+            for k in saved}
 
     def test_a_wait_that_would_run_past_the_lanes_time_is_not_started(self, lane, monkeypatch):
         fake = FakeLinkedIn(default=30)
@@ -716,7 +732,8 @@ class TestTheWindows:
         l.run()
         hours = {c[:2]: c[3] for c in l.fake.calls}
         assert hours[("Werkstudent", NRW)] == 17 + sweep.SLACK_HOURS
-        assert hours[("Werkstudent", "Germany")] == 24          # no mark yet
+        # no mark yet: a list for all of Germany starts with the last few hours (2026-11-18)
+        assert hours[("Werkstudent", "Germany")] == scrapers._LI_POOL_FIRST_HOURS == 3
 
     def test_a_list_is_never_asked_for_more_than_two_days(self, lane, tmp_path):
         _marks(tmp_path, linkedin__nrw__werkstudent=100)
@@ -745,7 +762,7 @@ class TestTheWindows:
         assert hours[("Junior Data Scientist Germany", "Germany")] == 9
         assert hours[("Praktikum Data Science", "Germany")] == 9
         assert hours[("Werkstudent", NRW)] == 9
-        assert hours[("Werkstudent", "Germany")] == 9
+        assert hours[("Werkstudent", "Germany")] == 3           # first read of that list (2026-11-18)
 
     def test_a_search_cut_short_today_asks_for_a_longer_stretch_tomorrow(self, lane):
         fake = FakeLinkedIn(default=3)
@@ -818,7 +835,8 @@ class TestWhatCountsAsRead:
             original(jobs, **kw)
         monkeypatch.setattr(scrapers, "_enrich_jobspy_descriptions", describe)
         l.run()
-        assert seen_sizes == [0, 10, 20, 30]                    # handed over page by page
+        # handed over page by page (the texts are asked one at a time since 2026-11-18)
+        assert sorted(set(seen_sizes)) == [0, 10, 20, 30] and seen_sizes == sorted(seen_sizes)
         assert scrapers._PARTIAL_BUFFERS["scrape_linkedin"] is scrapers._LI_SWEEP_PARTIAL
 
 
