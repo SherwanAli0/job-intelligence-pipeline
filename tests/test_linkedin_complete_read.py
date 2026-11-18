@@ -238,6 +238,15 @@ class TestTheInbox:
         assert [r["id"] for r in li_inbox.load(now=NOW)] == [good["id"]]
         assert li_inbox.save(rows, [dict(good, id=None)], now=NOW) == 1
 
+    def test_fields_that_are_not_text_are_made_text(self):
+        odd = dict(_row(1), _collected=NOW.isoformat(), description=5, title=None, source=3)
+        storage.write_text(li_inbox.INBOX_FILE, json.dumps(odd) + "\n")
+        (row,) = li_inbox.load(now=NOW)
+        assert (row["description"], row["title"], row["source"]) == ("", "", "linkedin")
+        # found again with a text: no error, and the text is kept
+        assert li_inbox.save([dict(odd)], [_row(1, "t" * 500)], now=NOW) == 1
+        assert li_inbox.load(now=NOW)[0]["description"] == "t" * 500
+
     def test_a_file_that_cannot_be_read_gives_nothing_and_does_not_stop_the_run(self, monkeypatch, capsys):
         def broken(name):
             raise storage.StorageUnavailable("down")
@@ -383,6 +392,24 @@ class TestALinkedInOnlyRead:
         monkeypatch.setattr(li_inbox, "save", lambda *a, **k: None)
         assert main.read_linkedin_only()["kept"] is None
         assert not (tmp_path / "search_marks.json").exists()
+
+    def test_when_the_waiting_postings_cannot_be_read_it_stops_and_overwrites_nothing(
+            self, read, tmp_path, monkeypatch, capsys):
+        calls, _ = read
+        li_inbox.save([], [_row(1)], now=NOW)
+        before = (tmp_path / "linkedin_inbox.jsonl").read_text(encoding="utf-8")
+        real = storage.read_text
+
+        def flaky(name):
+            if name == li_inbox.INBOX_FILE:
+                raise storage.StorageUnavailable("down")
+            return real(name)
+        monkeypatch.setattr(storage, "read_text", flaky)
+        assert main.read_linkedin_only() == {"found": 0, "kept": None}
+        assert "with_inbox" not in calls                       # LinkedIn was not asked
+        assert (tmp_path / "linkedin_inbox.jsonl").read_text(encoding="utf-8") == before
+        assert not (tmp_path / "search_marks.json").exists()
+        assert "this read stops before asking LinkedIn" in capsys.readouterr().out
 
     def test_a_dry_run_keeps_nothing_and_moves_no_mark(self, read, tmp_path):
         assert main.read_linkedin_only(dry_run=True) == {"found": 2, "kept": None}

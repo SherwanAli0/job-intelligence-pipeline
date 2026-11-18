@@ -29,6 +29,11 @@ KEEP_HOURS = 72          # more than the 48 hours of the freshness rule
 LOAD_FAILED = False
 
 
+def _text(row: dict) -> str:
+    text = row.get("description")
+    return text if isinstance(text, str) else ""
+
+
 def _usable(row) -> bool:
     """A row with a text id and a text link; anything else is skipped."""
     return (isinstance(row, dict) and isinstance(row.get("id"), str) and bool(row["id"])
@@ -47,6 +52,9 @@ def _parse(value) -> datetime | None:
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
+_TEXT_FIELDS = ("title", "company", "location", "description", "posted_at", "source")
+
+
 def _rows(text: str):
     for line in (text or "").splitlines():
         try:
@@ -54,6 +62,9 @@ def _rows(text: str):
         except ValueError:
             continue
         if _usable(row):
+            for name in _TEXT_FIELDS:            # the checks downstream expect text
+                if not isinstance(row.get(name), str):
+                    row[name] = "linkedin" if name == "source" else ""
             yield row
 
 
@@ -103,7 +114,7 @@ def save(waiting: list[dict], found: list[dict], skip_ids=frozenset(),
         if held is None:
             best[row["id"]] = dict(row)
             continue
-        if len(row.get("description") or "") > len(held.get("description") or ""):
+        if len(_text(row)) > len(_text(held)):
             held["description"] = row["description"]
         if first < _parse(held["_collected"]):
             held["_collected"] = row["_collected"]

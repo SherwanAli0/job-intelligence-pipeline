@@ -3229,6 +3229,13 @@ def read_linkedin_only(dry_run: bool = False) -> dict:
     print("=" * 60)
     seen = load_seen()
     waiting = li_inbox.load(skip_ids=set(seen))
+    if li_inbox.LOAD_FAILED:
+        # Writing now would put this read's postings over the ones still
+        # waiting, and they would be lost. LinkedIn is not asked: the search
+        # marks stay, so the next read or email run covers these hours.
+        print("[LinkedIn read] the postings waiting from earlier reads could not be read: "
+              "this read stops before asking LinkedIn, nothing is overwritten")
+        return {"found": 0, "kept": None}
     # No text is fetched again for a posting seen before or already waiting with one.
     _scrapers.KNOWN_JOB_IDS = set(seen) | {r["id"] for r in waiting
                                             if len(r.get("description") or "") >= 400}
