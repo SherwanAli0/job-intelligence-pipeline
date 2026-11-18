@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,314 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,354 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -688,6 +688,44 @@ hours is judged by its printed date after all, like any ad on a board that was n
 for that long. Not measured: a morning run with five pages per search.
 [tests/test_remaining_gaps.py](tests/test_remaining_gaps.py) covers the four.
 
+## LinkedIn read five times a day (18 November 2026)
+
+The first scheduled run with five pages per search (18 November, 10:00) read 2 of 95
+LinkedIn searches as far as planned. LinkedIn refused seven times, and after each refusal
+the lane's pause grew by half and never shrank again: from minute 22 on it asked once
+every 12 seconds, and 93 searches were cut short. Measured the same day: from a new
+production address LinkedIn refused after 20 requests at one every 8 seconds, never sent a
+Retry-After header, and an address it had refused was still refused more than an hour
+later. Thirteen open-source LinkedIn readers were read for how they cope (JobSpy,
+py-linkedin-jobs-scraper and others): those that read more than this one do it with
+proxies or a signed-in session, which this project does not use.
+
+- **The pause comes back down.** After a refusal it grows by half (never past 12 s); after
+  20 answers in a row it shrinks by the same step, never below 3 s. Same scheme as
+  py-linkedin-jobs-scraper.
+- **One request at a time, texts included.** The job texts were fetched two at a time
+  between the search pages, in bursts, which is what LinkedIn refuses. The lane now
+  fetches them one at a time with its own pause.
+- **LinkedIn is read five times a day.** Besides the two email runs, LinkedIn is read on
+  its own at 06:30, 13:30 and 22:30 (`JOBHUNTER_MODE=linkedin`, `main.read_linkedin_only`):
+  the same lane, plan and search marks, no other source, no model, no email. What such a
+  read finds waits in `linkedin_inbox.jsonl` (`src/li_inbox.py`) and goes into the next
+  email run in front of what that run reads itself; seen_jobs decides what is new, so
+  nothing is taken twice. Each read asks only for the hours since the last one, so its
+  lists and searches are short enough to finish.
+- **"Werkstudent" and "Praktikum" for all of Germany, read to the end.** 135 postings in
+  the last hour for "Werkstudent" at noon, 15 requests. With five reads a day such a list
+  covers three to eight hours, under LinkedIn's limit of 1,000 results. The cards keep only
+  tech titles, like the NRW lists; keyword searches with these words (or "Working Student"
+  and "Internship", which LinkedIn answers with the same postings) are read after
+  everything else. A list for all of Germany that reaches 1,000 counts as read and the
+  digest says so; read for the first time it asks only for the last three hours.
+
+Not included: proxies, other addresses on purpose, a signed-in session, and data bought
+from third parties (several sell LinkedIn postings; that needs the owner's decision).
+Keyword searches are still read five pages deep, ranked by LinkedIn, not to their end.
+[tests/test_linkedin_complete_read.py](tests/test_linkedin_complete_read.py) covers it.
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -754,7 +792,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,314 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,354 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

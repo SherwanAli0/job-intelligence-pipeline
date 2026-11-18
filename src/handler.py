@@ -18,12 +18,31 @@ import sys
 import time
 
 
+# "full": the pipeline with its email. "linkedin": LinkedIn read on its own
+# between the email runs (main.read_linkedin_only), set by the schedules
+# job-hunter-linkedin-* as JOBHUNTER_MODE=linkedin.
+MODES = ("full", "linkedin")
+
+
 def _run(mode: str = "full", dry_run: bool = False) -> dict:
     # Imported inside the function so an import error surfaces as a handled
     # failure with context, rather than killing the Lambda during init where
     # the traceback is far less legible.
     import main
     import storage
+
+    if mode not in MODES:
+        # A mistyped mode must not start a run with an email nobody expects.
+        result = {"status": "error", "mode": mode, "error": f"unknown mode {mode!r}"}
+        print(json.dumps({"jobhunter_run": result}))
+        return result
+
+    # An email run reads LinkedIn too. Two reads at once would ask LinkedIn
+    # twice as fast, which is what it refuses.
+    if mode == "linkedin" and not dry_run and storage.exists("run-full.claim"):
+        result = {"status": "skipped", "mode": mode, "reason": "an email run is reading now"}
+        print(json.dumps({"jobhunter_run": result}))
+        return result
 
     # Mutual exclusion: EventBridge has no equivalent of the GitHub Actions
     # concurrency group, and two overlapping runs would each see the same jobs
@@ -39,7 +58,10 @@ def _run(mode: str = "full", dry_run: bool = False) -> dict:
 
     started = time.time()
     try:
-        main.main(dry_run=dry_run)
+        if mode == "linkedin":
+            main.read_linkedin_only(dry_run=dry_run)
+        else:
+            main.main(dry_run=dry_run)
         status, error = "ok", None
     except SystemExit as e:
         # main() calls sys.exit(0) on the "nothing new today" path.
@@ -104,7 +126,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGTERM, _on_sigterm)
     except Exception:
         pass
-    outcome = _run(dry_run=_dry)
+    outcome = _run(mode=os.environ.get("JOBHUNTER_MODE", "").strip().lower() or "full", dry_run=_dry)
     # "skipped" means the overlap guard correctly declined to start a second
     # concurrent hunt (a manual click while the scheduled run was mid-flight).
     # That is the system working, not a failure - exiting 1 for it made GitHub
