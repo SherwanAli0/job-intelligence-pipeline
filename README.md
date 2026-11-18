@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,364 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,367 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -726,6 +726,14 @@ proxies or a signed-in session, which this project does not use.
   and "Internship", which LinkedIn answers with the same postings) are read after
   everything else. A list for all of Germany that reaches 1,000 counts as read and the
   digest says so; read for the first time it asks only for the last three hours.
+- **Part-time, by search, not as a list.** "Teilzeit" in NRW alone had more than 118
+  postings in one hour (measured the same day; LinkedIn refused before the end), 5 with
+  tech work in the title and none with both, because LinkedIn matches every ad that
+  mentions the word, "Vollzeit oder Teilzeit" too. Fourteen keyword searches pair
+  part-time with tech work instead: seven with NRW as location (on-site there is wanted)
+  and seven for all of Germany with remote and hybrid words, next to the six part-time
+  searches that were there. The filters treat a part-time ad as before: part-time said
+  in the title or the text, and tech work in it.
 
 Not included: proxies, other addresses on purpose, a signed-in session, and data bought
 from third parties (several sell LinkedIn postings; that needs the owner's decision).
@@ -798,7 +806,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,364 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,367 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |
