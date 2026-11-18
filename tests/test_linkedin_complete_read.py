@@ -14,6 +14,7 @@ finds waits in li_inbox for the next email run.
 """
 import json
 import math
+import re
 import threading
 from datetime import timedelta
 
@@ -182,6 +183,38 @@ class TestTheListsForAllOfGermany:
         assert {c[:2]: c[3] for c in l.fake.calls}[("Werkstudent", "Germany")] == 3
         l.run(now=NOW + timedelta(hours=4), save=True)
         assert {c[:2]: c[3] for c in l.fake.calls}[("Werkstudent", "Germany")] == 4 + sweep.SLACK_HOURS
+
+
+# -- part-time (2026-11-18) -----------------------------------------------------------
+class TestPartTime:
+    def test_no_list_for_teilzeit_but_searches_that_pair_it_with_tech_work(self):
+        # "Teilzeit" in NRW: more than 118 postings in one hour, 5 with tech work in
+        # the title, none with both: a list would spend LinkedIn's allowance on nothing.
+        plan = scrapers._linkedin_plan()
+        assert not [s for s in plan if s["pool"] and ("teilzeit" in s["key"] or "part" in s["key"])]
+        nrw = {s["words"]: s for s in plan if s["key"].startswith("linkedin|nrwq|")}
+        assert set(nrw) == set(scrapers._LI_NRW_QUERIES) and len(nrw) == 7
+        assert all(s["location"] == NRW and s["stage"] == 2 and s["depth"] == scrapers._LI_DEPTH
+                   for s in nrw.values())
+        germany = {s["words"]: s["stage"] for s in plan if s["key"].startswith("linkedin|q|")}
+        for words in scrapers._LI_PART_TIME_QUERIES + ("Teilzeit Data", "Part-time Data Analyst"):
+            assert germany[words] == 2, words
+
+    def test_every_part_time_search_names_part_time_and_tech_work(self):
+        for words in scrapers._LI_NRW_QUERIES + scrapers._LI_PART_TIME_QUERIES:
+            assert re.search(r"teilzeit|part-time", words, re.IGNORECASE), words
+            assert main._RE_PART_TIME_TECH.search(words), words
+
+    def test_an_nrw_search_is_asked_for_nrw_and_read_five_pages_deep(self, lane, monkeypatch, tmp_path):
+        fake = FakeLinkedIn(default=0)
+        fake.set("Teilzeit Data", NRW, 80)
+        l = lane(fake=fake)
+        monkeypatch.setattr(scrapers, "_LI_NRW_QUERIES", ("Teilzeit Data",))
+        jobs = l.run(save=True)
+        assert fake.starts("Teilzeit Data", NRW) == [0, 10, 20, 30, 40]
+        assert ("Teilzeit Data", "Germany") not in {c[:2] for c in fake.calls}
+        assert len([j for j in jobs if j["title"].startswith("Teilzeit Data")]) == 50
+        assert "linkedin|nrwq|teilzeit data" in _saved(tmp_path)
 
 
 # -- the postings that wait between the reads --------------------------------------

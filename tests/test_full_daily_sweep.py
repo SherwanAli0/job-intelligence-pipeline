@@ -279,6 +279,8 @@ class Lane:
         monkeypatch.setattr(scrapers, "_LI_LIST_LIMIT", 400)
         monkeypatch.setattr(scrapers, "_queries_by_form", lambda: list(queries))
         monkeypatch.setattr(scrapers, "_LI_GUEST_QUERIES", ())
+        monkeypatch.setattr(scrapers, "_LI_PART_TIME_QUERIES", ())
+        monkeypatch.setattr(scrapers, "_LI_NRW_QUERIES", ())
         monkeypatch.setattr(scrapers.requests, "get", self.fake.get)
         monkeypatch.setattr(scrapers, "_li_clock", lambda: self.clock[0])
         monkeypatch.setattr(scrapers.time, "sleep", self._sleep)

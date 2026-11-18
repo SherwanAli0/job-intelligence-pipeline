@@ -4420,6 +4420,21 @@ _LI_NRW = "North Rhine-Westphalia, Germany"
 # placements and nothing else. Each list costs about 30 requests for six hours.
 _LI_POOLS_NRW = ("Werkstudent", "Praktikum")
 _LI_POOLS_GERMANY: tuple = ("Werkstudent", "Praktikum")
+# Part-time (owner, 2026-11-18: "also adds the ones with part time"). Not as a
+# list: "Teilzeit" in NRW alone had more than 118 postings in one hour (the
+# measurement was refused before the end), 5 of them with tech work in the
+# title and none with both part-time and tech work in it. LinkedIn matches
+# every ad that mentions the word, "Vollzeit oder Teilzeit" included, so the
+# list would spend LinkedIn's small daytime allowance on nothing. Instead,
+# keyword searches that pair part-time with tech work, read like the other
+# keyword searches: with NRW as location (on-site there is wanted) ...
+_LI_NRW_QUERIES = ("Teilzeit Data", "Teilzeit Informatik", "Teilzeit Softwareentwicklung", "Teilzeit Python",
+                   "Teilzeit Datenanalyse", "Part-time Data", "Part-time Software Developer")
+# ... and for all of Germany with the words of remote and hybrid work, next to
+# the part-time searches config.SEARCH_QUERIES already has.
+_LI_PART_TIME_QUERIES = ("Teilzeit KI", "Teilzeit Machine Learning", "Teilzeit Business Intelligence",
+                         "Teilzeit Remote Data", "Teilzeit Homeoffice Informatik", "Part-time Remote Data",
+                         "Part-time Machine Learning")
 # Words LinkedIn answers with the same postings as a list word (NRW, 17
 # November: "Working Student" and "Werkstudent" kept 59 and 62 cards and
 # shared 55, "Internship" and "Praktikum" 56 and 59 and shared 56).
@@ -4475,13 +4490,16 @@ def _linkedin_plan() -> list[dict]:
     pool_words = tuple(w.lower() for w in _LI_POOLS_GERMANY)
     pool_words += tuple(a for w in pool_words for a in _LI_POOL_ALSO.get(w, ()))
     taken: set[str] = set()
-    for query in list(_queries_by_form()) + list(_LI_GUEST_QUERIES):
+    for query in list(_queries_by_form()) + list(_LI_GUEST_QUERIES) + list(_LI_PART_TIME_QUERIES):
         name = " ".join(query.lower().split())
         if name in taken:
             continue
         taken.add(name)
         covered = any(w in name for w in pool_words)
         plan.append(search(f"q|{name}", query, 4 if covered else 2, LOCATION, False, _LI_DEPTH))
+    for query in _LI_NRW_QUERIES:                 # keyword searches with NRW as location
+        name = " ".join(query.lower().split())
+        plan.append(search(f"nrwq|{name}", query, 2, _LI_NRW, False, _LI_DEPTH))
     plan += [search(f"de|{w.lower()}", w, 3, LOCATION, True, 0) for w in _LI_POOLS_GERMANY]
     return plan
 
