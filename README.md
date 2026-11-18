@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,354 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,362 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -705,14 +705,19 @@ proxies or a signed-in session, which this project does not use.
   py-linkedin-jobs-scraper.
 - **One request at a time, texts included.** The job texts were fetched two at a time
   between the search pages, in bursts, which is what LinkedIn refuses. The lane now
-  fetches them one at a time with its own pause.
+  fetches them one at a time with its own pause, and only within its 40 minutes; past
+  them the email run fetches what it needs for the postings that passed the checks.
 - **LinkedIn is read five times a day.** Besides the two email runs, LinkedIn is read on
   its own at 06:30, 13:30 and 22:30 (`JOBHUNTER_MODE=linkedin`, `main.read_linkedin_only`):
   the same lane, plan and search marks, no other source, no model, no email. What such a
   read finds waits in `linkedin_inbox.jsonl` (`src/li_inbox.py`) and goes into the next
   email run in front of what that run reads itself; seen_jobs decides what is new, so
   nothing is taken twice. Each read asks only for the hours since the last one, so its
-  lists and searches are short enough to finish.
+  lists and searches are short enough to finish. Two reads never run at once: a
+  LinkedIn-only read skips itself while an email run holds its claim, and an email run
+  waits up to 20 minutes for a LinkedIn-only read to finish (a claim older than such a
+  run can take is left over from a crash and counts for nothing). If the waiting
+  postings cannot be read, the email says so and they follow in the next run.
 - **"Werkstudent" and "Praktikum" for all of Germany, read to the end.** 135 postings in
   the last hour for "Werkstudent" at noon, 15 requests. With five reads a day such a list
   covers three to eight hours, under LinkedIn's limit of 1,000 results. The cards keep only
@@ -792,7 +797,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,354 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,362 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

@@ -109,6 +109,21 @@ class TestTheJobTextsComeOneAtATime:
         pauses = [kw["linkedin_pause"] for kw in l.describe_settings]
         assert pauses[0] == 6.0                                 # the first batch came after the refusal
 
+    def test_the_texts_stop_when_the_lanes_time_is_up(self, lane, monkeypatch):
+        l = lane(fake=FakeLinkedIn(Werkstudent__nrw=45))
+        monkeypatch.setattr(scrapers, "_LI_SECONDS", 250)
+        asked = []
+
+        def slow_text(jobs, **kw):                     # each text takes 100 s of the lane's time
+            asked.extend(j["url"] for j in jobs)
+            l.clock[0] += 100
+        monkeypatch.setattr(scrapers, "_enrich_jobspy_descriptions", slow_text)
+        jobs = l.run()
+        report = scrapers.LINKEDIN_REPORT
+        assert len(asked) == 3                          # 12 s of pages, then 112, 212, 312 > 250
+        assert report["texts_left"] == 37 and report["halt"] == "time"
+        assert len(jobs) == 40                          # the postings are kept, without a text
+
     def test_the_real_helper_fetches_one_after_the_other_with_that_pause(self, monkeypatch):
         sleeps, threads = [], []
         monkeypatch.setattr(scrapers.time, "sleep", sleeps.append)
@@ -216,12 +231,34 @@ class TestTheInbox:
         storage.write_text(li_inbox.INBOX_FILE, text)
         assert [r["id"] for r in li_inbox.load(now=NOW)] == [good["id"]]
 
+    def test_a_row_whose_id_or_link_is_not_text_is_skipped(self):
+        good = dict(_row(1), _collected=NOW.isoformat())
+        rows = [dict(good, id=["x"]), dict(good, id=7), dict(good, url={"a": 1}), good]
+        storage.write_text(li_inbox.INBOX_FILE, "".join(json.dumps(r) + "\n" for r in rows))
+        assert [r["id"] for r in li_inbox.load(now=NOW)] == [good["id"]]
+        assert li_inbox.save(rows, [dict(good, id=None)], now=NOW) == 1
+
     def test_a_file_that_cannot_be_read_gives_nothing_and_does_not_stop_the_run(self, monkeypatch, capsys):
         def broken(name):
             raise storage.StorageUnavailable("down")
         monkeypatch.setattr(storage, "read_text", broken)
         assert li_inbox.load() == []
+        assert li_inbox.LOAD_FAILED is True
         assert "could not be read (StorageUnavailable)" in capsys.readouterr().out
+
+    def test_the_email_says_so_and_the_postings_follow_later(self, lane, monkeypatch):
+        l = lane(fake=FakeLinkedIn())
+        real = storage.read_text
+
+        def broken(name):
+            raise storage.StorageUnavailable("down")
+        monkeypatch.setattr(storage, "read_text", broken)
+        l.run()
+        assert scrapers.LINKEDIN_REPORT["inbox_unreadable"] is True
+        assert any("could not be read in this run" in w for w in scrapers.linkedin_lane_warnings())
+        monkeypatch.setattr(storage, "read_text", real)
+        li_inbox.load()
+        assert li_inbox.LOAD_FAILED is False
 
     def test_a_write_that_fails_says_none(self, monkeypatch, capsys):
         def broken(name, text):
@@ -359,11 +396,18 @@ class TestTheModeSwitch:
     def handler(self, monkeypatch):
         import handler as _handler
         calls, claims = [], []
+        self.held = {}                                   # claim name -> seconds since it was taken
+        self.sleeps = []
         monkeypatch.setattr(main, "read_linkedin_only", lambda dry_run=False: calls.append(("linkedin", dry_run)))
         monkeypatch.setattr(main, "main", lambda dry_run=False: calls.append(("full", dry_run)))
         monkeypatch.setattr(storage, "claim", lambda name, *a, **k: claims.append(name) or True)
         monkeypatch.setattr(storage, "release", lambda name: None)
-        monkeypatch.setattr(storage, "exists", lambda name: False)
+
+        def read_text(name):
+            age = self.held.get(name.removesuffix(".claim"))
+            return None if age is None else json.dumps({"claimed_at": _handler.time.time() - age, "ttl": 14400})
+        monkeypatch.setattr(storage, "read_text", read_text)
+        monkeypatch.setattr(_handler.time, "sleep", self.sleeps.append)
         return _handler, calls, claims
 
     def test_linkedin_mode_reads_linkedin_alone(self, handler):
@@ -376,11 +420,50 @@ class TestTheModeSwitch:
         assert h._run()["status"] == "ok"
         assert calls == [("full", False)] and claims == ["run-full"]
 
-    def test_it_waits_its_turn_while_an_email_run_reads(self, handler, monkeypatch):
+    def test_it_skips_itself_while_an_email_run_reads(self, handler):
         h, calls, claims = handler
-        monkeypatch.setattr(storage, "exists", lambda name: name == "run-full.claim")
+        self.held["run-full"] = 600
         result = h._run(mode="linkedin")
         assert result["status"] == "skipped" and calls == [] and claims == []
+
+    def test_a_claim_left_over_from_a_crash_does_not_stop_it(self, handler):
+        h, calls, claims = handler
+        self.held["run-full"] = 5 * 3600
+        assert h._run(mode="linkedin")["status"] == "ok" and calls == [("linkedin", False)]
+
+    def test_an_email_run_waits_for_a_linkedin_only_read_to_finish(self, handler, monkeypatch):
+        h, calls, claims = handler
+        self.held["run-linkedin"] = 300
+        checks = []
+
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            checks.append(seconds)
+            if len(checks) == 2:
+                del self.held["run-linkedin"]              # the read has finished
+        monkeypatch.setattr(h.time, "sleep", sleep)
+        assert h._run()["status"] == "ok"
+        assert self.sleeps == [30, 30] and calls == [("full", False)]
+
+    def test_an_email_run_waits_twenty_minutes_at_most(self, handler, capsys):
+        h, calls, claims = handler
+        self.held["run-linkedin"] = 300
+        assert h._run()["status"] == "ok"
+        assert sum(self.sleeps) == 20 * 60 and calls == [("full", False)]
+        assert "still running: this run goes on anyway" in capsys.readouterr().out
+
+    def test_an_email_run_does_not_wait_for_a_claim_left_over_from_a_crash(self, handler):
+        h, calls, claims = handler
+        self.held["run-linkedin"] = 2 * 3600
+        assert h._run()["status"] == "ok"
+        assert self.sleeps == [] and calls == [("full", False)]
+
+    def test_a_dry_run_neither_waits_nor_skips(self, handler):
+        h, calls, claims = handler
+        self.held.update({"run-full": 60, "run-linkedin": 60})
+        h._run(mode="linkedin", dry_run=True)
+        h._run(dry_run=True)
+        assert self.sleeps == [] and calls == [("linkedin", True), ("full", True)]
 
     def test_an_unknown_mode_starts_nothing(self, handler):
         h, calls, claims = handler

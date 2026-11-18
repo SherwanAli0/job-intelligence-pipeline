@@ -4528,9 +4528,11 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
     results.clear()
     LINKEDIN_REPORT.clear()
     waiting: list[dict] = []
+    inbox_unreadable = False
     if with_inbox:
         import li_inbox
         waiting = li_inbox.load(skip_ids=KNOWN_JOB_IDS)
+        inbox_unreadable = li_inbox.LOAD_FAILED
         results.extend(waiting)
     plan = _linkedin_plan()
     base = _max_age_hours()
@@ -4566,8 +4568,15 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
             return
         unseen = [j for j in batch if j["id"] not in KNOWN_JOB_IDS]
         counts["known"] += len(batch) - len(unseen)
-        _enrich_jobspy_descriptions(unseen, quiet=True, stats=tally,
-                                    linkedin_workers=1, linkedin_pause=pace)
+        for j in unseen:
+            # The lane's time counts the texts too: past it they are left for
+            # the email run's own fetch (main._fill_missing_bodies), which asks
+            # only for the postings that passed the checks before it.
+            if _li_clock() - started > _LI_SECONDS:
+                counts["texts_left"] += 1
+                continue
+            _enrich_jobspy_descriptions([j], quiet=True, stats=tally,
+                                        linkedin_workers=1, linkedin_pause=pace)
         results.extend(batch)
         batch.clear()
 
@@ -4681,7 +4690,8 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
         "unreadable_pages": counts["unreadable"], "cards_unread": counts["cards_unread"],
         "seconds": round(_li_clock() - started), "recorded": recorded,
         "pace_top": round(top, 1), "pace_end": round(pace, 1), "eased": counts["eased"],
-        "waiting": len(waiting),
+        "waiting": len(waiting), "inbox_unreadable": inbox_unreadable,
+        "texts_left": counts["texts_left"],
         "pools": {s["key"].split("|", 1)[1]: {"read": s["offset"], "hours": s["hours"],
                                               "status": s["status"]}
                   for s in plan if s["pool"]},
@@ -4699,7 +4709,8 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
     print(f"  [LinkedIn] {counts['cards']} cards read, {len(results) - len(waiting)} postings kept "
           f"({counts['pool_other']} from the full lists left out, no tech work in the title), "
           f"{counts['known']} already seen; descriptions: {tally[0]}/{tally[1]} fetched, "
-          f"{tally[2]} skipped on title")
+          f"{tally[2]} skipped on title"
+          + (f", {counts['texts_left']} left for later (the time was up)" if counts["texts_left"] else ""))
     if with_inbox:
         print(f"  [LinkedIn] {len(waiting)} postings from the LinkedIn reads in between, not seen yet")
     if counts["nrw_cards"] >= 20 and counts["nrw_in_state"] * 10 < counts["nrw_cards"] * 3:
@@ -4741,6 +4752,9 @@ def linkedin_lane_warnings(hours: int = 48) -> list[str]:
         # dead-source alarm needs three empty runs to notice.
         out.append(f"LinkedIn: {unreadable} answers held job cards that could not be read. "
                    f"The page layout has probably changed; the LinkedIn lane needs a look.")
+    if LINKEDIN_REPORT.get("inbox_unreadable"):
+        out.append("LinkedIn: the postings found by the LinkedIn reads between the email runs could not "
+                   "be read in this run. They stay kept for three days and follow in the next run.")
     full = [(name, p) for name, p in (LINKEDIN_REPORT.get("pools") or {}).items()
             if name.startswith("de|") and p.get("status") == "limit"]
     for name, p in full:

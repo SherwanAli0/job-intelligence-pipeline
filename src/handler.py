@@ -22,6 +22,39 @@ import time
 # between the email runs (main.read_linkedin_only), set by the schedules
 # job-hunter-linkedin-* as JOBHUNTER_MODE=linkedin.
 MODES = ("full", "linkedin")
+# Both read LinkedIn, and two reads at once ask LinkedIn twice as fast, which
+# is what it refuses. A LinkedIn-only read skips itself while an email run
+# holds its claim; an email run waits up to _WAIT_FOR_LINKEDIN_SECONDS for a
+# LinkedIn-only read to finish (its lane has 40 minutes). A claim older than
+# what such a run can take is left over from a crash and counts for nothing.
+_LINKEDIN_READ_MAX_SECONDS = 90 * 60
+_WAIT_FOR_LINKEDIN_SECONDS = 20 * 60
+_WAIT_STEP_SECONDS = 30
+
+
+def _claim_age(storage, name: str):
+    """Seconds since the claim `name` was taken, or None (no claim, or unreadable)."""
+    try:
+        raw = storage.read_text(f"{name}.claim")
+        if not raw:
+            return None
+        return max(0.0, time.time() - float(json.loads(raw).get("claimed_at", 0)))
+    except Exception:
+        return None
+
+
+def _wait_for_linkedin_read(storage) -> None:
+    waited = 0
+    while waited < _WAIT_FOR_LINKEDIN_SECONDS:
+        age = _claim_age(storage, "run-linkedin")
+        if age is None or age >= _LINKEDIN_READ_MAX_SECONDS:
+            return
+        if not waited:
+            print("A LinkedIn-only read is running: waiting for it to finish (up to "
+                  f"{_WAIT_FOR_LINKEDIN_SECONDS // 60} minutes)")
+        time.sleep(_WAIT_STEP_SECONDS)
+        waited += _WAIT_STEP_SECONDS
+    print("The LinkedIn-only read is still running: this run goes on anyway")
 
 
 def _run(mode: str = "full", dry_run: bool = False) -> dict:
@@ -37,12 +70,14 @@ def _run(mode: str = "full", dry_run: bool = False) -> dict:
         print(json.dumps({"jobhunter_run": result}))
         return result
 
-    # An email run reads LinkedIn too. Two reads at once would ask LinkedIn
-    # twice as fast, which is what it refuses.
-    if mode == "linkedin" and not dry_run and storage.exists("run-full.claim"):
-        result = {"status": "skipped", "mode": mode, "reason": "an email run is reading now"}
-        print(json.dumps({"jobhunter_run": result}))
-        return result
+    if mode == "linkedin" and not dry_run:
+        age = _claim_age(storage, "run-full")
+        if age is not None and age < getattr(storage, "_CLAIM_TTL_SECONDS", 4 * 3600):
+            result = {"status": "skipped", "mode": mode, "reason": "an email run is reading now"}
+            print(json.dumps({"jobhunter_run": result}))
+            return result
+    if mode == "full" and not dry_run:
+        _wait_for_linkedin_read(storage)
 
     # Mutual exclusion: EventBridge has no equivalent of the GitHub Actions
     # concurrency group, and two overlapping runs would each see the same jobs

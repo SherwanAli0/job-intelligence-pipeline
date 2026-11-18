@@ -835,7 +835,8 @@ class TestWhatCountsAsRead:
             original(jobs, **kw)
         monkeypatch.setattr(scrapers, "_enrich_jobspy_descriptions", describe)
         l.run()
-        assert seen_sizes == [0, 10, 20, 30]                    # handed over page by page
+        # handed over page by page (the texts are asked one at a time since 2026-11-18)
+        assert sorted(set(seen_sizes)) == [0, 10, 20, 30] and seen_sizes == sorted(seen_sizes)
         assert scrapers._PARTIAL_BUFFERS["scrape_linkedin"] is scrapers._LI_SWEEP_PARTIAL
 
 

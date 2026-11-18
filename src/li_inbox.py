@@ -24,6 +24,15 @@ import storage
 
 INBOX_FILE = "linkedin_inbox.jsonl"
 KEEP_HOURS = 72          # more than the 48 hours of the freshness rule
+# True after a load that could not read the file: the digest then says that
+# the postings of the reads in between follow in a later run.
+LOAD_FAILED = False
+
+
+def _usable(row) -> bool:
+    """A row with a text id and a text link; anything else is skipped."""
+    return (isinstance(row, dict) and isinstance(row.get("id"), str) and bool(row["id"])
+            and isinstance(row.get("url"), str) and bool(row["url"]))
 
 
 def _now() -> datetime:
@@ -44,17 +53,21 @@ def _rows(text: str):
             row = json.loads(line)
         except ValueError:
             continue
-        if isinstance(row, dict) and row.get("id") and row.get("url"):
+        if _usable(row):
             yield row
 
 
 def load(skip_ids=frozenset(), now: datetime | None = None) -> list[dict]:
     """The postings waiting, without those in `skip_ids` (seen_jobs) and those
     first found more than KEEP_HOURS ago. Never raises: without the file an
-    email run reads LinkedIn as it did before these reads existed."""
+    email run reads LinkedIn as it did before these reads existed. The
+    postings stay in the file, so the next run takes them in."""
+    global LOAD_FAILED
+    LOAD_FAILED = False
     try:
         text = storage.read_text(INBOX_FILE) or ""
     except Exception as e:
+        LOAD_FAILED = True
         print(f"  [LinkedIn] the postings of the reads in between could not be read "
               f"({type(e).__name__}): this run goes without them")
         return []
@@ -80,8 +93,8 @@ def save(waiting: list[dict], found: list[dict], skip_ids=frozenset(),
     stamp = now.isoformat(timespec="seconds")
     limit = now - timedelta(hours=KEEP_HOURS)
     best: dict[str, dict] = {}
-    for row in list(waiting) + [dict(r, _collected=stamp) for r in found]:
-        if not row.get("id") or not row.get("url") or row["id"] in skip_ids:
+    for row in list(waiting) + [dict(r, _collected=stamp) for r in found if isinstance(r, dict)]:
+        if not _usable(row) or row["id"] in skip_ids:
             continue
         first = _parse(row.get("_collected"))
         if first is None or first < limit:
