@@ -84,7 +84,7 @@ company boards (358 distinct board slugs plus 21 Workday tenants in
 [config.py](src/config.py), counted 2026-11-03); the official **Bundesagentur für Arbeit**
 job-search API; the **Adzuna** API; the **Brave Search** API; the JobSpy library
 (`scrape_jobspy`), further job-board scrapers (see `scrape_all` in
-[scrapers.py](src/scrapers.py)) and DuckDuckGo web search; and public feeds
+[scrapers.py](src/scrapers.py)); and public feeds
 (Arbeitnow, Remotive, WorkingNomads, WeWorkRemotely RSS) plus other public job boards. A
 monthly health-check workflow probes the configured
 Greenhouse, Lever, Ashby, Personio, Recruitee and SmartRecruiters boards and fails CI
@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,367 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,396 offline tests (`pytest --collect-only -q`, 2026-11-19), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -327,7 +327,7 @@ are in this release:
   "US - City - ST" form is recognised as foreign.
 - **robots.txt for every non-API source.** Every request `scrapers.py` makes itself goes
   through a guard that checks the host's robots.txt (RFC 9309, including rules aimed at script
-  clients by name); python-jobspy and the DuckDuckGo search library make their own requests. Documented public job APIs are governed by their own terms and exempt; LinkedIn and
+  clients by name); python-jobspy makes its own requests (the DuckDuckGo search library did too: it sent its searches to bing.com/search, which robots.txt disallows, and is off since 2026-11-19). Documented public job APIs are governed by their own terms and exempt; LinkedIn and
   Indeed are owner-accepted exceptions listed in `robots.OWNER_EXCEPTIONS`. The audit found:
   - robots.txt disallowed the CSB feed path `/services/rss/job/` on all 13 CSB employer sites
     in the audit (several of those files answered 404 later the same day); the allowed sitemap
@@ -726,6 +726,8 @@ proxies or a signed-in session, which this project does not use.
   and "Internship", which LinkedIn answers with the same postings) are read after
   everything else. A list for all of Germany that reaches 1,000 counts as read and the
   digest says so; read for the first time it asks only for the last three hours.
+  **Off again since 19 November** (see the next section): neither list finished in five
+  reads.
 - **Part-time, by search, not as a list.** "Teilzeit" in NRW alone had more than 118
   postings in one hour (measured the same day; LinkedIn refused before the end), 5 with
   tech work in the title and none with both, because LinkedIn matches every ad that
@@ -739,6 +741,40 @@ Not included: proxies, other addresses on purpose, a signed-in session, and data
 from third parties (several sell LinkedIn postings; that needs the owner's decision).
 Keyword searches are still read five pages deep, ranked by LinkedIn, not to their end.
 [tests/test_linkedin_complete_read.py](tests/test_linkedin_complete_read.py) covers it.
+
+## Fixes after the first day of five LinkedIn reads (19 November 2026)
+
+Each open problem was looked at before anything was changed (the code, the run logs and a
+few plain requests to each site).
+
+- **LinkedIn.** From 18 November 11:58 on, LinkedIn refused every read within its first 1 to
+  17 requests and then about every fifth, even at a 12-second pause; a read got 96 to 176
+  pages. The lists for all of Germany never finished in five reads (they need 100 to 230
+  requests a read) and are off again. Five keyword searches look for student roles with
+  remote and home-office words instead, and every read now records, per search, the pages
+  answered, the postings found, the postings no other search found and how many of those
+  were new (`per_search` in the run statistics): the searches that only repeat others can
+  be cut on that record. As before 18 November, every keyword search gets its first page
+  before any gets a second (with the lists for all of Germany on, those with their words
+  had waited until last).
+- **Deloitte** had given 0 roles since 14 November. The career-site scraper joined a relative
+  link as `host.split("/jobs")[0] + href`, which on a host starting with "jobs." gave
+  `https://job/...`, and Deloitte's `/sitemap.xml` is an RSS feed without `<loc>` entries,
+  so neither route gave a readable link (the other four "jobs." hosts were rescued by their
+  sitemaps). Links are now joined with `urljoin`, and a sitemap without `<loc>` entries is
+  read as an RSS feed: 85 student links in Deloitte's feed that day.
+- **Workday company pages** fell from about 1,250 jobs to between 0 and 26 with nothing in
+  the log. An answer other than 200 ended a company silently. Every such answer is now
+  counted and the log names the codes and companies; after a 429 or 503 a company waits
+  once (Retry-After, at most 60 s) and asks again; a 403, or a second 429 or 503, leaves
+  the company alone for the rest of the pass; a run in which no company gave a job
+  and some answered with errors puts a warning in the digest. The cause itself shows in
+  the next runs' logs.
+- **Web search.** The DuckDuckGo search library sent the 24 searches to bing.com/search,
+  which robots.txt disallows for every user agent, and its requests never passed the
+  robots guard. It is off (owner's word); the Brave Search API runs the same searches.
+
+[tests/test_sources_fixes_1119.py](tests/test_sources_fixes_1119.py) covers the four.
 
 ## Evidence retrieval (RAG)
 
@@ -806,7 +842,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,367 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,396 collected, run in CI on every push | 2026-11-19 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

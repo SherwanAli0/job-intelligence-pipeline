@@ -281,6 +281,7 @@ class Lane:
         monkeypatch.setattr(scrapers, "_LI_GUEST_QUERIES", ())
         monkeypatch.setattr(scrapers, "_LI_PART_TIME_QUERIES", ())
         monkeypatch.setattr(scrapers, "_LI_NRW_QUERIES", ())
+        monkeypatch.setattr(scrapers, "_LI_REMOTE_QUERIES", ())
         monkeypatch.setattr(scrapers.requests, "get", self.fake.get)
         monkeypatch.setattr(scrapers, "_li_clock", lambda: self.clock[0])
         monkeypatch.setattr(scrapers.time, "sleep", self._sleep)
@@ -375,9 +376,9 @@ class TestTheOrderOfTheSearches:
         # brings apprenticeships and "Junior" hardly any junior title.
         assert scrapers._LI_POOLS_NRW == ("Werkstudent", "Praktikum")
         assert {"linkedin|nrw|werkstudent", "linkedin|nrw|praktikum"} <= names
-        # and since 2026-11-18 the same two words for all of Germany
-        assert {"linkedin|de|werkstudent", "linkedin|de|praktikum"} <= names
-        assert sum(1 for s in plan if s["pool"]) == 4
+        # the same two words for all of Germany were on from 18 to 19 November 2026
+        assert not {"linkedin|de|werkstudent", "linkedin|de|praktikum"} & names
+        assert sum(1 for s in plan if s["pool"]) == 2
         assert all(s["location"] == NRW for s in plan if s["stage"] == 1)
         assert all(s["pool"] == (s["stage"] in (1, 3)) for s in plan)
         assert all(s["depth"] == scrapers._LI_DEPTH for s in plan if not s["pool"])
@@ -385,30 +386,27 @@ class TestTheOrderOfTheSearches:
     def test_the_settings_fit_the_lanes_time(self):
         # The lane's first run from the production address (17 November 2026):
         # 333 requests in 1,303 seconds, none refused, so 3.9 seconds a request
-        # with the description fetches in between. Five pages for every keyword
-        # search that no list covers, about 40 requests for the two NRW lists
-        # and about 100 for the two lists for all of Germany (three and a half
-        # hours at the busiest time, 2026-11-18) fit.
+        # with the description fetches in between. The two NRW lists (about 40
+        # requests) and the first page of every keyword search fit easily; how
+        # many deeper pages a read gets is LinkedIn's decision: from 18 November
+        # 11:58 on it refused about every fifth request (96 to 176 a read).
         plan = scrapers._linkedin_plan()
-        keyword_requests = sum(s["depth"] // 10 for s in plan if s["stage"] == 2)
+        first_pages = sum(1 for s in plan if s["stage"] == 2)
         assert (scrapers._LI_PACE, scrapers._LI_DEPTH, scrapers._LI_SECONDS) == (3.0, 50, 2400)
-        assert (keyword_requests + 40 + 100) * 3.9 < scrapers._LI_SECONDS
+        assert (first_pages + 40) * 3.9 < scrapers._LI_SECONDS / 3
         assert scrapers._LI_LIST_LIMIT == 800 and scrapers._LI_GIVE_UP_AFTER == 4
 
-    def test_two_lists_are_read_for_all_of_germany(self):
-        # 2026-11-18: "Werkstudent" for all of Germany had 135 postings in the
-        # last hour at noon, read to the end in 15 requests. With LinkedIn read
-        # five times a day a list covers three to eight hours.
-        assert scrapers._LI_POOLS_GERMANY == ("Werkstudent", "Praktikum")
+    def test_no_list_for_all_of_germany_since_19_november(self):
+        # On from 18 to 19 November 2026: in five reads neither list finished
+        # (0, 0, 0, 120, 160 cards; window grown to 28 hours). They need 100 to
+        # 230 requests a read, and LinkedIn let a read have 96 to 176.
+        assert scrapers._LI_POOLS_GERMANY == ()
         plan = scrapers._linkedin_plan()
-        assert [s["key"] for s in plan if s["stage"] == 3] == ["linkedin|de|werkstudent", "linkedin|de|praktikum"]
+        assert not [s for s in plan if s["stage"] in (3, 4)]
+        assert {s["stage"] for s in plan if not s["pool"]} == {2}, \
+            "every keyword search gets its first page before any gets a second"
         stage = {s["words"]: s["stage"] for s in plan if not s["pool"]}
-        # covered by a list, or by a word LinkedIn answers with the same postings
-        for words in ("Werkstudent Data Science", "Working Student Machine Learning", "Praktikum Informatik",
-                      "Internship Data Science", "Summer Internship 2027", "Pflichtpraktikum Informatik"):
-            assert stage[words] == 4, words
-        for words in ("Junior Data Scientist Germany", "HiWi Data Science", "Data Science Intern",
-                      "Praktikant Data Science", "studentische Hilfskraft KI", "Teilzeit Data"):
+        for words in ("Werkstudent Data Science", "Internship Data Science", *scrapers._LI_REMOTE_QUERIES):
             assert stage[words] == 2, words
 
     def test_a_keyword_search_that_a_germany_list_covers_waits_for_the_last_stage(self, monkeypatch):

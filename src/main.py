@@ -2403,6 +2403,7 @@ _RETIRED_SOURCES = frozenset({
     "SAP",          # generic company-page entry, dead since 2026-09-22 (see config.COMPANY_PAGES)
     "BundDE",       # robots.txt disallows the service.bund.de job search (2026-11-13)
     "Bosch",        # company page disallowed by robots.txt; Bosch stays via SmartRecruiters (2026-11-13)
+    "WebSearch",    # duckduckgo_search sent to bing.com/search, disallowed by robots.txt; Brave stays (2026-11-19)
 })
 
 
@@ -2712,6 +2713,7 @@ def node_scrape(state: dict) -> dict:
     # rule allows is said in the digest: what it finds later is dropped as old.
     try:
         health_warnings.extend(_scrapers.linkedin_lane_warnings())
+        health_warnings.extend(_scrapers.workday_warnings())
     except Exception:
         pass
     _flagged = {w.split("'")[1] for w in health_warnings if "'" in w}

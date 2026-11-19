@@ -2683,6 +2683,59 @@ def _wd_count(key: str, n: int = 1) -> None:
     with _WD_STATS_LOCK:
         _WD_STATS[key] += n
 
+
+# Answers other than 200, per pass: (stage, status) -> count and -> tenants.
+# Until 2026-11-19 such an answer ended a tenant without a word, and the
+# source fell from about 1,250 jobs (13 and 15 November) to between 0 and 26
+# with nothing in the log to say why. Now every one is counted and the log
+# names the tenants; after a 429 or 503 a tenant waits once (Retry-After, at
+# most _WD_RETRY_CAP seconds) and asks again. A 403, or a second 429 or 503,
+# leaves the tenant alone for the rest of the pass instead of asking it once
+# more for every search string; any other error ends only that search.
+_WD_ANSWERS: Counter = Counter()
+_WD_ANSWER_TENANTS: dict = {}
+_WD_RETRY_CAP = 60
+_WD_WARNINGS: list = []
+
+
+def _wd_note(stage: str, status, tenant: str) -> None:
+    with _WD_STATS_LOCK:
+        _WD_ANSWERS[(stage, status)] += 1
+        _WD_ANSWER_TENANTS.setdefault((stage, status), set()).add(tenant)
+
+
+def _wd_retry_wait(r) -> float:
+    """Seconds to wait after a 429 or 503: Retry-After when it is a number."""
+    try:
+        return min(float(_WD_RETRY_CAP), max(1.0, float((getattr(r, "headers", None) or {}).get("Retry-After"))))
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _wd_answers_reset() -> None:
+    with _WD_STATS_LOCK:
+        _WD_ANSWERS.clear()
+        _WD_ANSWER_TENANTS.clear()
+
+
+def _wd_answers_line(label: str) -> str:
+    """One log line naming every answer other than 200 of this pass, or ""."""
+    with _WD_STATS_LOCK:
+        items = sorted(_WD_ANSWERS.items(), key=lambda kv: (kv[0][0], str(kv[0][1])))
+        names = {k: sorted(v) for k, v in _WD_ANSWER_TENANTS.items()}
+    if not items:
+        return ""
+    parts = []
+    for (stage, status), n in items:
+        who = names.get((stage, status), [])
+        parts.append(f"{stage} {status} x{n} ({', '.join(who[:6])}{', ...' if len(who) > 6 else ''})")
+    return f"  [{label}] answers other than 200: " + "; ".join(parts)
+
+
+def workday_warnings() -> list[str]:
+    """For the digest: the Workday company pages gave nothing and the reason is in the log."""
+    return list(_WD_WARNINGS)
+
 # Workday's shared reference id for Germany in the locationCountry facet
 # (the same id on every tenant that supports the facet).
 _WD_COUNTRY_DE = "dcc5b7608d8644b3a93716604e78e995"
@@ -2720,6 +2773,7 @@ def _wd_fetch_description(host: str, tenant: str, site: str, external_path: str)
     try:
         r = _guarded_get(detail_url, headers=_wd_headers(host), timeout=10)
         if r.status_code != 200:
+            _wd_note("detail", r.status_code, tenant)
             return ""
         info = (r.json().get("jobPostingInfo") or {})
         desc_html = info.get("jobDescription", "") or ""
@@ -2808,8 +2862,12 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
     cands: dict[str, dict] = {}
     facet_ok = True                     # until the tenant answers 400 to it
     facet_judged = False                # the first faceted reply with postings decides
+    retried = False                     # one wait after a 429 or 503 per tenant
+    refused = False                     # a 403, or a second 429/503: leave this tenant alone
     try:
         for search in searches:
+            if refused:
+                break
             facets = {"locationCountry": [_WD_COUNTRY_DE]} if facet_ok else {}
             limit = _WD_SEARCH_LIMIT if search else _WD_WALK_LIMIT
             offset = 0
@@ -2829,7 +2887,20 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
                     facets = {}             # tenant rejects the facet: retry plain
                     facet_ok = False        # ...and stop offering it to this tenant
                     continue
+                if r.status_code in (429, 503) and not retried:
+                    retried = True
+                    _wd_note("list", r.status_code, tenant)
+                    wait = _wd_retry_wait(r)
+                    if time.time() + wait < list_stop:
+                        time.sleep(wait)
+                        continue            # the same page once more
+                    refused = True
+                    break
                 if r.status_code != 200:
+                    _wd_note("list", r.status_code, tenant)
+                    # A refusal ends the tenant for this run; any other error
+                    # (404 for one search, a 500) ends only this search.
+                    refused = r.status_code in (403, 429, 503)
                     break
                 data = r.json() or {}
                 postings = data.get("jobPostings", []) or []
@@ -2951,8 +3022,19 @@ def scrape_workday_cxs() -> list[dict]:
     with _WD_STATS_LOCK:
         _WD_STATS.update(searches_skipped=0, details_skipped=0)
         _WD_FACET_IGNORED.clear()
+    _wd_answers_reset()
+    _WD_WARNINGS.clear()
     results = _parallel_collect(_wd_tenants_quick_first(),
                                 lambda e: _workday_cxs_tenant(e, plan["base"], "base"), "WD-CXS")
+    line = _wd_answers_line("WD-CXS")
+    if line:
+        print(line)
+    with _WD_STATS_LOCK:
+        refused = {t for (stage, _s), ts in _WD_ANSWER_TENANTS.items() if stage == "list" for t in ts}
+    if not results and refused:
+        _WD_WARNINGS.append(
+            f"Workday company pages: no jobs from any of the {len(WORKDAY_CXS_TENANTS)} companies, and "
+            f"{len(refused)} of them answered with an error (the run log names the codes and companies).")
     if _WD_FACET_IGNORED:
         print(f"  [WD-CXS] {len(_WD_FACET_IGNORED)} tenants ignore the Germany facet; their "
               f"postings are not labelled Germany: {', '.join(sorted(_WD_FACET_IGNORED))}")
@@ -2974,10 +3056,14 @@ def scrape_workday_cxs_fulltime() -> list[dict]:
     with _WD_STATS_LOCK:
         _WD_STATS.update(searches_skipped=0, details_skipped=0)
     known = frozenset(_WD_BASE_URLS)
+    _wd_answers_reset()
     results = _parallel_collect(_wd_tenants_quick_first(),
                                 lambda e: _workday_cxs_tenant(e, plan["fulltime"], "fulltime", known), "WD-CXS-FT")
     print(f"  [WD-CXS-FT] {len(results)} entry-level full-time jobs in {time.time() - t0:.0f}s "
           f"(budget {_WD_FT_BUDGET_SECONDS}s)")
+    line = _wd_answers_line("WD-CXS-FT")
+    if line:
+        print(line)
     if _WD_STATS["searches_skipped"] or _WD_STATS["details_skipped"]:
         print(f"  [WD-CXS-FT] time limit reached: {_WD_STATS['searches_skipped']} search passes and "
               f"{_WD_STATS['details_skipped']} detail fetches skipped")
@@ -4419,7 +4505,17 @@ _LI_NRW = "North Rhine-Westphalia, Germany"
 # "Internship" 59 and 56 and shared 56; the English words added two school
 # placements and nothing else. Each list costs about 30 requests for six hours.
 _LI_POOLS_NRW = ("Werkstudent", "Praktikum")
-_LI_POOLS_GERMANY: tuple = ("Werkstudent", "Praktikum")
+# Empty again since 19 November 2026. With "Werkstudent" and "Praktikum" for
+# all of Germany on, five reads in a row (18 November 13:30 to 19 November
+# 10:00) never finished either list: they came after the first pages of the
+# keyword searches and LinkedIn's allowance ran out first (0, 0, 0, 120 and
+# 160 cards while their window grew to 28 hours). Read first they would not
+# fit either: at three times the NRW size they need 100 to 230 requests a
+# read, and from 18 November 11:58 on LinkedIn refused every read within its
+# first 1 to 17 requests and then about every fifth, so a read got 96 to 176.
+# The NRW lists finished in every read. Remote and hybrid student roles
+# elsewhere come from the keyword searches (_LI_REMOTE_QUERIES among them).
+_LI_POOLS_GERMANY: tuple = ()
 # Part-time (owner, 2026-11-18: "also adds the ones with part time"). Not as a
 # list: "Teilzeit" in NRW alone had more than 118 postings in one hour (the
 # measurement was refused before the end), 5 of them with tech work in the
@@ -4435,6 +4531,11 @@ _LI_NRW_QUERIES = ("Teilzeit Data", "Teilzeit Informatik", "Teilzeit Softwareent
 _LI_PART_TIME_QUERIES = ("Teilzeit KI", "Teilzeit Machine Learning", "Teilzeit Business Intelligence",
                          "Teilzeit Remote Data", "Teilzeit Homeoffice Informatik", "Part-time Remote Data",
                          "Part-time Machine Learning")
+# Student roles with the words of remote and hybrid work, for all of Germany
+# (2026-11-19): what the lists for all of Germany were meant to bring, as
+# keyword searches LinkedIn ranks over the whole ad text.
+_LI_REMOTE_QUERIES = ("Werkstudent remote", "Werkstudent Homeoffice", "Working Student remote",
+                      "Praktikum remote", "Internship remote")
 # Words LinkedIn answers with the same postings as a list word (NRW, 17
 # November: "Working Student" and "Werkstudent" kept 59 and 62 cards and
 # shared 55, "Internship" and "Praktikum" 56 and 59 and shared 56).
@@ -4490,7 +4591,8 @@ def _linkedin_plan() -> list[dict]:
     pool_words = tuple(w.lower() for w in _LI_POOLS_GERMANY)
     pool_words += tuple(a for w in pool_words for a in _LI_POOL_ALSO.get(w, ()))
     taken: set[str] = set()
-    for query in list(_queries_by_form()) + list(_LI_GUEST_QUERIES) + list(_LI_PART_TIME_QUERIES):
+    for query in (list(_queries_by_form()) + list(_LI_GUEST_QUERIES) + list(_LI_PART_TIME_QUERIES)
+                  + list(_LI_REMOTE_QUERIES)):
         name = " ".join(query.lower().split())
         if name in taken:
             continue
@@ -4535,6 +4637,24 @@ def _li_ask(s: dict) -> tuple[str, str]:
     return "ok", r.text or ""
 
 
+def _li_search_yield(plan: list[dict], found_by: dict, row_known: dict) -> dict:
+    """Per search read in this run: [pages answered, postings found, postings
+    no other search found, of those the ones not seen before]. A search that
+    keeps finding nothing of its own only repeats the others: over several
+    runs these numbers say which searches can go."""
+    found, only, only_new = Counter(), Counter(), Counter()
+    for url, keys in found_by.items():
+        for key in keys:
+            found[key] += 1
+        if len(keys) == 1:
+            (key,) = keys
+            only[key] += 1
+            if url in row_known and not row_known[url]:
+                only_new[key] += 1
+    return {s["key"].split("|", 1)[1]: [s["pages"], found[s["key"]], only[s["key"]], only_new[s["key"]]]
+            for s in plan if s.get("pages")}
+
+
 def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
     """LinkedIn's public job search in one paced lane (see above). An email
     run (`with_inbox`) puts the postings that the LinkedIn-only reads found
@@ -4572,6 +4692,10 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
 
     started = _li_clock()
     seen_urls: set[str] = {r["url"] for r in waiting}
+    # Which searches found each posting, and whether its row was seen before:
+    # the record that tells which searches only repeat others (2026-11-19).
+    found_by: dict[str, set] = {}
+    row_known: dict[str, bool] = {}
     counts: Counter = Counter()
     tally = [0, 0, 0]                    # descriptions fetched, needed, skipped on title
     batch: list[dict] = []
@@ -4647,6 +4771,9 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
             counts["eased"] += 1
         counts["cards"] += n_cards
         counts["cards_unread"] += n_cards - len(cards)
+        s["pages"] = s.get("pages", 0) + 1
+        for c in cards:
+            found_by.setdefault(c["url"], set()).add(s["key"])
         new = [c for c in cards if c["url"] not in s["ids"]]
         s["ids"].update(c["url"] for c in cards)
         s["offset"] += n_cards
@@ -4674,6 +4801,7 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
                 # From a list that is read to its end: when it was read as
                 # planned before, a card not seen yet is new on it.
                 row["_board"] = s["key"]
+            row_known[c["url"]] = row["id"] in KNOWN_JOB_IDS
             batch.append(row)
         if not new or n_cards < _LI_PAGE_SIZE:
             s["status"] = "end"
@@ -4699,8 +4827,10 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
         for s in plan:
             sweep.record(s["key"], s["status"] in _LI_DONE, s["hours"], s["status"], read=s["offset"])
     reasons = Counter(s["status"] for s in cut)
+    per_search = _li_search_yield(plan, found_by, row_known)
     LINKEDIN_REPORT.update({
         "searches": len(plan), "done": len(plan) - len(cut), "cut_short": len(cut), "halt": halt,
+        "per_search": per_search,
         "reasons": dict(reasons),
         "requests": counts["requests"], "refusals": refusals, "waited_s": counts["waited"],
         "cards": counts["cards"], "kept": len(results) - len(waiting), "known": counts["known"],
@@ -4731,6 +4861,10 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
           + (f", {counts['texts_left']} left for later (the time was up)" if counts["texts_left"] else ""))
     if with_inbox:
         print(f"  [LinkedIn] {len(waiting)} postings from the LinkedIn reads in between, not seen yet")
+    if per_search:
+        alone = sum(1 for v in per_search.values() if v[2] == 0)
+        print(f"  [LinkedIn] of {len(per_search)} searches read, {alone} found nothing no other search found"
+              f" (the numbers per search are in the run statistics)")
     if counts["nrw_cards"] >= 20 and counts["nrw_in_state"] * 10 < counts["nrw_cards"] * 3:
         print(f"  [LinkedIn] note: only {counts['nrw_in_state']} of {counts['nrw_cards']} cards of the "
               f"NRW lists name the state: the location may not be honoured")
@@ -5685,10 +5819,12 @@ _CSB_SITEMAP_FILES = 4      # child sitemaps read when the root is an index
 
 
 def _csb_sitemap_links(host: str) -> dict[str, str]:
-    """{job URL: title from the slug} for student-type jobs in the host's
-    sitemap. Replaces the RSS feed on 2026-11-13: robots.txt disallows
-    /services/ on all 13 CSB hosts, and the sitemap is allowed and lists the
-    same postings (HDI: 23 student-type URLs that day)."""
+    """{job URL: title} for student-type jobs in the host's sitemap. Replaces
+    the RSS feed on 2026-11-13: robots.txt disallows /services/ on all 13 CSB
+    hosts, and the sitemap is allowed and lists the same postings (HDI: 23
+    student-type URLs that day). Deloitte's /sitemap.xml is itself an RSS feed,
+    so from 13 November its sitemap gave nothing, and with the broken link join
+    in scrape_csb its search gave nothing either: 0 roles until 19 November."""
     out: dict[str, str] = {}
     try:
         r = _guarded_get(f"{host}/sitemap.xml", headers=HEADERS, timeout=25)
@@ -5702,15 +5838,33 @@ def _csb_sitemap_links(host: str) -> dict[str, str]:
                 rr = _guarded_get(_html.unescape(u.strip()), headers=HEADERS, timeout=25)
                 if rr.status_code == 200:
                     text += rr.text
-        for loc in re.findall(r"<loc>([^<]+)</loc>", text):
-            u = _html.unescape(loc.strip())
+        pairs = [(_html.unescape(loc.strip()), "") for loc in re.findall(r"<loc>([^<]+)</loc>", text)]
+        if not pairs:
+            # Some hosts serve their RSS feed at /sitemap.xml (Deloitte: 590
+            # items, no <loc>, on 2026-11-19); each item has the link and the
+            # real title.
+            pairs = _csb_rss_items(text)
+        for u, item_title in pairs:
             slug = urllib.parse.unquote(urllib.parse.urlsplit(u).path)
             if "/job/" not in slug or not _CSB_STUDENT_SLUG.search(slug.replace("-", " ")):
                 continue
             seg = slug.split("/job/", 1)[1].strip("/").split("/")[0]
-            out[u] = re.sub(r"\s+", " ", seg.replace("-", " ")).strip()
+            out[u] = item_title or re.sub(r"\s+", " ", seg.replace("-", " ")).strip()
     except Exception:
         pass
+    return out
+
+
+def _csb_rss_items(text: str) -> list[tuple[str, str]]:
+    """(link, title) of every <item> in an RSS feed."""
+    out = []
+    for item in re.findall(r"<item>(.*?)</item>", text or "", re.S):
+        link = re.search(r"<link>\s*(?:<!\[CDATA\[\s*)?([^<\s\]]+)\s*(?:\]\]>)?\s*</link>", item)
+        if not link:
+            continue
+        title = re.search(r"<title>(.*?)</title>", item, re.S)
+        title = re.sub(r"^\s*<!\[CDATA\[|\]\]>\s*$", "", title.group(1)) if title else ""
+        out.append((_html.unescape(link.group(1)), re.sub(r"\s+", " ", _html.unescape(title)).strip()))
     return out
 # "Student" catches the English "Working student" phrasing Uniper and Vodafone use.
 # "Student" first (2026-10-04): links are queued in query order and the cap
@@ -5739,7 +5893,11 @@ def scrape_csb() -> list[dict]:
                     if not href or href in seen:
                         continue
                     seen.add(href)
-                    full = href if href.startswith("http") else host.split("/jobs")[0] + href
+                    # urljoin, not host.split("/jobs"): on a host that starts
+                    # with "jobs." (Bayer, Uniper, SWD, Deloitte, RWE) the split
+                    # cut at "//jobs." and a relative link became
+                    # "https://job/..." (2026-11-19).
+                    full = href if href.startswith("http") else urllib.parse.urljoin(host + "/", href)
                     hrefs.append(full)      # Germany-wide since 2026-09-07
                 time.sleep(0.5)
             # The sitemap adds what the HTML search misses (NRW.BANK's search
@@ -6351,7 +6509,13 @@ def scrape_all() -> list[dict]:
         scrape_join,               # join.com (best-effort, no confirmed public endpoint)
         scrape_company_pages,      # Generic German company pages (restored, noisy but attempted)
         scrape_brave_search,       # Brave web search API
-        scrape_web_search,         # DuckDuckGo web search
+        # scrape_web_search OFF since 2026-11-19 (owner's word): the
+        # duckduckgo_search library sends these searches to bing.com/search,
+        # which robots.txt disallows for every user agent, and its requests
+        # bypass _guarded_get, so the robots rule was never applied to them.
+        # The Brave API source above runs the same 24 queries (24 of 24
+        # answered in every run that week). Name in main._RETIRED_SOURCES.
+        # scrape_web_search,       # DuckDuckGo / Bing web search
     ]
 
     # LinkedIn is asked by ONE lane. With the paced lane on, python-jobspy
