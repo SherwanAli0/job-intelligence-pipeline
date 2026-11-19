@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,392 offline tests (`pytest --collect-only -q`, 2026-11-18), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,396 offline tests (`pytest --collect-only -q`, 2026-11-19), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -754,7 +754,9 @@ few plain requests to each site).
   remote and home-office words instead, and every read now records, per search, the pages
   answered, the postings found, the postings no other search found and how many of those
   were new (`per_search` in the run statistics): the searches that only repeat others can
-  be cut on that record.
+  be cut on that record. As before 18 November, every keyword search gets its first page
+  before any gets a second (with the lists for all of Germany on, those with their words
+  had waited until last).
 - **Deloitte** had given 0 roles since 14 November. The career-site scraper joined a relative
   link as `host.split("/jobs")[0] + href`, which on a host starting with "jobs." gave
   `https://job/...`, and Deloitte's `/sitemap.xml` is an RSS feed without `<loc>` entries,
@@ -764,7 +766,8 @@ few plain requests to each site).
 - **Workday company pages** fell from about 1,250 jobs to between 0 and 26 with nothing in
   the log. An answer other than 200 ended a company silently. Every such answer is now
   counted and the log names the codes and companies; after a 429 or 503 a company waits
-  once (Retry-After, at most 60 s) and asks again; a run in which no company gave a job
+  once (Retry-After, at most 60 s) and asks again; a 403, or a second 429 or 503, leaves
+  the company alone for the rest of the pass; a run in which no company gave a job
   and some answered with errors puts a warning in the digest. The cause itself shows in
   the next runs' logs.
 - **Web search.** The DuckDuckGo search library sent the 24 searches to bing.com/search,
@@ -839,7 +842,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,392 collected, run in CI on every push | 2026-11-18 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,396 collected, run in CI on every push | 2026-11-19 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

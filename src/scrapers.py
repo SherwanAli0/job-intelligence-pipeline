@@ -2689,7 +2689,9 @@ def _wd_count(key: str, n: int = 1) -> None:
 # source fell from about 1,250 jobs (13 and 15 November) to between 0 and 26
 # with nothing in the log to say why. Now every one is counted and the log
 # names the tenants; after a 429 or 503 a tenant waits once (Retry-After, at
-# most _WD_RETRY_CAP seconds) and asks again.
+# most _WD_RETRY_CAP seconds) and asks again. A 403, or a second 429 or 503,
+# leaves the tenant alone for the rest of the pass instead of asking it once
+# more for every search string; any other error ends only that search.
 _WD_ANSWERS: Counter = Counter()
 _WD_ANSWER_TENANTS: dict = {}
 _WD_RETRY_CAP = 60
@@ -2861,8 +2863,11 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
     facet_ok = True                     # until the tenant answers 400 to it
     facet_judged = False                # the first faceted reply with postings decides
     retried = False                     # one wait after a 429 or 503 per tenant
+    refused = False                     # a 403, or a second 429/503: leave this tenant alone
     try:
         for search in searches:
+            if refused:
+                break
             facets = {"locationCountry": [_WD_COUNTRY_DE]} if facet_ok else {}
             limit = _WD_SEARCH_LIMIT if search else _WD_WALK_LIMIT
             offset = 0
@@ -2889,9 +2894,13 @@ def _workday_cxs_tenant(entry, deadlines=None, mode="all", known=frozenset()) ->
                     if time.time() + wait < list_stop:
                         time.sleep(wait)
                         continue            # the same page once more
+                    refused = True
                     break
                 if r.status_code != 200:
                     _wd_note("list", r.status_code, tenant)
+                    # A refusal ends the tenant for this run; any other error
+                    # (404 for one search, a 500) ends only this search.
+                    refused = r.status_code in (403, 429, 503)
                     break
                 data = r.json() or {}
                 postings = data.get("jobPostings", []) or []
@@ -5850,7 +5859,7 @@ def _csb_rss_items(text: str) -> list[tuple[str, str]]:
     """(link, title) of every <item> in an RSS feed."""
     out = []
     for item in re.findall(r"<item>(.*?)</item>", text or "", re.S):
-        link = re.search(r"<link>\s*([^<\s]+)\s*</link>", item)
+        link = re.search(r"<link>\s*(?:<!\[CDATA\[\s*)?([^<\s\]]+)\s*(?:\]\]>)?\s*</link>", item)
         if not link:
             continue
         title = re.search(r"<title>(.*?)</title>", item, re.S)

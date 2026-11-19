@@ -51,6 +51,11 @@ class TestDeloitte:
             "https://jobs.deloitte.de/job/mehrere-Standorte-Praktikant-M&A-%28mwd%29/222/": "Praktikant M&A (m/w/d)",
         }
 
+    def test_a_feed_link_in_cdata_is_read_too(self):
+        feed = ("<rss><channel><item><title>Werkstudent IT</title>"
+                "<link><![CDATA[https://jobs.example.de/job/Koeln-Werkstudent-IT/5/]]></link></item></channel></rss>")
+        assert scrapers._csb_rss_items(feed) == [("https://jobs.example.de/job/Koeln-Werkstudent-IT/5/", "Werkstudent IT")]
+
     def test_an_ordinary_sitemap_reads_as_before(self, monkeypatch):
         xml = ("<urlset><url><loc>https://jobs.rwe.com/job/Essen-Working-Student-IT-Security/9/</loc></url>"
                "<url><loc>https://jobs.rwe.com/job/Essen-Senior-Engineer/8/</loc></url></urlset>")
@@ -131,6 +136,23 @@ class TestWorkday:
         assert scrapers._workday_cxs_tenant(ENTRY, mode="base") == []
         assert wd.sleeps.count(30.0) == 1 and wd.posts == 2
         assert scrapers._WD_ANSWERS == {("list", 429): 2}
+
+    def test_a_tenant_that_keeps_refusing_is_left_alone_for_its_other_searches(self, monkeypatch):
+        wd = _Workday(monkeypatch, [(429, {})] * 40)
+        assert scrapers._workday_cxs_tenant(("acme", "wd3", "Careers"), mode="base") == []
+        assert wd.posts == 2 and wd.sleeps.count(30.0) == 1
+        assert scrapers._WD_ANSWERS == {("list", 429): 2}
+
+    def test_a_403_ends_the_tenant_at_once(self, monkeypatch):
+        wd = _Workday(monkeypatch, [(403, {})] * 40)
+        scrapers._workday_cxs_tenant(("acme", "wd3", "Careers"), mode="base")
+        assert wd.posts == 1 and wd.sleeps == []
+
+    def test_another_error_ends_only_that_search(self, monkeypatch):
+        wd = _Workday(monkeypatch, [(404, {})] * 40)
+        scrapers._workday_cxs_tenant(("acme", "wd3", "Careers"), mode="base")
+        assert wd.posts == len(scrapers._WD_STUDENT_SEARCHES) + 1        # every search asked once
+        assert scrapers._WD_ANSWERS == {("list", 404): wd.posts}
 
     def test_a_wait_past_the_time_limit_is_not_started(self, monkeypatch):
         wd = _Workday(monkeypatch, [(429, {"Retry-After": "50"})])
