@@ -4427,12 +4427,25 @@ def scrape_linkedin_guest() -> list[dict]:
 #      NRW had 272 results for six evening hours, 93 of them with a student
 #      or intern title, and those stood anywhere in it (ranks 201 to 250
 #      still held 14), so there is no point at which it can be left early.
-#   2. The first page of every keyword search that no Germany list covers.
+#   2. (Until 24 November 2026: the first page of every keyword search.)
 #   3. Lists for all of Germany, read to the end (_LI_POOLS_GERMANY).
 #   4. The keyword searches (config.SEARCH_QUERIES and the guest queries),
-#      page by page across all of them, to _LI_DEPTH. LinkedIn ranks them
-#      over the whole ad text, so they find the posting whose title says
-#      nothing.
+#      ONE AT A TIME, each to its end or to _LI_DEPTH, the search that has
+#      waited longest first; the ones a read does not reach go first in the
+#      next. LinkedIn ranks them over the whole ad text, so they find the
+#      posting whose title says nothing.
+#      Until 24 November 2026 every read took the first page of each search
+#      and then went page by page across all of them: LinkedIn's allowance
+#      (70 to 140 requests a read) ran out on the first pages, 112 of 114
+#      searches were cut short in every run, and the keyword searches had
+#      not been read to the end for 124 to 159 hours. Over nine email runs
+#      the first pages (335 of them) brought 56 postings no other search
+#      found, while 15 deeper pages of three searches read from a home
+#      address held 25 new postings the pipeline had never seen. Page one is
+#      ranked, not new: depth finds what breadth does not.
+#      A keyword search asks for what it has not read to its end, but never
+#      for more than the age rule lets through (48 hours, a week for an
+#      internship search): older postings fail that rule anyway.
 # A list holds every posting with its word, most of them no tech work, and
 # each kept card costs a description fetch. A list therefore keeps only the
 # cards whose title names tech work (TITLE_IS_TECH, set by main.node_scrape).
@@ -4479,7 +4492,10 @@ _LI_PACE = float(os.environ.get("JOBHUNTER_LINKEDIN_PACE", "3"))          # seco
 # between. Five pages for each of the 93 keyword searches are 465 requests,
 # the two NRW lists around 100 more, about 37 minutes. A search the lane
 # cannot finish keeps its place for the next run (sweep.py).
-_LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "50"))
+# Since 24 November 2026 a keyword search is read to its end (see above), so
+# this is only the most one search may take in one read: 200 results, 20
+# requests, a fifth of a daytime read, so one broad search cannot eat a read.
+_LI_DEPTH = int(os.environ.get("JOBHUNTER_LINKEDIN_DEPTH", "200"))
 # The lane's time, waits and description fetches included. python-jobspy's
 # LinkedIn lane ran for about 33 minutes of a run (the 14 minutes of the
 # other sources plus 19 on its own); the scrape as a whole took 40.
@@ -4607,18 +4623,20 @@ def _linkedin_plan() -> list[dict]:
 
 
 def _li_order(plan: list[dict]):
-    """The searches in the order they are asked, one page per turn."""
+    """The searches in the order they are asked, one page per turn: the lists
+    page by page across each other, then the keyword searches one at a time,
+    each until it is done (see above)."""
     def still_open(stages):
         group = [s for s in plan if s["stage"] in stages and not s["status"]]
         return sorted(group, key=lambda s: -s["unread"])    # cut short last time: first
 
     while still_open((1,)):
         yield from still_open((1,))
-    yield from still_open((2,))                              # one page each for now
     while still_open((3,)):
         yield from still_open((3,))
-    while still_open((2, 4)):
-        yield from still_open((2, 4))
+    for s in still_open((2, 4)):
+        while not s["status"]:
+            yield s
 
 
 def _li_ask(s: dict) -> tuple[str, str]:
@@ -4682,9 +4700,12 @@ def scrape_linkedin(with_inbox: bool = True) -> list[dict]:
         elif s["pool"]:
             hours = min(sweep.window_hours(s["key"], base), max(base, _LI_POOL_HOURS))
         else:
-            # Never less than before: an internship search still looks back a week.
+            # Everything since the search was last read to its end, but never
+            # more than the age rule lets through (an internship search: a week).
+            # Until 24 November 2026 never less than the usual window either, so
+            # a search read to its end an hour before asked for two days again.
             usual = _query_hours_old(s["words"])
-            hours = max(usual, sweep.window_hours(s["key"], usual))
+            hours = min(sweep.window_hours(s["key"], usual), max(usual, _cfg.max_filter_age_hours()))
         # `unread` orders the searches, not `hours`: an internship search asks
         # for a week in every run and would always stand first.
         s.update(hours=int(hours), unread=sweep.hours_unread(s["key"]), offset=0, ids=set(),

@@ -381,11 +381,20 @@ _RE_BAD_DOMAIN = re.compile(
 # titles written for the German job market (see check 5).
 _RE_LOC_COVERS_GERMANY = re.compile(
     r"\b(?:europe|european\s+union|eu|emea|dach|worldwide)\b", re.IGNORECASE)
+# "Remote, Anywhere" and "Remote - Global" include Germany too, unless the
+# location also names a country or region (filters.whole_world_location;
+# 2026-11-24: two "Remote, Anywhere" jobs were dropped as "Germany not confirmed").
 _RE_GERMAN_MARKET_TITLE = re.compile(
     r"werkstudent\w*|praktik\w*|studentische\w*"
     r"|\(\s*[mwfdx]\s*/\s*[mwfdx]\s*/\s*(?:[mwfdx]|div\.?|divers)\s*\)",
     re.IGNORECASE,
 )
+# "Working Student" is the English word for a Werkstudent job, used for the
+# German market almost only (2026-11-24: a "Working Student - Data Engineering
+# & MLOps" with the location "Remote" was dropped as "Germany not confirmed").
+# Almost: it counts only when the ad names no country outside Germany
+# ("Must be authorized to work in the United States").
+_RE_WORKING_STUDENT_TITLE = re.compile(r"\bworking[\s-]+students?\b", re.IGNORECASE)
 
 # A title that names data or ML work (see check 4). "Software" and "developer"
 # are deliberately not here: an embedded job is often titled "Software
@@ -417,11 +426,14 @@ _RE_FREELANCE_DESC = re.compile(
     re.IGNORECASE,
 )
 
-# Web analytics focus - GA4, tag management, etc.
+# Web analytics focus - GA4, tag management, etc. A bare "GTM" is not here:
+# in most ads it means go-to-market (2026-11-24: two strategy and operations
+# roles at a process-mining company were dropped as web analytics for "GTM
+# planning"); Google Tag Manager is matched by its name.
 _RE_WEB_ANALYTICS = re.compile(
     r"\b("
     r"ga4|google\s+analytics\s+4|looker\s+studio|econda|"
-    r"tag\s+management|google\s+tag\s+manager|\bgtm\b|"
+    r"tag\s+management|google\s+tag\s+manager|"
     r"adobe\s+analytics|piano\s+analytics|web\s+tracking|"
     r"tracking\s+pixel|conversion\s+tracking|matomo|"
     r"tag\s+implementation"
@@ -479,6 +491,8 @@ from filters import (
     GERMANY_TERMS as _GERMANY_TERMS,
     REMOTE_COVERS_GERMANY_SIGNALS as _REMOTE_COVERS_GERMANY_SIGNALS,
     REMOTE_LOCKED_OUT_SIGNALS as _REMOTE_LOCKED_OUT_SIGNALS,
+    whole_world_location as _whole_world_location,
+    foreign_hint as _foreign_hint,
     junior_qualifier_in_title as _junior_qualifier_in_title,
     employer_history as _employer_history,
     number_start as _number_start,
@@ -591,6 +605,8 @@ def _requires_fluent_german(d_low: str, text: str | None = None) -> bool:
         window = d_low[window_start:window_end]
         if any(soft in window for soft in _GERMAN_SOFTENING):
             continue  # soft requirement - don't disqualify on this match
+        if evidence.german_or_english(d_low, idx, idx + len(phrase)):
+            continue  # "very good German or English": English is enough
         return True
     # `text` is the description in its original spelling: in a description that
     # arrives as one line, the capital letter of the next list item is the only
@@ -694,12 +710,16 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
     # as "Germany not confirmed").
     germany_in_loc_or_desc = (loc_german or _mentions_germany(desc_2000)
                               or (bool(_RE_GERMAN_MARKET_TITLE.search(title))
-                                  and not _is_foreign_location(loc_low)))
+                                  and not _is_foreign_location(loc_low))
+                              or (bool(_RE_WORKING_STUDENT_TITLE.search(title))
+                                  and not _foreign_hint(loc_low)
+                                  and not _RE_NONGER_LOC.search(desc_2000)))
     # Coverage can stand in the LOCATION as well: "Remote, Europe, USA" and
     # "Remote, EMEA, LATAM, Canada" include Germany. Only the ad text used to
     # be searched, so the USA or LATAM next to it dropped the job.
     remote_covers_de = (any(s in desc_2000 for s in _REMOTE_COVERS_GERMANY_SIGNALS)
-                        or ("remote" in loc_low and bool(_RE_LOC_COVERS_GERMANY.search(loc_low))))
+                        or ("remote" in loc_low and bool(_RE_LOC_COVERS_GERMANY.search(loc_low)))
+                        or ("remote" in loc_low and _whole_world_location(loc_low)))
 
     # Hard veto: explicitly locked out of Germany region
     if any(s in combined_loc for s in _REMOTE_LOCKED_OUT_SIGNALS):
@@ -800,6 +820,11 @@ WORK AUTHORIZATION (highest priority, applied before any other cap)
 The candidate is {F["work_scope"]}. Score 0 to 15 for any role that is US-only,
 US-remote-only, requires US/UK or other non-EU work authorization, or is
 onsite outside Germany with no Germany-remote option.
+Apply this ONLY when the AD ITSELF says so (a citizenship, visa, work-permit or
+clearance demand for another country, or a place of work outside Germany). A
+US or other foreign company hiring for a role located in Germany is NOT a
+work-authorization problem: never infer one from the employer's nationality,
+its headquarters or its global programme.
 
 LOCATION: the candidate studies in {F["study_city"]}. His rule (2026-09-07): remote or
 hybrid roles ANYWHERE in Germany, on-site roles only in North Rhine-
@@ -833,7 +858,10 @@ CAP AT 15 if the role is the WRONG employment form:
   included - at entry or junior level (seniority is handled by the caps
   below).
 - A working-student role that also offers a thesis is still a working-student
-  role.
+  role, and an ad that offers an internship OR a thesis ("Thesis / Internship",
+  "Intern / Bachelor / Master Thesis", "Praktikum oder Abschlussarbeit") is an
+  internship: score it as one. Only an ad that offers nothing but a thesis gets
+  this cap.
 - Do NOT apply this cap merely because the ad is vague about hours. Only
   apply it when the ad EXPLICITLY states a form from the excluded list above.
 
@@ -978,7 +1006,7 @@ UNIVERSAL BOOSTS (apply regardless of track):
 PENALTIES \u2014 subtractive, applied AFTER caps and boosts
 \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
 
--15: Ad restricts to students of a DIFFERENT field ("enrolled in business administration / mechanical engineering / law") with no computer-science/AI/data option listed
+-15: Ad restricts to students of a DIFFERENT field ("enrolled in business administration / mechanical engineering / law") with no computer-science/AI/data option listed. {F["candidate_name"]}'s studies are in the computer-science family: an ad that lists computer science (Informatik), data science, artificial intelligence, software engineering, or "a comparable / related field" among the accepted fields INCLUDES him, so never cap or penalise him for his field of study then
 
 -10: Ad demands more than 20h/week during the lecture period. NOTE: this does NOT apply to regular full-time roles or to internships, which are commonly full-time for a fixed block and can be taken in the semester break or as a Pflichtpraktikum
 

@@ -770,10 +770,42 @@ def _under_soft_heading(t: str, pos: int) -> bool:
     return False
 
 
+# German offered as an alternative to English is no German demand: "very good
+# German or English", "good command of German or English", "English or German",
+# "Deutsch- oder Englischkenntnisse", "German and/or English". With "and" both
+# are demanded and the rule stays. (2026-11-24: an AI internship and a vision
+# internship were dropped as "German above B1" for exactly these wordings.)
+# A word between German and the "or" (a level, "skills") or between the "or"
+# and English ("fluent"); never "and" or another language: "German or Spanish
+# and English", "German and French or English" still demand German.
+_ALT_OTHER = (r"and|und|sowie|plus|as|french|franz\w*|spanish|spanisch\w*|italian|italienisch\w*|dutch"
+              r"|niederl\w*|polish|polnisch\w*|portuguese|portugiesisch\w*|russian|russisch\w*|turkish"
+              r"|t(?:ü|ue)rkisch\w*|arabic|arabisch\w*|chinese|chinesisch\w*|japanese|japanisch\w*")
+_ALT_TOKEN = rf"(?!(?:{_ALT_OTHER})\b)[^\s,;.:!?]+"
+# Nothing but spaces, brackets and dashes before the first word: no sentence
+# break between German and the "or" ("fluent German. Or English speakers").
+_RE_ALT_ENGLISH_AFTER = re.compile(
+    rf"^[\s()\[\]/-]*(?:{_ALT_TOKEN}\s+){{0,3}}?(?:or|oder|and/or|und/oder)\s+(?:{_ALT_TOKEN}\s+){{0,3}}?"
+    r"(?:english|englisch)",
+    re.IGNORECASE)
+_RE_ALT_ENGLISH_BEFORE = re.compile(
+    rf"(?:english|englisch)[\w-]*\s+(?:or|oder|and/or|und/oder)\s+(?:{_ALT_TOKEN}\s+){{0,3}}?\W*$", re.IGNORECASE)
+
+
+def german_or_english(text: str, start: int, end: int) -> bool:
+    """True when the German named at text[start:end] stands as an alternative
+    to English ("German or English", "English or German")."""
+    after = text[end:end + 60]
+    before = text[max(0, start - 60):start]
+    return bool(_RE_ALT_ENGLISH_AFTER.match(after) or _RE_ALT_ENGLISH_BEFORE.search(before))
+
+
 def _demand_is_soft(t: str, m) -> bool:
     """True when the ad presents this language demand as a plus, optional or not
     required. Softeners count only inside the demand's own comma-clause; behind a
     new item ("... Deutschkenntnisse und idealerweise SAP-Erfahrung") they do not."""
+    if _DEMAND_FORMS.get(m.group(1)) == "german" and german_or_english(t, m.start(), m.end()):
+        return True                                   # "German or English": English is enough
     floor = max(0, m.start() - 90)
     breaks = [b.end() for b in _RE_HARD_BREAK.finditer(t, floor, m.start())]
     lo = max([floor] + breaks)

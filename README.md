@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,396 offline tests (`pytest --collect-only -q`, 2026-11-19), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,455 offline tests (`pytest --collect-only -q`, 2026-11-24), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -776,6 +776,41 @@ few plain requests to each site).
 
 [tests/test_sources_fixes_1119.py](tests/test_sources_fixes_1119.py) covers the four.
 
+## A check of five days of runs (24 November 2026)
+
+Every ad the pipeline emailed, scored or dropped from 20 to 24 November was read again, and
+three LinkedIn searches were read deeper from another address.
+
+- **LinkedIn keyword searches are read one at a time, each to its end.** Before, every read
+  took the first page of each keyword search and then went page by page across all of them.
+  LinkedIn's allowance (70 to 140 requests a read) ran out on the first pages: 112 of 114
+  searches were cut short in every run, and the keyword searches had not been read to their
+  end for 124 to 159 hours. Over nine email runs the first pages (335) brought 56 postings no
+  other search found; 15 deeper pages of three searches held 25 new postings the pipeline
+  had never seen. Now, after the two NRW lists, the search that has waited longest is read
+  to its end (at most 200 results), then the next; what a read does not reach goes first in
+  the next one. A keyword search asks for what it has not read to its end, but never for
+  more than the age rule lets through (48 hours, a week for an internship search), and no
+  longer for a whole day or week again right after it was read.
+- **Pre-screen.** "very good German or English" and "German or English" are no German demand
+  (English is enough); "Remote, Anywhere", "Worldwide" and "Global" include Germany (not
+  "anywhere in the US"); a "Working Student" title places a remote job in Germany like
+  "Werkstudent"; a bare "GTM" no longer counts as Google Tag Manager (it is mostly
+  go-to-market).
+- **Location filter.** "GER" as the country at the end of a location counts as Germany
+  ("Heidelberg, GER", not "Austin, TX, GER"), a German place in the location is enough,
+  and a foreign city in the first lines of the ad no longer drops a job whose ad names
+  Germany as well ("Heidelberg (Germany) or San Francisco Bay Area (USA)").
+- **Scoring prompt.** A work-permit cap only when the ad itself asks for one (an internship in
+  Munich had been capped for a US permit its ad does not mention); an ad that offers an
+  internship or a thesis is an internship; a candidate in the computer-science family is not
+  penalised when the ad lists computer science, data science, AI, software engineering or a
+  related field.
+
+[tests/test_scorer_fixes_1124.py](tests/test_scorer_fixes_1124.py) covers the pre-screen,
+the location filter and the prompt rules; the LinkedIn order is in
+[tests/test_full_daily_sweep.py](tests/test_full_daily_sweep.py).
+
 ## Evidence retrieval (RAG)
 
 An optional layer that checks every job against what the candidate can actually show. For
@@ -842,7 +877,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,396 collected, run in CI on every push | 2026-11-19 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,455 collected, run in CI on every push | 2026-11-24 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |

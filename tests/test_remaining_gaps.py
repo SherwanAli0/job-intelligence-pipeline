@@ -79,12 +79,12 @@ def _filter(monkeypatch, jobs, state=None):
     return out, {r["id"]: r for r in main._RUN_AUDIT}
 
 
-# -- 1. LinkedIn: five pages --------------------------------------------------------
+# -- 1. LinkedIn: five pages (since 24 November 2026: to the end, at most twenty) ----
 class TestLinkedInReadsFivePagesAgain:
-    def test_every_keyword_search_is_planned_five_pages_deep(self):
+    def test_every_keyword_search_is_planned_to_its_end_up_to_twenty_pages(self):
         plan = scrapers._linkedin_plan()
-        assert scrapers._LI_DEPTH == 50
-        assert {s["depth"] for s in plan if not s["pool"]} == {50}
+        assert scrapers._LI_DEPTH == 200
+        assert {s["depth"] for s in plan if not s["pool"]} == {200}
 
     def test_the_lane_has_forty_minutes(self):
         assert scrapers._LI_SECONDS == 2400
