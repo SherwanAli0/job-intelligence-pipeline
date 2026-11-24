@@ -393,8 +393,19 @@ _RE_GERMAN_MARKET_TITLE = re.compile(
 # German market almost only (2026-11-24: a "Working Student - Data Engineering
 # & MLOps" with the location "Remote" was dropped as "Germany not confirmed").
 # Almost: it counts only when the ad names no country outside Germany
-# ("Must be authorized to work in the United States").
+# ("Must be authorized to work in the United States") and asks for no work
+# permit or citizenship of another country ("US citizens only", "Must have a
+# US work permit", "Eligible to work in the UK").
 _RE_WORKING_STUDENT_TITLE = re.compile(r"\bworking[\s-]+students?\b", re.IGNORECASE)
+_FOREIGN_COUNTRY = r"(?:u\.s\.?|usa|united\s+states|us|uk|united\s+kingdom|canada|australia|india)"
+_RE_FOREIGN_WORK_AUTH = re.compile(
+    r"(?:citizen\w*|work\s+permit|work\s+authori[sz]ation|authori[sz]ed\s+to\s+work|eligib\w*\s+to\s+work"
+    r"|right\s+to\s+work|green\s+card|security\s+clearance|visa)"
+    rf"(?:[ \t]+[^\s.]+){{0,4}}?[ \t]+in[ \t]+(?:the[ \t]+)?{_FOREIGN_COUNTRY}\b"
+    r"|\b(?:u\.s\.?|usa|united\s+states|us|uk|united\s+kingdom|canada|canadian|american|british|australian"
+    r"|indian)\b[ \t]+(?:[^\s.]+[ \t]+){0,2}?(?:citizen\w*|work\s+permit|work\s+authori[sz]ation|green\s+card"
+    r"|security\s+clearance|passport)",
+    re.IGNORECASE)
 
 # A title that names data or ML work (see check 4). "Software" and "developer"
 # are deliberately not here: an embedded job is often titled "Software
@@ -713,7 +724,8 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
                                   and not _is_foreign_location(loc_low))
                               or (bool(_RE_WORKING_STUDENT_TITLE.search(title))
                                   and not _foreign_hint(loc_low)
-                                  and not _RE_NONGER_LOC.search(desc_2000)))
+                                  and not _RE_NONGER_LOC.search(desc_2000)
+                                  and not _RE_FOREIGN_WORK_AUTH.search(desc_2000)))
     # Coverage can stand in the LOCATION as well: "Remote, Europe, USA" and
     # "Remote, EMEA, LATAM, Canada" include Germany. Only the ad text used to
     # be searched, so the USA or LATAM next to it dropped the job.
