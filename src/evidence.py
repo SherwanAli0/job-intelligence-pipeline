@@ -782,14 +782,17 @@ _ALT_OTHER = (r"and|und|sowie|plus|as|french|franz\w*|spanish|spanisch\w*|italia
               r"|niederl\w*|polish|polnisch\w*|portuguese|portugiesisch\w*|russian|russisch\w*|turkish"
               r"|t(?:ü|ue)rkisch\w*|arabic|arabisch\w*|chinese|chinesisch\w*|japanese|japanisch\w*")
 _ALT_TOKEN = rf"(?!(?:{_ALT_OTHER})\b)[^\s,;.:!?]+"
-# Nothing but spaces, brackets and dashes before the first word: no sentence
-# break between German and the "or" ("fluent German. Or English speakers").
+# Nothing but spaces, brackets and dashes before the first word and no line
+# break anywhere: no sentence or paragraph between German and the "or"
+# ("fluent German. Or English speakers"). "English-speaking" is no language
+# demand at all ("German or English-speaking customers").
 _RE_ALT_ENGLISH_AFTER = re.compile(
-    rf"^[\s()\[\]/-]*(?:{_ALT_TOKEN}\s+){{0,3}}?(?:or|oder|and/or|und/oder)\s+(?:{_ALT_TOKEN}\s+){{0,3}}?"
-    r"(?:english|englisch)",
+    rf"^[ \t()\[\]/-]*(?:{_ALT_TOKEN}[ \t]+){{0,3}}?(?:or|oder|and/or|und/oder)[ \t]+"
+    rf"(?:{_ALT_TOKEN}[ \t]+){{0,3}}?(?:english|englisch)(?![\w-]*[ \t]*speaking)",
     re.IGNORECASE)
 _RE_ALT_ENGLISH_BEFORE = re.compile(
-    rf"(?:english|englisch)[\w-]*\s+(?:or|oder|and/or|und/oder)\s+(?:{_ALT_TOKEN}\s+){{0,3}}?\W*$", re.IGNORECASE)
+    rf"(?:english|englisch)[\w-]*[ \t]+(?:or|oder|and/or|und/oder)[ \t]+(?:{_ALT_TOKEN}[ \t]+){{0,3}}?[^\w\n]*$",
+    re.IGNORECASE)
 
 
 def german_or_english(text: str, start: int, end: int) -> bool:

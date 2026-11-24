@@ -393,8 +393,45 @@ _RE_GERMAN_MARKET_TITLE = re.compile(
 # German market almost only (2026-11-24: a "Working Student - Data Engineering
 # & MLOps" with the location "Remote" was dropped as "Germany not confirmed").
 # Almost: it counts only when the ad names no country outside Germany
-# ("Must be authorized to work in the United States").
+# ("Must be authorized to work in the United States") and asks for no work
+# permit or citizenship of another country ("US citizens only", "Must have a
+# US work permit", "Eligible to work in the UK").
 _RE_WORKING_STUDENT_TITLE = re.compile(r"\bworking[\s-]+students?\b", re.IGNORECASE)
+# A bare "us" is a country only as "the US" or right before the permit word
+# ("US citizens"): "please let us know your work permit status" and "tell us
+# about your citizenship" ask nothing of another country.
+_FOREIGN_COUNTRY = (r"(?:the[ \t]+u\.?s\.?a?|u\.s\.a?\.?|usa|(?:the[ \t]+)?united[ \t]+states|(?:the[ \t]+)?uk"
+                    r"|(?:the[ \t]+)?united[ \t]+kingdom|canada|australia|india)")
+_PERMIT = (r"(?:citizen\w*|work[ \t]+permit|work[ \t]+authori[sz]ation|green[ \t]+card|security[ \t]+clearance"
+           r"|permanent[ \t]+residen\w*)")
+_RE_FOREIGN_WORK_AUTH = re.compile(
+    r"(?:citizen\w*|work[ \t]+permit|work[ \t]+authori[sz]ation|authori[sz]ed[ \t]+to[ \t]+work"
+    r"|eligib\w*[ \t]+to[ \t]+work|right[ \t]+to[ \t]+work|green[ \t]+card|security[ \t]+clearance|visa"
+    r"|residen\w*|reside)"
+    rf"(?:[ \t]+[^\s.]+){{0,4}}?[ \t]+(?:in|for|of|within)[ \t]+{_FOREIGN_COUNTRY}\b"
+    rf"|\bus[ \t]+{_PERMIT}"
+    r"|\b(?:u\.s\.a?\.?|usa|united[ \t]+states|uk|united[ \t]+kingdom|canada|canadian|american|british"
+    rf"|australian|indian)\b[ \t]+(?:[^\s.]+[ \t]+){{0,2}}?{_PERMIT}"
+    r"|\bu\.?s\.?-based[ \t]+(?:candidates|applicants|only)\b",
+    re.IGNORECASE)
+# What turns such words into no demand: "No US work permit needed", "Residence
+# in the UK is not required", "US citizens welcome".
+_RE_DEMAND_DENIED_BEFORE = re.compile(r"\b(?:not|no|nicht|keine?|without|ohne)\b[^.]{0,20}$", re.IGNORECASE)
+_RE_DEMAND_DENIED_AFTER = re.compile(
+    r"^[^.]{0,25}?\b(?:not[ \t]+(?:required|necessary|needed|a[ \t]+requirement|mandatory)|is[ \t]+no[ \t]+requirement"
+    r"|welcome|nicht[ \t]+(?:erforderlich|notwendig|n(?:ö|oe)tig))", re.IGNORECASE)
+
+
+def _asks_foreign_work_permit(text: str) -> bool:
+    """Does the ad demand a work permit or citizenship of a country outside
+    Germany? A wording the same sentence denies or welcomes is no demand."""
+    for m in _RE_FOREIGN_WORK_AUTH.finditer(text):
+        if _RE_DEMAND_DENIED_BEFORE.search(text[max(0, m.start() - 25):m.start()]):
+            continue
+        if _RE_DEMAND_DENIED_AFTER.search(text[m.end():m.end() + 45]):
+            continue
+        return True
+    return False
 
 # A title that names data or ML work (see check 4). "Software" and "developer"
 # are deliberately not here: an embedded job is often titled "Software
@@ -713,7 +750,8 @@ def _hard_disqualify(j: dict) -> tuple[bool, str, str]:
                                   and not _is_foreign_location(loc_low))
                               or (bool(_RE_WORKING_STUDENT_TITLE.search(title))
                                   and not _foreign_hint(loc_low)
-                                  and not _RE_NONGER_LOC.search(desc_2000)))
+                                  and not _RE_NONGER_LOC.search(desc_2000)
+                                  and not _asks_foreign_work_permit(desc_2000)))
     # Coverage can stand in the LOCATION as well: "Remote, Europe, USA" and
     # "Remote, EMEA, LATAM, Canada" include Germany. Only the ad text used to
     # be searched, so the USA or LATAM next to it dropped the job.

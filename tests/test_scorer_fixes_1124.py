@@ -11,7 +11,7 @@ internships marked down for reasons the ads do not give:
    (go-to-market).
 5. Two jobs whose ads read "Heidelberg (Germany) or San Francisco Bay Area
    (USA)", location "Heidelberg, GER", were dropped by the location filter.
-6. The model invented a US work permit for an internship in Munich, capped two
+6. The scorer invented a US work permit for an internship in Munich, capped two
    internships as theses although the ads also offer an internship, and held an
    AI Master's to be no computer science. Those are prompt rules, checked as text.
 
@@ -62,6 +62,9 @@ class TestGermanOrEnglish:
         "You speak fluent German. Or English speakers with German at C1.",
         "Very good German or Spanish and English.",
         "Very good German and French or English.",
+        "You speak fluent German\n\nor English speakers apply in German.",
+        "You need fluent German to serve German or English-speaking customers.",
+        "You need fluent German to serve German or English speaking customers.",
     ])
     def test_german_with_english_is_still_demanded(self, b1, text):
         dropped, _reason, category = scorer._hard_disqualify(_job(description="Python. " + text))
@@ -102,6 +105,30 @@ class TestRemoteAnywhere:
 
     def test_anywhere_in_europe_is(self):
         assert scorer._hard_disqualify(self._remote(location="Remote, Anywhere in Europe"))[0] is False
+
+    @pytest.mark.parametrize("text", ["US citizens only.", "Must have a US work permit.",
+                                      "Eligible to work in the UK.", "You must be authorized to work in the U.S.",
+                                      "Canadian citizenship required.", "Work authorization for the US is needed.",
+                                      "Open to citizens of the United States.", "You must hold US permanent residency.",
+                                      "US-based candidates only.", "Applicants must reside in the USA."])
+    def test_a_working_student_title_does_not_beat_a_foreign_work_permit(self, text):
+        j = _job(title="Working Student Data", location="Remote", description="Python and SQL. " + text)
+        dropped, _reason, category = scorer._hard_disqualify(j)
+        assert (dropped, category) == (True, "location"), text
+
+    @pytest.mark.parametrize("text", [
+        "You will work with us in a small team; join us.",
+        "Please let us know your work permit status in your application.",
+        "Tell us about your citizenship and your start date.",
+        "Eligible to work in Germany or the EU.",
+        "Residence in the UK is not required.",
+        "We work with American clients and passport data.",
+        "US citizens welcome, relocation to Bonn possible.",
+        "No US work permit needed.",
+    ])
+    def test_us_as_a_word_is_no_country(self, text):
+        j = _job(title="Working Student Data", location="Remote", description="Python and SQL. " + text)
+        assert scorer._hard_disqualify(j)[0] is False, text
 
     def test_a_working_student_title_does_not_place_anywhere_in_the_us_in_germany(self):
         j = _job(title="Working Student", location="Remote, Anywhere in the US", description="Python.")
@@ -166,8 +193,14 @@ class TestLocationFilter:
     def test_the_whole_world_helper(self, loc):
         assert filters.whole_world_location(loc)
 
+    @pytest.mark.parametrize("loc", ["Remote, Germany, EST friendly", "Berlin, Germany (CET/EST overlap)",
+                                     "Bonn, PST", "Remote (est. 2010)"])
+    def test_a_us_time_zone_beside_a_german_place_is_not_foreign(self, loc):
+        assert not filters.foreign_hint(loc), loc
+
     @pytest.mark.parametrize("loc", ["Anywhere, US", "Global, Remote (US only)", "Anywhere in Mexico",
-                                     "Worldwide (APAC)", "Global sales hub in Austin"])
+                                     "Worldwide (APAC)", "Global sales hub in Austin", "Anywhere in the States",
+                                     "Anywhere, EST timezone"])
     def test_the_whole_world_with_a_country_beside_it_is_not(self, loc):
         assert not filters.whole_world_location(loc), loc
 
