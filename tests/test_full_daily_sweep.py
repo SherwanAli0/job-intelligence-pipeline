@@ -322,18 +322,20 @@ def lane(monkeypatch):
 
 # -- the order in which the requests are spent -----------------------------------
 class TestTheOrderOfTheSearches:
-    def test_nrw_lists_first_then_first_pages_then_germany_lists_then_the_rest(self, lane):
+    def test_nrw_lists_first_then_germany_lists_then_each_keyword_search_to_its_end(self, lane):
+        # Until 24 November 2026 every keyword search got its first page before
+        # any got a second; LinkedIn's allowance ran out on the first pages.
         l = lane(fake=FakeLinkedIn(default=12), nrw_only=("Junior",),
                  queries=("Werkstudent Data Science", "Junior Data Scientist Germany"))
         jobs = l.run()
         assert [c[:3] for c in l.fake.calls] == [
             ("Werkstudent", NRW, 0), ("Junior", NRW, 0),                 # 1: NRW lists, to the end
             ("Werkstudent", NRW, 10), ("Junior", NRW, 10),
-            ("Junior Data Scientist Germany", "Germany", 0),            # 2: first page, no list covers it
             ("Werkstudent", "Germany", 0), ("Werkstudent", "Germany", 10),   # 3: Germany lists
-            ("Werkstudent Data Science", "Germany", 0),                 # 4: the keyword searches
+            ("Werkstudent Data Science", "Germany", 0),                 # the keyword searches,
+            ("Werkstudent Data Science", "Germany", 10),                # one at a time, each to its end
+            ("Junior Data Scientist Germany", "Germany", 0),
             ("Junior Data Scientist Germany", "Germany", 10),
-            ("Werkstudent Data Science", "Germany", 10),
         ]
         assert len(jobs) == 5 * 12
 
@@ -361,7 +363,9 @@ class TestTheOrderOfTheSearches:
         assert [c[0] for c in l.fake.calls] == ["Teilzeit Data",                 # cut short last time
                                                  "Junior Data Scientist Germany",  # then the plan's order
                                                  "Praktikum Data Science"]
-        assert {c[0]: c[3] for c in l.fake.calls}["Praktikum Data Science"] == 168
+        # Read to its end 17 hours ago: since 24 November 2026 it asks for those
+        # hours, no longer for the whole week again.
+        assert {c[0]: c[3] for c in l.fake.calls}["Praktikum Data Science"] == 17 + sweep.SLACK_HOURS
 
     def test_the_real_plan_asks_each_search_once_and_every_query(self):
         plan = scrapers._linkedin_plan()
@@ -386,14 +390,12 @@ class TestTheOrderOfTheSearches:
     def test_the_settings_fit_the_lanes_time(self):
         # The lane's first run from the production address (17 November 2026):
         # 333 requests in 1,303 seconds, none refused, so 3.9 seconds a request
-        # with the description fetches in between. The two NRW lists (about 40
-        # requests) and the first page of every keyword search fit easily; how
-        # many deeper pages a read gets is LinkedIn's decision: from 18 November
-        # 11:58 on it refused about every fifth request (96 to 176 a read).
-        plan = scrapers._linkedin_plan()
-        first_pages = sum(1 for s in plan if s["stage"] == 2)
-        assert (scrapers._LI_PACE, scrapers._LI_DEPTH, scrapers._LI_SECONDS) == (3.0, 50, 2400)
-        assert (first_pages + 40) * 3.9 < scrapers._LI_SECONDS / 3
+        # with the description fetches in between. How many requests a read gets
+        # is LinkedIn's decision: from 18 November 11:58 on it refused about every
+        # fifth request (70 to 176 a read). One keyword search may take at most
+        # twenty pages, a fifth of a daytime read, so it cannot eat a read.
+        assert (scrapers._LI_PACE, scrapers._LI_DEPTH, scrapers._LI_SECONDS) == (3.0, 200, 2400)
+        assert scrapers._LI_DEPTH // scrapers._LI_PAGE_SIZE * 3.9 < scrapers._LI_SECONDS / 20
         assert scrapers._LI_LIST_LIMIT == 800 and scrapers._LI_GIVE_UP_AFTER == 4
 
     def test_no_list_for_all_of_germany_since_19_november(self):
@@ -404,7 +406,7 @@ class TestTheOrderOfTheSearches:
         plan = scrapers._linkedin_plan()
         assert not [s for s in plan if s["stage"] in (3, 4)]
         assert {s["stage"] for s in plan if not s["pool"]} == {2}, \
-            "every keyword search gets its first page before any gets a second"
+            "every keyword search is in the same stage, read one at a time to its end"
         stage = {s["words"]: s["stage"] for s in plan if not s["pool"]}
         for words in ("Werkstudent Data Science", "Internship Data Science", *scrapers._LI_REMOTE_QUERIES):
             assert stage[words] == 2, words
@@ -418,15 +420,35 @@ class TestTheOrderOfTheSearches:
         assert stage["Teilzeit Data"] == 2
         assert stage["HiWi Data Science"] == 2
 
-    def test_keyword_searches_are_read_page_by_page_across_all_of_them(self, lane):
+    def test_keyword_searches_are_read_one_at_a_time_each_to_its_end(self, lane):
+        # Until 24 November 2026 page by page across all of them.
         l = lane(fake=FakeLinkedIn(default=25), pools=(), queries=("Junior Data Scientist Germany",
                                                                     "Teilzeit Data", "HiWi Data Science"))
         l.run()
         assert [(c[0], c[2]) for c in l.fake.calls] == [
-            ("Junior Data Scientist Germany", 0), ("Teilzeit Data", 0), ("HiWi Data Science", 0),
-            ("Junior Data Scientist Germany", 10), ("Teilzeit Data", 10), ("HiWi Data Science", 10),
-            ("Junior Data Scientist Germany", 20), ("Teilzeit Data", 20), ("HiWi Data Science", 20),
+            ("Junior Data Scientist Germany", 0), ("Junior Data Scientist Germany", 10),
+            ("Junior Data Scientist Germany", 20),
+            ("Teilzeit Data", 0), ("Teilzeit Data", 10), ("Teilzeit Data", 20),
+            ("HiWi Data Science", 0), ("HiWi Data Science", 10), ("HiWi Data Science", 20),
         ]
+
+    def test_a_read_that_runs_out_leaves_the_rest_for_the_next_and_they_go_first(self, lane, monkeypatch, tmp_path):
+        l = lane(fake=FakeLinkedIn(default=25), pools=(), queries=("Junior Data Scientist Germany",
+                                                                    "Teilzeit Data", "HiWi Data Science"))
+        monkeypatch.setattr(scrapers, "_LI_SECONDS", 15)       # four requests, 4 s apart
+        l.run(save=True)
+        assert [(c[0], c[2]) for c in l.fake.calls] == [
+            ("Junior Data Scientist Germany", 0), ("Junior Data Scientist Germany", 10),
+            ("Junior Data Scientist Germany", 20), ("Teilzeit Data", 0)]
+        rows = {k: v for k, v in _saved(tmp_path).items()}
+        assert rows["linkedin|q|junior data scientist germany"]["covered"] == NOW.isoformat(timespec="seconds")
+        assert rows["linkedin|q|teilzeit data"]["covered"] < NOW.isoformat(timespec="seconds")
+        l.fake.calls.clear()
+        monkeypatch.setattr(scrapers, "_LI_SECONDS", 2400)
+        l.run(now=NOW + timedelta(hours=5))
+        # the two not read to their end go first, the one read to its end last
+        assert [c[0] for c in l.fake.calls][::3] == ["Teilzeit Data", "HiWi Data Science",
+                                                      "Junior Data Scientist Germany"]
 
 
 # -- every card of a list is read -------------------------------------------------
@@ -741,15 +763,36 @@ class TestTheWindows:
         l.run()
         assert {c[:2]: c[3] for c in l.fake.calls}[("Werkstudent", NRW)] == scrapers._LI_POOL_HOURS
 
-    def test_a_keyword_search_is_never_asked_for_less_than_before(self, lane, tmp_path):
+    def test_a_keyword_search_asks_for_what_it_has_not_read_to_its_end(self, lane, tmp_path):
+        # Until 24 November 2026 never less than the usual window: a search read
+        # to its end seven hours before asked for a day (an internship search a
+        # week) again, pages of postings already seen.
         _marks(tmp_path, **{"linkedin__q__junior data scientist germany": 7,
                             "linkedin__q__praktikum data science": 7})
         l = lane(fake=FakeLinkedIn(default=3), pools=(),
                  queries=("Junior Data Scientist Germany", "Praktikum Data Science"))
         l.run()
         hours = {c[0]: c[3] for c in l.fake.calls}
+        assert hours["Junior Data Scientist Germany"] == 7 + sweep.SLACK_HOURS
+        assert hours["Praktikum Data Science"] == 7 + sweep.SLACK_HOURS
+
+    def test_a_keyword_search_is_never_asked_for_more_than_the_age_rule_lets_through(self, lane, tmp_path):
+        _marks(tmp_path, **{"linkedin__q__junior data scientist germany": 100,
+                            "linkedin__q__praktikum data science": 100})
+        l = lane(fake=FakeLinkedIn(default=3), pools=(),
+                 queries=("Junior Data Scientist Germany", "Praktikum Data Science"))
+        l.run()
+        hours = {c[0]: c[3] for c in l.fake.calls}
+        assert hours["Junior Data Scientist Germany"] == config.max_filter_age_hours() == 48
+        assert hours["Praktikum Data Science"] == 100 + sweep.SLACK_HOURS      # an internship: up to a week
+
+    def test_a_keyword_search_without_a_mark_asks_for_its_usual_window(self, lane):
+        l = lane(fake=FakeLinkedIn(default=3), pools=(),
+                 queries=("Junior Data Scientist Germany", "Praktikum Data Science"))
+        l.run()
+        hours = {c[0]: c[3] for c in l.fake.calls}
         assert hours["Junior Data Scientist Germany"] == 24
-        assert hours["Praktikum Data Science"] == config.INTERNSHIP_SOURCE_HOURS   # still a week
+        assert hours["Praktikum Data Science"] == config.INTERNSHIP_SOURCE_HOURS
 
     def test_the_second_run_of_the_day_asks_for_the_hours_since_the_morning(self, lane, tmp_path):
         _marks(tmp_path, **{"linkedin__q__junior data scientist germany": 7,
@@ -772,12 +815,13 @@ class TestTheWindows:
         fake.refuse_from = None
         l.run(now=NOW + timedelta(hours=24), save=True)
         hours = {c[:2]: c[3] for c in fake.calls}
-        assert hours[("Junior Data Scientist Germany", "Germany")] == 48 + sweep.SLACK_HOURS
+        # 48 hours unread plus slack, but no more than the age rule lets through
+        assert hours[("Junior Data Scientist Germany", "Germany")] == config.max_filter_age_hours() == 48
         assert hours[("Werkstudent", NRW)] == scrapers._LI_POOL_HOURS
-        l.run(now=NOW + timedelta(hours=31), save=True)         # read to the end: back to normal
+        l.run(now=NOW + timedelta(hours=31), save=True)         # read to the end: only what is new
         hours = {c[:2]: c[3] for c in fake.calls}
         assert hours[("Werkstudent", NRW)] == 7 + sweep.SLACK_HOURS
-        assert hours[("Junior Data Scientist Germany", "Germany")] == 24
+        assert hours[("Junior Data Scientist Germany", "Germany")] == 7 + sweep.SLACK_HOURS
 
     def test_a_catch_up_day_asks_every_search_for_the_week(self, lane, monkeypatch, tmp_path):
         _marks(tmp_path, linkedin__nrw__werkstudent=7)

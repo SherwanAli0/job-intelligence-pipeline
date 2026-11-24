@@ -366,6 +366,8 @@ _GERMAN_TITLE_FRAGMENTS = (
 # filters.py so the two stages can never drift apart again.
 from filters import (
     is_german_location as _is_german_location,
+    mentions_germany as _mentions_germany,
+    whole_world_location as _whole_world_location,
     GERMANY_TERMS as _GERMANY_TERMS,
     NRW_PLACES as _NRW_PLACES,
     is_nrw_excluded as _is_nrw_excluded,
@@ -475,8 +477,11 @@ def _is_attendable_from_germany(j: dict) -> bool:
     if any(_phrase_in(combined, s) for s in _REMOTE_LOCKED_OUT_SIGNALS):
         return False
 
-    # Germany or DACH signal in location → keep
-    if any(t in loc for t in _GERMANY_TERMS):
+    # Germany or DACH signal in location → keep. A German town, state or code
+    # the location names counts too ("Heidelberg, GER": 2026-11-24, two jobs
+    # whose ads read "Heidelberg (Germany) or San Francisco Bay Area (USA)"
+    # were dropped for the US city in the ad's first lines).
+    if any(t in loc for t in _GERMANY_TERMS) or _is_german_location(loc):
         return True
 
     # "Remote" in location → keep if Germany/EU coverage signal exists
@@ -491,12 +496,19 @@ def _is_attendable_from_germany(j: dict) -> bool:
 
     # Positively-identified non-EU city/country → drop
     # (use loc + first 200 chars of desc to catch JDs like "based in Mumbai")
-    loc_check = f" {loc} {desc[:200]} "
     # Whole-word match: as substrings "lima" hit "climate" and "oman" hit "woman".
-    if any(_phrase_in(loc_check, s) for s in _NON_EU_LOCATIONS):
+    in_loc = any(_phrase_in(f" {loc} ", s) for s in _NON_EU_LOCATIONS)
+    # A location that names the whole world and no foreign place ("Anywhere in
+    # the World", "Worldwide", "Global") includes Germany.
+    if not in_loc and _whole_world_location(loc):
+        return True
+    if in_loc or any(_phrase_in(f" {desc[:200]} ", s) for s in _NON_EU_LOCATIONS):
         # Non-EU positively identified - only keep if description says
-        # explicit remote-from-EU coverage
+        # explicit remote-from-EU coverage, or (the foreign place standing in
+        # the ad only) the same lines name Germany as well: a choice of offices.
         if any(s in desc for s in _REMOTE_COVERS_GERMANY_SIGNALS):
+            return True
+        if not in_loc and _mentions_germany(desc[:200]):
             return True
         return False
 

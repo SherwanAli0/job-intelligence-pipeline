@@ -395,6 +395,18 @@ _DE_STATE_CODE_RE = re.compile(
 _NW_CODE_RE = re.compile(r"(?:^|,\s*)nw(?:\s*,\s*de)?(?:[\s,]*\d{5})?\s*$")
 _GERMANY_WORD_RE = re.compile(
     r"(?<![a-zäöüß])(?:germany|deutschland|deutschlandweit|bundesweit|bundesrepublik)(?![a-zäöüß])")
+# "GER" is the short form some boards print as the country ("Heidelberg, GER",
+# 2026-11-24). Only as the last part, and only when nothing before it is
+# foreign ("Austin, TX, GER" is not German).
+_GER_CODE_RE = re.compile(r"(?:^|,\s*)ger\s*$")
+
+
+def _ger_code_german(loc: str) -> bool:
+    m = _GER_CODE_RE.search(loc)
+    if not m:
+        return False
+    before = loc[:m.start()]
+    return not (_strong_foreign(before) or _word_re(FOREIGN_CITIES).search(before))
 
 import functools
 
@@ -485,7 +497,7 @@ def is_foreign_location(loc: str) -> bool:
       or state in the string ("Köln; Amsterdam" is German, bare "Wien" is not).
     """
     loc = (loc or "").strip().lower()[:_MAX_LOC]
-    if not loc or _GERMANY_WORD_RE.search(loc):
+    if not loc or _GERMANY_WORD_RE.search(loc) or _ger_code_german(loc):
         return False
     if any(p in loc for p in _GERMAN_PRIORITY):
         return False
@@ -507,11 +519,34 @@ def is_german_location(loc: str) -> bool:
     loc = (loc or "").strip().lower()[:_MAX_LOC]
     if not loc:
         return False
-    if _GERMANY_WORD_RE.search(loc):
+    if _GERMANY_WORD_RE.search(loc) or _ger_code_german(loc):
         return True
     if is_foreign_location(loc):
         return False
     return _has_german_signal(loc)
+
+
+# A location that names the whole world ("Anywhere", "Worldwide", "Global")
+# includes Germany, unless it also names a country or region ("Anywhere in the
+# US", "Anywhere, US", "Global, Remote (US only)", "anywhere in Brazil").
+_WHOLE_WORLD_RE = re.compile(r"\b(?:anywhere|worldwide|world-wide|global(?:ly)?)\b")
+_FOREIGN_HINT_RE = re.compile(
+    r"\b(?:us|u\.s\.?|usa|united\s+states|america|americas|north\s+america|south\s+america|canada|uk"
+    r"|united\s+kingdom|brazil|brasil|mexico|india|latam|latin\s+america|apac|asia|australia|africa"
+    r"|contiguous|continental|only)\b")
+
+
+def foreign_hint(loc: str) -> bool:
+    """A country, region or 'only' that ties a location to somewhere outside
+    Germany, or a place the lists know as foreign."""
+    loc = (loc or "").strip().lower()[:_MAX_LOC]
+    return bool(_FOREIGN_HINT_RE.search(loc)) or is_foreign_location(loc)
+
+
+def whole_world_location(loc: str) -> bool:
+    """'Anywhere', 'Worldwide', 'Global' with no country or region beside it."""
+    loc = (loc or "").strip().lower()[:_MAX_LOC]
+    return bool(_WHOLE_WORLD_RE.search(loc)) and not foreign_hint(loc)
 
 
 def is_nrw_excluded(loc: str) -> bool:
