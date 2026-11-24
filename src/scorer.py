@@ -397,14 +397,22 @@ _RE_GERMAN_MARKET_TITLE = re.compile(
 # permit or citizenship of another country ("US citizens only", "Must have a
 # US work permit", "Eligible to work in the UK").
 _RE_WORKING_STUDENT_TITLE = re.compile(r"\bworking[\s-]+students?\b", re.IGNORECASE)
-_FOREIGN_COUNTRY = r"(?:u\.s\.?|usa|united\s+states|us|uk|united\s+kingdom|canada|australia|india)"
+# A bare "us" is a country only as "the US" or right before the permit word
+# ("US citizens"): "please let us know your work permit status" and "tell us
+# about your citizenship" ask nothing of another country.
+_FOREIGN_COUNTRY = (r"(?:the[ \t]+u\.?s\.?a?|u\.s\.a?\.?|usa|(?:the[ \t]+)?united[ \t]+states|(?:the[ \t]+)?uk"
+                    r"|(?:the[ \t]+)?united[ \t]+kingdom|canada|australia|india)")
+_PERMIT = (r"(?:citizen\w*|work[ \t]+permit|work[ \t]+authori[sz]ation|green[ \t]+card|security[ \t]+clearance"
+           r"|passport|permanent[ \t]+residen\w*)")
 _RE_FOREIGN_WORK_AUTH = re.compile(
-    r"(?:citizen\w*|work\s+permit|work\s+authori[sz]ation|authori[sz]ed\s+to\s+work|eligib\w*\s+to\s+work"
-    r"|right\s+to\s+work|green\s+card|security\s+clearance|visa)"
-    rf"(?:[ \t]+[^\s.]+){{0,4}}?[ \t]+in[ \t]+(?:the[ \t]+)?{_FOREIGN_COUNTRY}\b"
-    r"|\b(?:u\.s\.?|usa|united\s+states|us|uk|united\s+kingdom|canada|canadian|american|british|australian"
-    r"|indian)\b[ \t]+(?:[^\s.]+[ \t]+){0,2}?(?:citizen\w*|work\s+permit|work\s+authori[sz]ation|green\s+card"
-    r"|security\s+clearance|passport)",
+    r"(?:citizen\w*|work[ \t]+permit|work[ \t]+authori[sz]ation|authori[sz]ed[ \t]+to[ \t]+work"
+    r"|eligib\w*[ \t]+to[ \t]+work|right[ \t]+to[ \t]+work|green[ \t]+card|security[ \t]+clearance|visa"
+    r"|residen\w*|reside)"
+    rf"(?:[ \t]+[^\s.]+){{0,4}}?[ \t]+(?:in|for|of|within)[ \t]+{_FOREIGN_COUNTRY}\b"
+    rf"|\bus[ \t]+{_PERMIT}"
+    r"|\b(?:u\.s\.a?\.?|usa|united[ \t]+states|uk|united[ \t]+kingdom|canada|canadian|american|british"
+    rf"|australian|indian)\b[ \t]+(?:[^\s.]+[ \t]+){{0,2}}?{_PERMIT}"
+    r"|\bu\.?s\.?-based[ \t]+(?:candidates|applicants|only)\b",
     re.IGNORECASE)
 
 # A title that names data or ML work (see check 4). "Software" and "developer"

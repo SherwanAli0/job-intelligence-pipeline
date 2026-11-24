@@ -64,6 +64,7 @@ class TestGermanOrEnglish:
         "Very good German and French or English.",
         "You speak fluent German\n\nor English speakers apply in German.",
         "You need fluent German to serve German or English-speaking customers.",
+        "You need fluent German to serve German or English speaking customers.",
     ])
     def test_german_with_english_is_still_demanded(self, b1, text):
         dropped, _reason, category = scorer._hard_disqualify(_job(description="Python. " + text))
@@ -107,16 +108,23 @@ class TestRemoteAnywhere:
 
     @pytest.mark.parametrize("text", ["US citizens only.", "Must have a US work permit.",
                                       "Eligible to work in the UK.", "You must be authorized to work in the U.S.",
-                                      "Canadian citizenship required."])
+                                      "Canadian citizenship required.", "Work authorization for the US is needed.",
+                                      "Open to citizens of the United States.", "You must hold US permanent residency.",
+                                      "US-based candidates only.", "Applicants must reside in the USA."])
     def test_a_working_student_title_does_not_beat_a_foreign_work_permit(self, text):
         j = _job(title="Working Student Data", location="Remote", description="Python and SQL. " + text)
         dropped, _reason, category = scorer._hard_disqualify(j)
         assert (dropped, category) == (True, "location"), text
 
-    def test_us_as_a_word_is_no_country(self):
-        j = _job(title="Working Student Data", location="Remote",
-                 description="Python and SQL. You will work with us in a small team; join us.")
-        assert scorer._hard_disqualify(j)[0] is False
+    @pytest.mark.parametrize("text", [
+        "You will work with us in a small team; join us.",
+        "Please let us know your work permit status in your application.",
+        "Tell us about your citizenship and your start date.",
+        "Eligible to work in Germany or the EU.",
+    ])
+    def test_us_as_a_word_is_no_country(self, text):
+        j = _job(title="Working Student Data", location="Remote", description="Python and SQL. " + text)
+        assert scorer._hard_disqualify(j)[0] is False, text
 
     def test_a_working_student_title_does_not_place_anywhere_in_the_us_in_germany(self):
         j = _job(title="Working Student", location="Remote, Anywhere in the US", description="Python.")

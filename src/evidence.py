@@ -788,7 +788,7 @@ _ALT_TOKEN = rf"(?!(?:{_ALT_OTHER})\b)[^\s,;.:!?]+"
 # demand at all ("German or English-speaking customers").
 _RE_ALT_ENGLISH_AFTER = re.compile(
     rf"^[ \t()\[\]/-]*(?:{_ALT_TOKEN}[ \t]+){{0,3}}?(?:or|oder|and/or|und/oder)[ \t]+"
-    rf"(?:{_ALT_TOKEN}[ \t]+){{0,3}}?(?:english|englisch)(?![\w-]*speaking)",
+    rf"(?:{_ALT_TOKEN}[ \t]+){{0,3}}?(?:english|englisch)(?![\w-]*[ \t]*speaking)",
     re.IGNORECASE)
 _RE_ALT_ENGLISH_BEFORE = re.compile(
     rf"(?:english|englisch)[\w-]*[ \t]+(?:or|oder|and/or|und/oder)[ \t]+(?:{_ALT_TOKEN}[ \t]+){{0,3}}?[^\w\n]*$",

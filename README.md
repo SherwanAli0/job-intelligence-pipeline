@@ -199,7 +199,7 @@ the repository.
 | [handler.py](src/handler.py) / [storage.py](src/storage.py) | AWS entrypoint, S3 state and the overlap claim guard |
 | [secrets_loader.py](src/secrets_loader.py) / [metrics.py](src/metrics.py) | SSM secrets into the environment; optional CloudWatch metrics |
 | [robots.py](src/robots.py) / [robots_audit.py](src/robots_audit.py) | robots.txt rules every scraper request is checked against, and the audit that lists what they do not allow |
-| [tests/](tests/) | 2,465 offline tests (`pytest --collect-only -q`, 2026-11-24), run on every push to `main` and every pull request |
+| [tests/](tests/) | 2,474 offline tests (`pytest --collect-only -q`, 2026-11-24), run on every push to `main` and every pull request |
 | [data/](data/) | The two state files the rollback workflow commits: a snapshot from July 2026, production state lives in S3 |
 | [examples/](examples/) | Fictional profile file that shows the schema of the private one |
 | [aws/](aws/) | Task, schedule and IAM definitions, and `run-now.ps1` for a manual run |
@@ -877,7 +877,7 @@ not been re-measured.
 
 | Figure | Value | Measured | Source |
 |---|---|---|---|
-| Offline tests | 2,465 collected, run in CI on every push | 2026-11-24 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
+| Offline tests | 2,474 collected, run in CI on every push | 2026-11-24 | `pytest --collect-only -q`, Python 3.11, `constraints.txt` |
 | Configured company boards | 358 distinct slugs + 21 Workday tenants | 2026-11-03 | [config.py](src/config.py) |
 | Postings scraped per run | 8,589 to 9,019 before dedup, 7,415 to 7,776 after | 2026-07-19 and 07-20 (4 runs) | [run_stats.jsonl](data/run_stats.jsonl) |
 | Posting IDs in seen-state | 26,501 | 2026-07-20 snapshot | [seen_jobs.json](data/seen_jobs.json) |
