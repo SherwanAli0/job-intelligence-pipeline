@@ -533,7 +533,10 @@ _WHOLE_WORLD_RE = re.compile(r"\b(?:anywhere|worldwide|world-wide|global(?:ly)?)
 _FOREIGN_HINT_RE = re.compile(
     r"\b(?:us|u\.s\.?|usa|united\s+states|the\s+states|america|americas|north\s+america|south\s+america"
     r"|canada|uk|united\s+kingdom|brazil|brasil|mexico|india|latam|latin\s+america|apac|asia|australia"
-    r"|africa|contiguous|continental|only|est|edt|pst|pdt|cst|cdt|mst|mdt)\b")
+    r"|africa|contiguous|continental|only)\b")
+# A US time zone beside "anywhere" ("Anywhere, EST timezone") ties it to the
+# Americas, but only where nothing German stands ("Berlin (CET/EST overlap)").
+_US_TIME_ZONE_RE = re.compile(r"\b(?:est|edt|pst|pdt|cst|cdt|mst|mdt)\b")
 
 
 def foreign_hint(loc: str) -> bool:
@@ -546,6 +549,8 @@ def foreign_hint(loc: str) -> bool:
 def whole_world_location(loc: str) -> bool:
     """'Anywhere', 'Worldwide', 'Global' with no country or region beside it."""
     loc = (loc or "").strip().lower()[:_MAX_LOC]
+    if _US_TIME_ZONE_RE.search(loc) and not _has_german_signal(loc):
+        return False
     return bool(_WHOLE_WORLD_RE.search(loc)) and not foreign_hint(loc)
 
 

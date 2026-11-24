@@ -121,6 +121,10 @@ class TestRemoteAnywhere:
         "Please let us know your work permit status in your application.",
         "Tell us about your citizenship and your start date.",
         "Eligible to work in Germany or the EU.",
+        "Residence in the UK is not required.",
+        "We work with American clients and passport data.",
+        "US citizens welcome, relocation to Bonn possible.",
+        "No US work permit needed.",
     ])
     def test_us_as_a_word_is_no_country(self, text):
         j = _job(title="Working Student Data", location="Remote", description="Python and SQL. " + text)
@@ -188,6 +192,11 @@ class TestLocationFilter:
     @pytest.mark.parametrize("loc", ["Remote, Anywhere", "Worldwide", "Global"])
     def test_the_whole_world_helper(self, loc):
         assert filters.whole_world_location(loc)
+
+    @pytest.mark.parametrize("loc", ["Remote, Germany, EST friendly", "Berlin, Germany (CET/EST overlap)",
+                                     "Bonn, PST", "Remote (est. 2010)"])
+    def test_a_us_time_zone_beside_a_german_place_is_not_foreign(self, loc):
+        assert not filters.foreign_hint(loc), loc
 
     @pytest.mark.parametrize("loc", ["Anywhere, US", "Global, Remote (US only)", "Anywhere in Mexico",
                                      "Worldwide (APAC)", "Global sales hub in Austin", "Anywhere in the States",
