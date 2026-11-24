@@ -531,9 +531,9 @@ def is_german_location(loc: str) -> bool:
 # US", "Anywhere, US", "Global, Remote (US only)", "anywhere in Brazil").
 _WHOLE_WORLD_RE = re.compile(r"\b(?:anywhere|worldwide|world-wide|global(?:ly)?)\b")
 _FOREIGN_HINT_RE = re.compile(
-    r"\b(?:us|u\.s\.?|usa|united\s+states|america|americas|north\s+america|south\s+america|canada|uk"
-    r"|united\s+kingdom|brazil|brasil|mexico|india|latam|latin\s+america|apac|asia|australia|africa"
-    r"|contiguous|continental|only)\b")
+    r"\b(?:us|u\.s\.?|usa|united\s+states|the\s+states|america|americas|north\s+america|south\s+america"
+    r"|canada|uk|united\s+kingdom|brazil|brasil|mexico|india|latam|latin\s+america|apac|asia|australia"
+    r"|africa|contiguous|continental|only|est|edt|pst|pdt|cst|cdt|mst|mdt)\b")
 
 
 def foreign_hint(loc: str) -> bool:
